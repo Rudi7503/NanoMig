@@ -1,0 +1,13 @@
+{
+  "change": "comments only; RTL tokens identical after removing comments/whitespace",
+  "tested_candidate_sha256": "04cff2162d312872864ffc064e64387c78cd923122c1819199d69f0a6b730f08",
+  "documented_candidate_sha256": "af7d2f913089667b9a9cb584d2b14626b71f7373230c69a405c75b184161b65a",
+  "tested_original_file": "biquad_candidate_tested.v",
+  "documented_candidate_hardware_rebuilt": false,
+  "selection_cases": 1048576,
+  "checked_outputs": [
+    "selected",
+    "have_pending"
+  ],
+  "limit": "Not a whole scheduler, throughput or formal proof"
+}

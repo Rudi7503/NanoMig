@@ -44,8 +44,18 @@ module biquad_iir_ringbuffer (
     reg have_pending;
     reg [3:0] selected;
     integer scan;
-    // Two fixed-index priority passes implement circular first-pending
-    // selection without truncated adders or variable pending-bit indexing.
+    // Quartus Prime Lite 25.1std.0 Build 1129 (Cyclone V) workaround:
+    // the former circular scan using truncated (scan_start + offset) adders
+    // triggered an internal OPT error in opt_arm_carry.cpp, line 500,
+    // during Analysis & Synthesis in the complete MiSTer audio build.
+    // Preserve these two fixed-index priority passes unless a replacement
+    // is checked for both selection equivalence and successful synthesis.
+    // They select the first pending voice from scan_start, wrapping at 16;
+    // no pending voice => have_pending=0 and selected=scan_start.
+    // tb_scheduler.v exhaustively checked all 16 starts x 65536 pending
+    // masks (1048576 cases): selected and have_pending equal the circular
+    // reference in every case. This is exhaustive combinational selection
+    // testing, not a full scheduler/queue/throughput or formal proof.
     always @* begin
         have_pending = |pending;
         selected = scan_start;
