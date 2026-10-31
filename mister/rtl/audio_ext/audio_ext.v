@@ -278,7 +278,8 @@ module audio_ext #(
         do_decode ? next_res_consume :
         v_res;
 
-    wire [22:0] next_pcm_idx_val = tdm_need_init[cur_voice] ?
+    reg [NUM_VOICES-1:0] tdm_loop_restart;
+    wire [22:0] next_pcm_idx_val = tdm_need_init[cur_voice] && !(tdm_loop_restart[cur_voice] && !v_adpcm) ?
         {v_pred0, v_init_idx} :
         {new_pcm, new_idx};
 
@@ -295,9 +296,10 @@ module audio_ext #(
     always @(posedge clk) begin
         if (reset) begin
             tdm_need_init <= {NUM_VOICES{1'b0}};
+            tdm_loop_restart <= 0;
         end else begin
-            if (cmd_we && reg_wdata[0]) tdm_need_init[ch] <= 1'b1;
-            if (loop_reload) tdm_need_init[cur_voice] <= 1'b1;
+            if (cmd_we && reg_wdata[0]) begin tdm_need_init[ch] <= 1'b1;tdm_loop_restart[ch]<=1'b0;end
+            if (loop_reload) begin tdm_need_init[cur_voice] <= 1'b1;tdm_loop_restart[cur_voice]<=1'b1;end
             if (tdm_need_init[cur_voice]) begin
                 tdm_need_init[cur_voice] <= 1'b0;
                 ram_rdptr[cur_voice] <= 6'd0;
@@ -412,13 +414,13 @@ module audio_ext #(
 
     always @(posedge clk) begin
         if (cur_voice == 0) begin
-            acc_l <= mul_l[23:8];
-            acc_r <= mul_r[23:8];
+            acc_l <= $signed(mul_l[23:8]);
+            acc_r <= $signed(mul_r[23:8]);
             sample_l <= (!acc_l[20] && |acc_l[19:15]) ? 16'sh7FFF : (acc_l[20] && !(&acc_l[19:15])) ? 16'sh8000 : acc_l[15:0];
             sample_r <= (!acc_r[20] && |acc_r[19:15]) ? 16'sh7FFF : (acc_r[20] && !(&acc_r[19:15])) ? 16'sh8000 : acc_r[15:0];
         end else begin
-            acc_l <= acc_l + mul_l[23:8];
-            acc_r <= acc_r + mul_r[23:8];
+            acc_l <= acc_l + $signed(mul_l[23:8]);
+            acc_r <= acc_r + $signed(mul_r[23:8]);
         end
     end
 
