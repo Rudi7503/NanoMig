@@ -91,6 +91,27 @@ Themen-Issues (Stand 2026-10-31):
 | #4 | Timing: negativer Slack im Capture-Build |
 | #5 | Spezifikation: `AUDxLEN` und Audio-Registerbasis |
 
+## Bestätigungen und Zwischenmeldungen
+
+Drei Meldungen pro Auftrag, mehr nicht:
+
+1. **Annahme** — eine Zeile, sobald absehbar ist, dass der Auftrag länger als
+   etwa 15 Minuten dauert. Was, bis wann ungefähr, ob etwas fehlt. Kommt die
+   Antwort ohnehin in fünf Minuten, ist sie die Bestätigung — dann keine
+   separate Meldung.
+2. **Zwischenmeldung** — nach 30 Minuten ohne sichtbares Ergebnis: was läuft,
+   was blockiert, wann die nächste Meldung kommt. Einmal, nicht im Takt.
+3. **Ergebnis** — mit Belegen.
+
+**Bestätigungen werden nicht beantwortet.** Wer eine Annahme quittiert, erzeugt
+eine Schleife; der Eingang ist die Antwort. Das ist der Grund, warum drei
+Meldungen pro Auftrag vertretbar sind und nicht zehn.
+
+**Arbeit ist sichtbar.** Ein gepushter Branch, ein Commit oder eine Datei im
+Issue sind der Status und brauchen keine Meldung. Eine Zwischenmeldung ist nur
+dann nötig, wenn gerade nichts Sichtbares passiert — ein 40-Minuten-Build, eine
+Messreihe am Gerät, Warten auf ein Bauteil.
+
 ## Branches und Pull Requests
 
 * `rudi/<thema>` — Core, RTL, Doku
