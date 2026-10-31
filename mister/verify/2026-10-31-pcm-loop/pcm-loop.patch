@@ -1,0 +1,25 @@
+--- a/mister/rtl/audio_ext/audio_ext.v
++++ b/mister/rtl/audio_ext/audio_ext.v
+@@ -278,7 +278,8 @@
+         do_decode ? next_res_consume :
+         v_res;
+ 
+-    wire [22:0] next_pcm_idx_val = tdm_need_init[cur_voice] ?
++    reg [NUM_VOICES-1:0] tdm_loop_restart;
++    wire [22:0] next_pcm_idx_val = tdm_need_init[cur_voice] && !(tdm_loop_restart[cur_voice] && !v_adpcm) ?
+         {v_pred0, v_init_idx} :
+         {new_pcm, new_idx};
+ 
+@@ -295,9 +296,10 @@
+     always @(posedge clk) begin
+         if (reset) begin
+             tdm_need_init <= {NUM_VOICES{1'b0}};
++            tdm_loop_restart <= 0;
+         end else begin
+-            if (cmd_we && reg_wdata[0]) tdm_need_init[ch] <= 1'b1;
+-            if (loop_reload) tdm_need_init[cur_voice] <= 1'b1;
++            if (cmd_we && reg_wdata[0]) begin tdm_need_init[ch] <= 1'b1;tdm_loop_restart[ch]<=1'b0;end
++            if (loop_reload) begin tdm_need_init[cur_voice] <= 1'b1;tdm_loop_restart[cur_voice]<=1'b1;end
+             if (tdm_need_init[cur_voice]) begin
+                 tdm_need_init[cur_voice] <= 1'b0;
+                 ram_rdptr[cur_voice] <= 6'd0;

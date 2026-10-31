@@ -1,0 +1,18 @@
+TRACE decode=0 pcm=3000 res=000030 fifo=d000
+TRACE decode=1 pcm=3000 res=000030 fifo=d000
+TRACE decode=1 pcm=d000 res=0000d0 fifo=3000
+TRACE decode=2 pcm=d000 res=0000d0 fifo=3000
+TRACE decode=2 pcm=3000 res=000030 fifo=d000
+TRACE decode=3 pcm=3000 res=000030 fifo=d000
+TRACE decode=3 pcm=d000 res=0000d0 fifo=3000
+TRACE decode=4 pcm=d000 res=0000d0 fifo=3000
+TRACE decode=4 pcm=3000 res=000030 fifo=d000
+TRACE decode=5 pcm=3000 res=000030 fifo=d000
+TRACE decode=5 pcm=d000 res=0000d0 fifo=3000
+TRACE decode=6 pcm=d000 res=0000d0 fifo=3000
+TRACE decode=6 pcm=3000 res=000030 fifo=d000
+TRACE decode=7 pcm=3000 res=000030 fifo=d000
+TRACE decode=7 pcm=d000 res=0000d0 fifo=3000
+RESULT beats=896 decodes=874 pcm_nonzero=874 output_nonzero=998789 fifo_mismatch=0 state=3 expected_bad=0 voice=0 delay=0
+MIX pos=15582 neg=15346 zero=0 min=-2304 max=2304
+ZERO_DIAG zeros=0 loops=12 inits=7

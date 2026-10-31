@@ -1,0 +1,11 @@
+{
+  "compile_exit": 0,
+  "verified_inputs": 252,
+  "rbf_sha256": "2d42d81d97ccb51f7187a1330657df1783e7eaf26f292dbd25fd25ba19fbd623",
+  "rbf_size": 4123736,
+  "setup_min_ns": -1.846,
+  "hold_min_ns": -0.822,
+  "timing_pass": false,
+  "hardware_tested": false,
+  "limits": "No full timing qualification; review complete reports and warnings."
+}

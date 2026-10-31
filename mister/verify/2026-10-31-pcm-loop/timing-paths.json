@@ -1,0 +1,114 @@
+[
+  {
+    "report": "c0_hold.rpt",
+    "slack_ns": -0.822,
+    "from": "emu:emu|minimig:minimig|denise:DENISE1|ext_normal_rgb[3]",
+    "to": "emu:emu|video_mixer:video_mixer|gamma_corr:gamma|B_in[3]",
+    "model": "Slow 1100mV 100C Model"
+  },
+  {
+    "report": "c0_setup.rpt",
+    "slack_ns": -1.846,
+    "from": "emu:emu|cpu_wrapper:cpu_wrapper|TG68KdotC_Kernel:cpu_inst_p|RDindex_A[1]",
+    "to": "emu:emu|ddram_ctrl:ram2|cpu_cache_new:cpu_cache|tw_op.TW_D0",
+    "model": "Slow 1100mV 100C Model"
+  },
+  {
+    "report": "c1_hold.rpt",
+    "slack_ns": -0.734,
+    "from": "emu:emu|minimig:minimig|denise:DENISE1|ext_normal_rgb[3]",
+    "to": "emu:emu|video_mixer:video_mixer|gamma_corr:gamma|B_in[3]",
+    "model": "Slow 1100mV -40C Model"
+  },
+  {
+    "report": "c1_setup.rpt",
+    "slack_ns": -1.417,
+    "from": "emu:emu|cpu_wrapper:cpu_wrapper|TG68KdotC_Kernel:cpu_inst_p|RDindex_A[1]",
+    "to": "emu:emu|ddram_ctrl:ram2|cpu_cache_new:cpu_cache|tw_op.TW_D0",
+    "model": "Slow 1100mV -40C Model"
+  },
+  {
+    "report": "c2_hold.rpt",
+    "slack_ns": -0.79,
+    "from": "emu:emu|minimig:minimig|denise:DENISE1|ext_normal_rgb[3]",
+    "to": "emu:emu|video_mixer:video_mixer|gamma_corr:gamma|B_in[3]",
+    "model": "Slow 1100mV 85C Model"
+  },
+  {
+    "report": "c2_setup.rpt",
+    "slack_ns": -1.655,
+    "from": "emu:emu|cpu_wrapper:cpu_wrapper|TG68KdotC_Kernel:cpu_inst_p|RDindex_A[1]",
+    "to": "emu:emu|ddram_ctrl:ram2|cpu_cache_new:cpu_cache|tw_op.TW_D0",
+    "model": "Slow 1100mV 85C Model"
+  },
+  {
+    "report": "c3_hold.rpt",
+    "slack_ns": -0.766,
+    "from": "emu:emu|minimig:minimig|denise:DENISE1|ext_normal_rgb[3]",
+    "to": "emu:emu|video_mixer:video_mixer|gamma_corr:gamma|B_in[3]",
+    "model": "Slow 1100mV 0C Model"
+  },
+  {
+    "report": "c3_setup.rpt",
+    "slack_ns": -1.329,
+    "from": "emu:emu|cpu_wrapper:cpu_wrapper|TG68KdotC_Kernel:cpu_inst_p|RDindex_A[1]",
+    "to": "emu:emu|ddram_ctrl:ram2|cpu_cache_new:cpu_cache|tw_op.TW_D0",
+    "model": "Slow 1100mV 0C Model"
+  },
+  {
+    "report": "c4_hold.rpt",
+    "slack_ns": -0.478,
+    "from": "emu:emu|minimig:minimig|denise:DENISE1|ext_normal_rgb[3]",
+    "to": "emu:emu|video_mixer:video_mixer|gamma_corr:gamma|B_in[3]",
+    "model": "Fast 1100mV -40C Model"
+  },
+  {
+    "report": "c4_setup.rpt",
+    "slack_ns": 3.455,
+    "from": "ascal:ascal|o_acpt4[0]",
+    "to": "ascal:ascal|o_hpixs.b[7]",
+    "model": "Fast 1100mV -40C Model"
+  },
+  {
+    "report": "c5_hold.rpt",
+    "slack_ns": -0.481,
+    "from": "emu:emu|minimig:minimig|denise:DENISE1|ext_normal_rgb[3]",
+    "to": "emu:emu|video_mixer:video_mixer|gamma_corr:gamma|B_in[3]",
+    "model": "Fast 1100mV 0C Model"
+  },
+  {
+    "report": "c5_setup.rpt",
+    "slack_ns": 3.348,
+    "from": "ascal:ascal|o_acpt4[0]",
+    "to": "ascal:ascal|o_hpixs.b[7]",
+    "model": "Fast 1100mV 0C Model"
+  },
+  {
+    "report": "c6_hold.rpt",
+    "slack_ns": -0.49,
+    "from": "emu:emu|minimig:minimig|denise:DENISE1|ext_normal_rgb[3]",
+    "to": "emu:emu|video_mixer:video_mixer|gamma_corr:gamma|B_in[3]",
+    "model": "Fast 1100mV 85C Model"
+  },
+  {
+    "report": "c6_setup.rpt",
+    "slack_ns": 2.997,
+    "from": "ascal:ascal|o_acpt4[0]",
+    "to": "ascal:ascal|o_hpixs.b[7]",
+    "model": "Fast 1100mV 85C Model"
+  },
+  {
+    "report": "c7_hold.rpt",
+    "slack_ns": -0.489,
+    "from": "emu:emu|minimig:minimig|denise:DENISE1|ext_normal_rgb[3]",
+    "to": "emu:emu|video_mixer:video_mixer|gamma_corr:gamma|B_in[3]",
+    "model": "Fast 1100mV 100C Model"
+  },
+  {
+    "report": "c7_setup.rpt",
+    "slack_ns": 2.894,
+    "from": "ascal:ascal|o_acpt4[0]",
+    "to": "ascal:ascal|o_hpixs.b[7]",
+    "model": "Fast 1100mV 100C Model"
+  }
+]
