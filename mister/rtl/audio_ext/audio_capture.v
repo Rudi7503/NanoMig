@@ -58,6 +58,7 @@ module audio_capture (
     assign reg_rdata = {sample_pos, irq_en, overrun_flag, active_block, flag_block_b, flag_block_a, capture_en};
 
     // Hardware write state machine for interleaved L/R write
+    reg signed [15:0] held_right; // Right sample latched with Left
     reg wr_phase; // 0 = Write Left, 1 = Write Right
 
     // Target block backpressure check
@@ -73,6 +74,7 @@ module audio_capture (
             irq_en       <= 1'b0;
             sample_pos   <= 10'd0;
             wr_phase     <= 1'b0;
+            held_right   <= 16'sd0;
             irq          <= 1'b0;
         end else begin
             irq <= 1'b0; // Default pulse
@@ -98,11 +100,12 @@ module audio_capture (
                     end else begin
                         // Step 1: Write Left sample
                         cap_ram[{active_block, sample_pos, 1'b0}] <= in_l;
+                        held_right <= in_r;
                         wr_phase <= 1'b1;
                     end
                 end else if (wr_phase) begin
                     // Step 2: Write Right sample on immediately following cycle
-                    cap_ram[{active_block, sample_pos, 1'b1}] <= in_r;
+                    cap_ram[{active_block, sample_pos, 1'b1}] <= held_right;
                     wr_phase <= 1'b0;
 
                     // Block completion check
