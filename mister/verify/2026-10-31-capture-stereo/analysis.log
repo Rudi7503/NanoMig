@@ -1,0 +1,25 @@
+
+== vorher ==
+SHA256      : 78a2001adb27ea5edd0ceb862bda207cbcd93f64d6c27a86bffa0f85a86d4d5e
+Frames      : 65536  (262144 Bytes)
+Wertebereich: -6144 .. 6143
+L != R      : 57
+  frame % 32: {7: 57}
+  verschiedene Paare: 52, |L-R| max 302
+  erste: [1543, 1959, 3207, 4039, 5223, 5991, 6407, 8423]
+
+== nachher ==
+SHA256      : 9468d7a0e446cb839ece4c1eca557e9d6a08fdee41ea7c813523c086545955fd
+Frames      : 65536  (262144 Bytes)
+Wertebereich: -6144 .. 6143
+L != R      : 0
+
+== Stereo-Kohaerenz ==
+BESTANDEN
+
+== Vergleich gegen die Voraufnahme ==
+  kein exakter Treffer fuer Fenster ab Frame 16384
+  kein exakter Treffer fuer Fenster ab Frame 32768
+  kein exakter Treffer fuer Fenster ab Frame 49152
+Versatz nicht bestimmbar — Aufnahmen teilen kein gemeinsames Fenster.
+Das ist kein Fehler, aber ohne Versatz ist kein Bytevergleich moeglich.

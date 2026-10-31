@@ -1,0 +1,15 @@
+{
+  "rbf_sha256": "541e947fd940300a74a7fe1e191cd9d5341eb8f2e002d6e43bcc98b9999f0921",
+  "worst_from_same_summary": {
+    "Setup": [
+      -0.401,
+      "Slow 1100mV -40C Model Setup 'emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk'"
+    ],
+    "Hold": [
+      -0.517,
+      "Slow 1100mV 100C Model Hold 'emu|pll|pll_inst|altera_pll_i|cyclonev_pll|counter[0].output_counter|divclk'"
+    ]
+  },
+  "timing_pass": false,
+  "limits": "SDC revision and baseline analysis comparison still pending; no timing qualification."
+}
