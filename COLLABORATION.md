@@ -100,6 +100,25 @@ Synthese-Erfolg ist kein Timing-Pass. Eine Hörprobe ist kein Sample-Beweis.
 | Upstream-Abgleich | erledigt am 2026-10-31 (Merge `aacf921`), ab jetzt periodisch | beide |
 | Capture-Stereo-Fix | liegt als `rudi/capture-stereo-coherence` (`225e8d5`) bereit | Rudi → PR |
 
+## Wo welche Dateien liegen
+
+Nicht alles gehört ins Repo. Git behält jede Version für immer — eine 4-MB-RBF
+pro Iteration bläht die Historie dauerhaft auf und lässt sich nicht mehr
+rückgängig machen.
+
+| Inhalt | Ort |
+|---|---|
+| Code, Doku, Skripte, Logs, JSON-Belege | **Repo** |
+| WAV-Aufnahmen, Hörproben, große Rohdaten | **Discord** |
+| Build-Artefakte (RBF), ZIP-Pakete | **Discord**, bei Bedarf zusätzlich GitHub Releases |
+
+Pflicht bei jeder geteilten Datei: **SHA256** und der Quellcommit, aus dem sie
+gebaut wurde. Im Repo steht dann der Hash plus ein kurzer Auszug — nicht die
+Datei. So bleibt ein Befund zuordenbar, ohne dass der Git-Baum wächst.
+
+Auf Discord verteilte Dateien sind Arbeitsmaterial, kein Projektstand. Wer
+später nachvollziehen will, was geprüft wurde, liest die Belege im Repo.
+
 ## Technische Randbedingungen
 
 * Quartus Prime Lite 25.1std, Gerät `5CSEBA6U23I7`, Projekt `Minimig`, Top `sys_top`.
