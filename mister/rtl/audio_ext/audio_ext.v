@@ -135,20 +135,24 @@ module audio_ext #(
     end
 
     // Volume & Period RAM (Standard Dual-Port RAM)
-    reg [15:0] ram_vol [0:NUM_VOICES-1];
-    reg [15:0] ram_per [0:NUM_VOICES-1];
+    //
+    // These four voice parameter arrays are written as whole 16-bit words.
+    // Byte-enable writes (two conditional byte-lane assignments) prevent
+    // Quartus from inferring block RAM, which put the arrays into ~2,000
+    // flip-flops plus a 32:1 read multiplexer each - 945 ALMs on Cyclone V.
+    //
+    // Restriction: a byte write (MOVE.B) to AUDxVOL/AUDxPER/AUDxCTRL/AUDxPRED
+    // is stored as the full word and therefore overwrites the neighbouring
+    // byte. All shipped test programs and the player write words; Paula's
+    // own registers ($DFF0A0) are a different block and are not affected.
+    (* ramstyle = "M10K" *) reg [15:0] ram_vol [0:NUM_VOICES-1];
+    (* ramstyle = "M10K" *) reg [15:0] ram_per [0:NUM_VOICES-1];
     reg [31:0] dout_vol_per;
 
     always @(posedge clk) begin
         if (write_once) begin
-            if (off == 4'd4) begin
-                if (reg_be[1]) ram_vol[ch][15:8] <= reg_wdata[15:8];
-                if (reg_be[0]) ram_vol[ch][ 7:0] <= reg_wdata[ 7:0];
-            end
-            if (off == 4'd5) begin
-                if (reg_be[1]) ram_per[ch][15:8] <= reg_wdata[15:8];
-                if (reg_be[0]) ram_per[ch][ 7:0] <= reg_wdata[ 7:0];
-            end
+            if (off == 4'd4) ram_vol[ch] <= reg_wdata;
+            if (off == 4'd5) ram_per[ch] <= reg_wdata;
         end
         dout_vol_per <= {ram_vol[cur_voice_next], ram_per[cur_voice_next]};
     end
@@ -163,14 +167,8 @@ module audio_ext #(
 
     always @(posedge clk) begin
         if (write_once) begin
-            if (off == 4'd6) begin
-                if (reg_be[1]) ram_ctrl[ch][15:8] <= reg_wdata[15:8];
-                if (reg_be[0]) ram_ctrl[ch][ 7:0] <= reg_wdata[ 7:0];
-            end
-            if (off == 4'd7) begin
-                if (reg_be[1]) ram_pred0[ch][15:8] <= reg_wdata[15:8];
-                if (reg_be[0]) ram_pred0[ch][ 7:0] <= reg_wdata[ 7:0];
-            end
+            if (off == 4'd6) ram_ctrl[ch] <= reg_wdata;
+            if (off == 4'd7) ram_pred0[ch] <= reg_wdata;
         end
         dout_ctrl_pred0 <= {ram_ctrl[cur_voice_next], ram_pred0[cur_voice_next]};
     end
