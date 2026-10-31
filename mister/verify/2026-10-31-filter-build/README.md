@@ -23,7 +23,7 @@ statt der Berichte — die Berichte selbst.
 ```
 RBF     Minimig.rbf   4.123.736 Bytes
 SHA256  2d42d81d97ccb51f7187a1330657df1783e7eaf26f292dbd25fd25ba19fbd623
-Fehler  0        Warnungen 150
+Fehler  0        Warnungen 154
 ALMs    38.355 / 41.910 (92 %)   Register 53.135
 RAM     327 / 553 (59 %)         DSP 75 / 112 (67 %)
 ```
