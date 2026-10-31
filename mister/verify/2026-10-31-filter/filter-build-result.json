@@ -1,0 +1,12 @@
+{
+  "compile_exit": 0,
+  "verified_inputs": 252,
+  "manifest_note": "Two obsolete backslash aliases resolved against archived prior manifest and verified scheduler candidate; original manifest preserved.",
+  "hardware_tested": false,
+  "timing_pass": false,
+  "setup_min_ns": -0.705,
+  "hold_min_ns": -0.358,
+  "rbf_sha256": "ecba24a883e5f80f9881cb3e89884d96ad90d7708634a216fee5ead5470da27f",
+  "rbf_size": 4113144,
+  "limits": "Inspect full STA constraints/warnings before claiming timing qualification; hardware remains untested."
+}

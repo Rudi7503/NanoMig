@@ -1,0 +1,19 @@
+{
+  "blocks": 64,
+  "frames": 65536,
+  "nominal_sample_rate": 48000,
+  "overrun_observed": false,
+  "timeout_observed": false,
+  "full_64_blocks": true,
+  "minimum": -1024,
+  "maximum": 1024,
+  "continuity": "NOT established; inspect flags and hardware behavior",
+  "scope": "Internal mixer capture before HDMI; not monitor audio",
+  "case": "bypass",
+  "left_right_mismatch_frames": 0,
+  "clipped_words": 0,
+  "capture_sha256": "155d0384770779bbee63d562c5f17597edc30c618db0fbefe5709dc94caedd87",
+  "timing_pass": false,
+  "unique_left_values": 3,
+  "limits": "Single-channel internal capture. Numerical filter-response comparison pending; no general effects qualification."
+}

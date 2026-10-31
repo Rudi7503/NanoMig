@@ -1,0 +1,35 @@
+{
+  "reference_pairs": 19200,
+  "reference_errors": 0,
+  "adjacent_channel_comparisons": 128,
+  "burst_errors": 0,
+  "integrated_voices": [
+    0,
+    1,
+    15,
+    16,
+    30
+  ],
+  "memory_model": "ideal DMA responder, other audio RAMs initialized; no real SDRAM test",
+  "hardware_tested": false,
+  "timing_pass": false,
+  "candidate_sha256": "04cff2162d312872864ffc064e64387c78cd923122c1819199d69f0a6b730f08",
+  "proof_hashes": {
+    "scheduler-new.log": "35b5c1b8f269a4fe49e8938e71b28776ba925fc8b518c09736733fd7b1c57b66",
+    "reference-new.log": "83563f942e767a84d711e9494f8129d273b3e29f0bdf02d0934d7a0c8ffa46af",
+    "burst-new.log": "f5dbc19052eb74f40332d189c8d7b7da78567dfb8c4f9ad79df4c1d492e155c5",
+    "integrated-new-0.log": "21d3988223f8417397c3769ae66c6c023e5bade651fe54a387a383f527da7512",
+    "integrated-new-1.log": "5ce814b55465406584fedd113d1ea242dfb3ec039d40b9d22f7f601a924c0357",
+    "integrated-new-15.log": "0184a2b90a9d4ccd3c95e42b460d5e19b05039980162381305d8ffa2b6594028",
+    "integrated-new-16.log": "8b92d5f687f1985d5fb5bda8c1644db7384afb0ca8260aab2f339ecd3add334d",
+    "integrated-new-30.log": "a80699422c3295986c5e5d9bc69229dc0b592fc5661a1d75f3b40d83a02115a9"
+  },
+  "limits": [
+    "Not a formal proof",
+    "One pending sample per voice; excessive sustained load can overwrite it and sets internal pending_overflow",
+    "No hardware filter test or full multi-channel max-rate qualification",
+    "Cascade/modulation still separate open tasks"
+  ],
+  "scheduler_combinations": 1048576,
+  "compiler_workaround": "Equivalent two fixed-index priority passes instead of truncated circular scan adders; suspected OPT crash workaround, build not yet verified."
+}
