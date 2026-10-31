@@ -1,0 +1,7 @@
+PCM loop correction: local test evidence, not an upstream integration claim.
+Before: filter comparison RBF ecba24a883e5f80f9881cb3e89884d96ad90d7708634a216fee5ead5470da27f, 500 zero left frames out of65536.
+After: RBF2d42d81d97ccb51f7187a1330657df1783e7eaf26f292dbd25fd25ba19fbd623, zero left frames0/65536, L!=R0, range-1024..1024, clip0,overrun0,timeout0. Toby heard steady undisturbed tone. All134protectedfiles unchanged. Hardware recordings are BEint16 stereo interleaved.
+Cause: loop reload initializes current PCM to pred0 (zero). The enabled filter masks this by holding output. Candidate preserves prior PCM on PCM loop reload only; explicitSTART and ADPCM predictor initialization retain original conditions. Not a full ADPCM/formal proof.
+Simulation1Mcycles:208zeros before,0after,874decoded samples both, no FIFO/decode mismatches. Unity integrations voice0,16,30 PASS. Actual test programs unchanged from original bypass test.
+Important source provenance: this patch is against the archived local filter test source audio_ext_before.v, based on3fba796 plus prior mixer/capture/filter corrections. It is NOT verified to apply directly to current main. Only compiled rtl/audio_ext/audio_ext.v changed from the prior filter build; unchanged outer unused copy differs and is not part of candidate.
+No RBF or constraints uploaded. No timing pass: setup-1.846ns hold-.822ns, worse than prior-.705/-.358. Fit38355ALMs53135registers327RAM75DSP. Open: exact timing-path analysis, upstream integration/review,32channel/ADPCM/cascade/modulation/fullcapacity qualification.
