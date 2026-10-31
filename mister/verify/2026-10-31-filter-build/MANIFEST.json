@@ -1,0 +1,127 @@
+{
+    "build":  "Minimig, Revision Minimig, Top sys_top",
+    "source_commit":  "6869a41 (rudi/filter-fix) = main e477fb3 + filter.patch",
+    "note_comment_only":  "2e3ed1e changes comments only; netlist and RBF identical to 6869a41",
+    "quartus":  "25.1std.0 Build 1129 10/21/2025 SC Lite",
+    "device":  "5CSEBA6U23I7 (Cyclone V)",
+    "seed":  "not set in QSF (Quartus default)",
+    "fitter":  "HIGH PERFORMANCE EFFORT, STANDARD FIT, PHYSICAL_SYNTHESIS_* ON/EXTRA",
+    "rbf":  {
+                "name":  "Minimig.rbf",
+                "bytes":  4123736,
+                "sha256":  "2d42d81d97ccb51f7187a1330657df1783e7eaf26f292dbd25fd25ba19fbd623",
+                "in_repo":  false
+            },
+    "constraints":  {
+                        "Minimig.sdc":  "8a7f272261afab4651d654f7c0369bbd887635efc14fdf966de567e5e97ada05",
+                        "Minimig.qsf":  "cc83bb342a537bba0e96caae62c433913c2603138b9cb581bd99d2a95f5dfc99",
+                        "files.qip":  "46cd667c1058b9ecfbb605e4a75c8f2b45cb1467157f1fda3071635081488041"
+                    },
+    "files":  [
+                  {
+                      "file":  "audio_capture_hold_from.rpt",
+                      "bytes":  3762,
+                      "sha256":  "5c6717bf6ce06e0f86103fb847cde2fb6194bc63e97f3f4b042701e5dbf25387"
+                  },
+                  {
+                      "file":  "audio_capture_hold_to.rpt",
+                      "bytes":  3762,
+                      "sha256":  "5c6717bf6ce06e0f86103fb847cde2fb6194bc63e97f3f4b042701e5dbf25387"
+                  },
+                  {
+                      "file":  "audio_capture_setup_from.rpt",
+                      "bytes":  4543,
+                      "sha256":  "64df32bc3df0ab2dbc45e29c2ccb4081ded2fe0c7e7201043c636467da7fafca"
+                  },
+                  {
+                      "file":  "audio_capture_setup_to.rpt",
+                      "bytes":  4664,
+                      "sha256":  "1951bd1a36776c58ee679860705ee4060d5daaf68d394268cc29e6f2c4d8dc5a"
+                  },
+                  {
+                      "file":  "audio_ext_hold_from.rpt",
+                      "bytes":  4334,
+                      "sha256":  "f82638602310c54066ed9c1c54bb72ceef9a4d4c74dcf6e79409c76535f103f6"
+                  },
+                  {
+                      "file":  "audio_ext_hold_to.rpt",
+                      "bytes":  4334,
+                      "sha256":  "f82638602310c54066ed9c1c54bb72ceef9a4d4c74dcf6e79409c76535f103f6"
+                  },
+                  {
+                      "file":  "audio_ext_setup_from.rpt",
+                      "bytes":  3630,
+                      "sha256":  "058f659e9ecdc516488011b1cba9f4598f1076df361172432bc7745e046a2085"
+                  },
+                  {
+                      "file":  "audio_ext_setup_to.rpt",
+                      "bytes":  3630,
+                      "sha256":  "058f659e9ecdc516488011b1cba9f4598f1076df361172432bc7745e046a2085"
+                  },
+                  {
+                      "file":  "audio_paths.tcl",
+                      "bytes":  680,
+                      "sha256":  "f224464e72c0c481c9a256e9c034ef0d7fa81544897295366d77325dc783d587"
+                  },
+                  {
+                      "file":  "build-filter.log",
+                      "bytes":  767466,
+                      "sha256":  "5f21fbc11e7b2fcda1f523494eaa9fce0b1cb32f8c0c1f120532ee0813d7a314"
+                  },
+                  {
+                      "file":  "Minimig.asm.rpt",
+                      "bytes":  5430,
+                      "sha256":  "6e8b5370fea85d17247d8536fd187d4542b01fae027d7555ac6c6d63141a47e2"
+                  },
+                  {
+                      "file":  "Minimig.fit.rpt",
+                      "bytes":  7585240,
+                      "sha256":  "1b62296938b35e5f5a4bdc9ce4e690dc998b841c26dd18cef62f5b4d10a10f47"
+                  },
+                  {
+                      "file":  "Minimig.fit.smsg",
+                      "bytes":  1028,
+                      "sha256":  "6523fa00273f83d313a806b43816c131266b0191f9f5b2f3b8fc82bd259ffbf2"
+                  },
+                  {
+                      "file":  "Minimig.fit.summary",
+                      "bytes":  702,
+                      "sha256":  "ee28dc981668462e8bac24c7f7c5235b5345872ddad8aa5fbc639a684814dee5"
+                  },
+                  {
+                      "file":  "Minimig.flow.rpt",
+                      "bytes":  14589,
+                      "sha256":  "9511b54b7c0070988eb844f7fe470a4106e8b389534516e77e72ac0a0f018776"
+                  },
+                  {
+                      "file":  "Minimig.map.rpt",
+                      "bytes":  5669002,
+                      "sha256":  "aa1843cad62b950400acee946ec71f795f5daff045002cd1b262ff9b5a83aedd"
+                  },
+                  {
+                      "file":  "Minimig.map.smsg",
+                      "bytes":  29485,
+                      "sha256":  "76cc9d9dd78253851903c19b833a2a23b28f5b9ed940287b39a0e3f08dc53368"
+                  },
+                  {
+                      "file":  "Minimig.map.summary",
+                      "bytes":  534,
+                      "sha256":  "203768383e33a65488bac18567a0c8b090a51d7d3523b963bc3fe345d40bd515"
+                  },
+                  {
+                      "file":  "Minimig.sta.rpt",
+                      "bytes":  582049,
+                      "sha256":  "2c1e4af6b09e913769438361035dd1b06b306859e4a4d619c940d82fa9cb8a20"
+                  },
+                  {
+                      "file":  "Minimig.sta.summary",
+                      "bytes":  20721,
+                      "sha256":  "0dc1018c6d03fef82887b2a3da18523fa07eca7ee7525500db650ff3077fad68"
+                  },
+                  {
+                      "file":  "README.md",
+                      "bytes":  2700,
+                      "sha256":  "1f6464d41343cf857b88be6ebed8e1e742333442be686ef90f7e7d2c453fe4b5"
+                  }
+              ]
+}

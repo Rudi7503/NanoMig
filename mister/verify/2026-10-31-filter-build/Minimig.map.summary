@@ -1,0 +1,17 @@
+Analysis & Synthesis Status : Successful - Sat Oct 31 16:15:58 2026
+Quartus Prime Version : 25.1std.0 Build 1129 10/21/2025 SC Lite Edition
+Revision Name : Minimig
+Top-level Entity Name : sys_top
+Family : Cyclone V
+Logic utilization (in ALMs) : N/A
+Total registers : 52931
+Total pins : 145
+Total virtual pins : 0
+Total block memory bits : 2,264,917
+Total DSP Blocks : 75
+Total HSSI RX PCSs : 0
+Total HSSI PMA RX Deserializers : 0
+Total HSSI TX PCSs : 0
+Total HSSI PMA TX Serializers : 0
+Total PLLs : 3
+Total DLLs : 0
