@@ -80,8 +80,16 @@ Seiten dieselbe Stelle gleichzeitig anfassen — bisher der einzige echte
 Kollisionsfall (der Capture-Fix und Tobys Testbuild liefen parallel).
 
 Der **PR-Thread ist der Ort für alles, was diesen PR betrifft**. Für ein neues
-Thema gehört ein eigener Thread her: eigenes Issue (sobald aktiviert) oder ein
-eigener PR. Ein HAM-Befund im Audio-PR geht verloren.
+Thema gehört ein eigenes Issue her — ein HAM-Befund im Audio-PR geht verloren.
+
+Themen-Issues (Stand 2026-10-31):
+
+| Issue | Thema |
+|---|---|
+| #2 | Audio: funktionale Hardwareabdeckung der 32-Kanal-Engine |
+| #3 | HAM-Video: Stand, Builds und offene Hardwareprüfungen |
+| #4 | Timing: negativer Slack im Capture-Build |
+| #5 | Spezifikation: `AUDxLEN` und Audio-Registerbasis |
 
 ## Branches und Pull Requests
 
