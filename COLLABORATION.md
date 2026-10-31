@@ -55,6 +55,34 @@ Die 20 Upstream-Commits berühren ausschließlich `NETWORKING.md`,
 Der einzige gemeinsam geänderte Pfad war `src/misc/amiga.xml`, dort aber
 verschiedene Stellen; der Merge lief konfliktfrei durch.
 
+## Umfang
+
+Aktuell bearbeitet werden **zwei Stränge**:
+
+1. **Audio-Erweiterung** (16/32 Stimmen, Capture, Filter) — aktiv.
+2. **HAM-Video** (hohe Auflösungen) — aktiv, eigene Prüfliste.
+
+**Tang/Gowin liegt auf Eis.** Rudi hat frühestens Mitte November ein Board,
+Toby hat keins. Es gibt weder eine Portierung noch einen Build noch einen Test;
+der Umgang damit ist eine eigene Aufgabe für später. Keine Zusage, dass die
+Audio- oder HAM-Arbeit ohne Anpassung auf Tang läuft.
+
+## Vor Arbeitsbeginn
+
+Wer anfängt, etwas zu ändern oder zu messen, sagt es vorher — eine Zeile reicht:
+
+- **was** (Thema, betroffene Dateien)
+- **wo** (Branch-Name)
+- **wie lange** ungefähr
+
+Und beim Abschluss: was rausgekommen ist, mit Belegen. Das verhindert, dass zwei
+Seiten dieselbe Stelle gleichzeitig anfassen — bisher der einzige echte
+Kollisionsfall (der Capture-Fix und Tobys Testbuild liefen parallel).
+
+Der **PR-Thread ist der Ort für alles, was diesen PR betrifft**. Für ein neues
+Thema gehört ein eigener Thread her: eigenes Issue (sobald aktiviert) oder ein
+eigener PR. Ein HAM-Befund im Audio-PR geht verloren.
+
 ## Branches und Pull Requests
 
 * `rudi/<thema>` — Core, RTL, Doku
