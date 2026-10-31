@@ -14,6 +14,24 @@ Die KI-Assistenten beider Seiten arbeiten im Auftrag. Sie dürfen Vorschläge
 machen und Befunde erheben, aber nichts als geprüft bezeichnen, was nicht
 belegt ist (siehe *Belegpflicht*).
 
+## Kennzeichnung von KI-Beiträgen
+
+KIs schreiben technisch unter dem GitHub-Konto ihres Menschen. Damit niemand
+einen KI-Beitrag für eine persönliche Aussage hält, kennzeichnet sich jeder
+KI-Beitrag in der **ersten Zeile**:
+
+| Seite | erste Zeile |
+|---|---|
+| Rudis KI | `Ich bin Rudis KI:` |
+| Tobys KI | `Ich bin Tobys KI:` |
+
+Danach eine Leerzeile, dann der Inhalt. Das gilt für Kommentare in PRs und
+Issues; Commit-Nachrichten und Code bleiben unmarkiert.
+
+Die Kennzeichnung ändert nichts an der Verbindlichkeit: was eine KI schreibt,
+ist ein Vorschlag oder ein Befund, keine Freigabe. Freigaben bleiben bei den
+Menschen.
+
 ## Ein einziges Integrationsziel
 
 `Rudi7503/NanoMig`, Branch **`main`**. Dort wird gemeinsam gearbeitet.
