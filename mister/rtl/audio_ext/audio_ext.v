@@ -197,8 +197,9 @@ module audio_ext #(
     reg [31:0] dout_timer_bc;
     reg [31:0] dout_res;
 
-    wire signed [15:0] cur_pcm  = dout_pcm_idx[31:16];
-    wire [6:0]         cur_idx  = dout_pcm_idx[15:9];
+    wire signed [15:0] cur_pcm   = dout_pcm_idx[15:0];
+    wire signed [15:0] cur_pcm_r = dout_pcm_idx[31:16];
+    wire [6:0]         cur_idx   = dout_timer_bc[9:3];
     wire [15:0]        v_timer  = dout_timer_bc[31:16];
     wire [5:0]         v_bc     = dout_timer_bc[15:10];
     wire [31:0]        v_res    = dout_res;
@@ -239,7 +240,12 @@ module audio_ext #(
         endcase
     end
 
+    // Interleaved stereo: the lower word of the frame is left, the upper is
+    // right. Mono takes the lower word and mirrors it.
     wire signed [15:0] next_pcm_l = v_ctrl[0] ? {v_res[7:0], v_res[15:8]} : {v_res[7:0], 8'd0};
+    wire signed [15:0] next_pcm_r = !v_stereo ? next_pcm_l :
+                                    v_ctrl[0] ? {v_res[23:16], v_res[31:24]} :
+                                                {v_res[15:8], 8'd0};
 
     // Shared Stateless ADPCM Decoder Core
     wire signed [15:0] dec_out_pcm;
@@ -260,6 +266,9 @@ module audio_ext #(
     wire signed [15:0] new_pcm = (do_decode && v_adpcm) ? dec_out_pcm :
                                  (do_decode)            ? next_pcm_l :
                                  cur_pcm;
+    wire signed [15:0] new_pcm_r = (do_decode && v_adpcm) ? dec_out_pcm :
+                                   (do_decode)            ? next_pcm_r :
+                                   cur_pcm_r;
     wire [6:0] new_idx = (do_decode && v_adpcm) ? dec_out_idx :
                          (do_decode)            ? 7'd0 :
                          cur_idx;
@@ -282,13 +291,19 @@ module audio_ext #(
         v_res;
 
     reg [NUM_VOICES-1:0] tdm_loop_restart;
-    wire [22:0] next_pcm_idx_val = tdm_need_init[cur_voice] && !(tdm_loop_restart[cur_voice] && !v_adpcm) ?
-        {v_pred0, v_init_idx} :
-        {new_pcm, new_idx};
+    // sdpb_pcm_idx haelt jetzt beide Kanaele; der ADPCM-Index ist nach
+    // sdpb_timer_bc umgezogen, wo nach Timer (16) und bc (6) sieben Bit frei sind.
+    wire [31:0] next_pcm_idx_val =
+        (tdm_need_init[cur_voice] && !(tdm_loop_restart[cur_voice] && !v_adpcm))
+            ? {v_pred0, v_pred0}
+            : {new_pcm_r, new_pcm};
+    wire [6:0] next_idx_val = (tdm_need_init[cur_voice] && !(tdm_loop_restart[cur_voice] && !v_adpcm))
+            ? v_init_idx
+            : new_idx;
 
     always @(posedge clk) begin
-        sdpb_pcm_idx[cur_voice]  <= {next_pcm_idx_val, 9'd0};
-        sdpb_timer_bc[cur_voice] <= {next_timer, next_bc, 10'd0};
+        sdpb_pcm_idx[cur_voice]  <= next_pcm_idx_val;
+        sdpb_timer_bc[cur_voice] <= {next_timer, next_bc, next_idx_val, 3'd0};
         sdpb_res[cur_voice]      <= next_res_val;
         dout_pcm_idx  <= sdpb_pcm_idx[cur_voice_next];
         dout_timer_bc <= sdpb_timer_bc[cur_voice_next];
@@ -332,7 +347,7 @@ module audio_ext #(
     wire signed [15:0] in_pcm_src_l = (v_input_src == 2'b01) ? prev_pre_sample :
                                       (v_input_src == 2'b10) ? prev_post_sample :
                                       new_pcm;
-    wire signed [15:0] in_pcm_src_r = (v_input_src != 2'b00) ? in_pcm_src_l : new_pcm;
+    wire signed [15:0] in_pcm_src_r = (v_input_src != 2'b00) ? in_pcm_src_l : new_pcm_r;
 
     wire biquad_strobe = (v_input_src != 2'b00) ? prev_decode_reg : do_decode;
 
