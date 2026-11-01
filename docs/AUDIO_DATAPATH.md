@@ -110,3 +110,62 @@ Innerhalb von `audio_ext` sind die großen Posten keine Rechenwerke, sondern
 32:1-Multiplexer aus LUTs. Vier davon (Volume, Periode, Control, Prädiktor)
 kosten zusammen ~2.000 Flip-Flops und ebenso viele Muxe — bis sie als
 Ganzwort geschrieben werden und damit im M10K landen (siehe `rudi/bram-config`).
+
+## 5. Kanalverkettung und Filter-Bypass
+
+`v_ctrl[10:9]` (`v_input_src`) bestimmt, woher eine Stimme ihr Eingangssample
+nimmt — das ist der Pfad, der im ersten Diagramm fehlte:
+
+```mermaid
+flowchart LR
+    DEC["Decoder<br/>PCM / ADPCM"] --> MUX{"v_input_src<br/>ctrl[10:9]"}
+    PREV_PRE["Kanal n-1<br/>vor dem Filter"] --> MUX
+    PREV_POST["Kanal n-1<br/>nach dem Filter"] --> MUX
+    MUX -->|"00 = eigene Quelle"| BIQ["Biquad n"]
+    MUX -->|"01 = pre"| BIQ
+    MUX -->|"10 = post"| BIQ
+    BIQ --> OUT["an Mixer"]
+    BIQ -.->|"wird zu Kanal n+1 'post'"| PREV_POST
+    MUX -.->|"wird zu Kanal n+1 'pre'"| PREV_PRE
+```
+
+Damit lassen sich Filter hintereinanderschalten (24 dB/Oktave: Stimme n filtert
+mit 12 dB, Stimme n+1 setzt auf deren Ausgang eine zweite Stufe). Der
+Zwei-Sample-Puffer `prev_pre_sample` / `prev_post_sample` hält dafür die Werte
+der vorigen Stimme.
+
+**Bypass:** Ist der Filter einer Stimme aus, geht das Sample unverändert durch —
+`out_pcm_l = filter_en_l ? y_held_l[...] : in_pcm_l`. Es gibt keinen eigenen
+Bypass-Pfad, sondern ein Mux im Filtermodul.
+
+## 6. Zwei offene Architekturfragen
+
+### 6.1 DMA nur im Chip-RAM, gekoppelt an Agnus
+
+Heute hängen die Audio-DMA-Signale am Chip-DMA-Arbiter (`chipdma_arb`), also
+am selben Bus wie Agnus und die Blitter-DMA. Folge: Der Audio-DMA ist auf
+Chip-RAM begrenzt und konkurriert mit Agnus um Bandbreite — bei voller
+Bildauslastung kann er verhungern.
+
+Angedacht: eigener Master am SDRAM-Controller über den vollen Adressraum,
+unabhängig von Agnus. Das ist ein Eingriff in die Speicherarbitrierung, nicht
+eine lokale Änderung.
+
+### 6.2 Zwei Filter-DSPs nach Seite statt nach Stimmenhälfte
+
+Heute sind die zwei Biquad-Instanzen über `cur_voice[4]` geteilt: Instanz 0
+filtert Stimmen 0–15, Instanz 1 Stimmen 16–31. Jede Instanz rechnet beide
+Seiten nacheinander, also 2 × 14 Zustände pro Stimme.
+
+Sinnvoller wäre die Teilung **nach Seite**: eine Instanz für links, eine für
+rechts, beide über alle 32 Stimmen. Dann fallen für eine Stimme 14 statt 28
+Zustände an:
+
+| Aufteilung | Takte pro Sample | Auslastung |
+|---|---:|---:|
+| 2 Bänke nach Stimmen (heute), stereo | 448 je Bank | 75 % |
+| 1 Bank für 32, stereo | 896 | 150 % (passt nicht) |
+| **2 DSPs nach Seite, 32 Stimmen** | **448** | **75 %** |
+
+Die dritte Zeile ist der Punkt: Die Teilung nach Seite löst dasselbe Problem
+wie die heutige Aufteilung, aber ohne die Stimmenzahl zu halbieren.
