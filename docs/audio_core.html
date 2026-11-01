@@ -183,15 +183,15 @@
   Die Testprogramme setzen <code>AUDIO_EXT_BASE = $DFF400</code>.</p>
   <table>
     <tr><th>Offset</th><th>Name</th><th>Bits</th><th>Bedeutung</th></tr>
-    <tr><td>0</td><td>AUD_PTR</td><td>31:0</td><td>Startadresse des Samples im RAM</td></tr>
-    <tr><td>4</td><td>AUD_LEN</td><td>31:0</td><td>Länge in Bytes</td></tr>
-    <tr><td>8</td><td>AUD_PER</td><td>15:0</td><td>Periodentakt der Stimme</td></tr>
-    <tr><td>12</td><td>AUD_VOL</td><td>15:0</td><td>Lautstärke, 0..256</td></tr>
-    <tr><td>14</td><td>AUD_CTRL</td><td>15:0</td><td>Bit0 16-Bit PCM &middot; Bit2 stereo &middot; Bit3 ADPCM &middot; Bit5:4 Bits/Code &middot; Bit7 Filter R &middot; Bit8 Filter L &middot; Bit10:9 Quelle</td></tr>
-    <tr><td>16</td><td>AUD_DELAY</td><td>&mdash;</td><td>Verzögerung vor dem Start</td></tr>
-    <tr><td>18</td><td>AUD_CMD</td><td>15:0</td><td>Bit0 Start &middot; Bit1 Stop</td></tr>
-    <tr><td>20</td><td>AUD_PRED</td><td>15:0</td><td>ADPCM-Prädiktor und Startindex</td></tr>
-    <tr><td>32..39</td><td>Koeffizienten</td><td>15:0</td><td>b0, b1, b2, a1, a2 als Q2.14</td></tr>
+    <tr><td>$00</td><td>AUD_PTRH</td><td>7:0</td><td>Startadresse [23:16]</td></tr>
+    <tr><td>$04</td><td>AUD_LENH</td><td>15:0</td><td>Länge in Bytes [31:16]</td></tr>
+    <tr><td>$0A</td><td>AUD_PER</td><td>15:0</td><td>Periodentakt der Stimme</td></tr>
+    <tr><td>$08</td><td>AUD_VOL</td><td>15:0</td><td>Lautstärke links [15:8], rechts [7:0]</td></tr>
+    <tr><td>$0C</td><td>AUD_CTRL</td><td>15:0</td><td>Bit0 16-Bit PCM &middot; Bit2 stereo &middot; Bit3 ADPCM &middot; Bit5:4 Bits/Code &middot; Bit7 Filter R &middot; Bit8 Filter L &middot; Bit10:9 Quelle</td></tr>
+    <tr><td>$1C</td><td>AUD_DELAY</td><td>&mdash;</td><td>Verzögerung vor dem Start</td></tr>
+    <tr><td>$1A</td><td>AUD_CMD</td><td>15:0</td><td>Bit0 Start &middot; Bit1 Stop</td></tr>
+    <tr><td>$0E</td><td>AUD_PRED</td><td>15:0</td><td>ADPCM-Prädiktor und Startindex</td></tr>
+    <tr><td>$10..$18</td><td>Koeffizienten</td><td>15:0</td><td>b0, b1, b2, a1, a2 als Q2.14</td></tr>
   </table>
 </section>
 
