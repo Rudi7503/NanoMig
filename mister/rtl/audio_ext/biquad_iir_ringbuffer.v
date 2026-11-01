@@ -39,11 +39,10 @@ module biquad_iir_ringbuffer (
     reg [31:0] pending;
     reg [15:0] pending_l[0:31], pending_r[0:31];
     reg [2:0] pending_flags[0:31];
-    reg [4:0] scan_start;
+    reg [4:0] stage;
     reg pending_overflow;
-    reg have_pending;
-    reg [4:0] selected;
-    integer scan;
+    wire [4:0] selected   = stage;
+    wire        have_pending = pending[stage];
     // Quartus Prime Lite 25.1std.0 Build 1129 (Cyclone V) workaround:
     // the former circular scan using truncated (scan_start + offset) adders
     // triggered an internal OPT error in opt_arm_carry.cpp, line 500,
@@ -56,22 +55,19 @@ module biquad_iir_ringbuffer (
     // masks (1048576 cases): selected and have_pending equal the circular
     // reference in every case. This is exhaustive combinational selection
     // testing, not a full scheduler/queue/throughput or formal proof.
-    always @* begin
-        have_pending = |pending;
-        selected = scan_start;
-        for (scan=31; scan>=0; scan=scan-1)
-            if (pending[scan]) selected = scan[4:0];
-        for (scan=31; scan>=0; scan=scan-1)
-            if (pending[scan] && scan_start <= scan[4:0])
-                selected = scan[4:0];
-    end
-    wire take_pending=(state==0) && have_pending;
+    // Feste Reihenfolge statt Prioritaetswahl: stage laeuft 0..31. Eine Stufe
+    // wird nur bearbeitet, wenn ein frisches Sample wartet (pending[stage]);
+    // sonst wird sie in einem Takt uebersprungen. Damit ist die Reihenfolge
+    // garantiert - Voraussetzung fuer eine Kaskade ch0..ch31 in einer
+    // Sampleperiode - ohne dass alte Samples erneut gefiltert werden.
+    wire take_pending = (state == 0) && have_pending;
+    wire skip_stage   = (state == 0) && !have_pending;
     always @(posedge clk) begin
-        if(reset) begin pending<=0;scan_start<=0;pending_overflow<=0;end
+        if(reset) begin pending<=0;stage<=0;pending_overflow<=0;end
         else begin
-            if(take_pending) begin
-                pending[selected]<=0;scan_start<=selected+1'b1;
-            end
+            if(take_pending) pending[stage]<=1'b0;
+            if(take_pending || skip_stage)
+                stage <= (stage == 5'd31) ? 5'd0 : (stage + 5'd1);
             if(req_strobe && (filter_en_l || filter_en_r)) begin
                 if(pending[cur_voice] && !(take_pending && selected==cur_voice))
                     pending_overflow<=1'b1;
