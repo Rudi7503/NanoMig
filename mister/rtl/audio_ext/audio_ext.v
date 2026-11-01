@@ -328,26 +328,43 @@ module audio_ext #(
     end
 
     // Channel Chaining & Cascade Logic (Pre/Post-Filter across all 32 channels)
-    reg signed [15:0] prev_pre_sample;
-    reg signed [15:0] prev_post_sample;
+    // Linker und rechter Kanal werden getrennt gefuehrt. Vorher gab es nur ein
+    // Registerpaar, und der rechte Kanal uebernahm den linken Wert der
+    // Vorgaengerin - eine verkettete Stimme war damit mono.
+    //
+    // Ringschluss ist gewollt: cur_voice laeuft 0..31 und springt zurueck,
+    // bei Stimme 0 steht in prev_post_* der Ausgang von Stimme 31. Wer alle
+    // 32 Stimmen verkettet, baut deshalb einen geschlossenen Kreis mit
+    // 32 x 12 dB/Oktave und einer Sampleperiode Verzoegerung je Stufe. Das
+    // ist ein Rueckkopplungsfilter (Kammfilter/Resonator) und kann schwingen;
+    // der Soft-Clipper begrenzt es auf Vollaussteuerung. Fuer eine offene
+    // Kaskade muss Stimme 0 auf v_input_src = 00 stehen.
+    reg signed [15:0] prev_pre_l, prev_pre_r;
+    reg signed [15:0] prev_post_l, prev_post_r;
     reg prev_decode_reg;
 
     always @(posedge clk) begin
         if (reset) begin
-            prev_pre_sample  <= 16'd0;
-            prev_post_sample <= 16'd0;
+            prev_pre_l       <= 16'd0;
+            prev_pre_r       <= 16'd0;
+            prev_post_l      <= 16'd0;
+            prev_post_r      <= 16'd0;
             prev_decode_reg  <= 1'b0;
         end else begin
-            prev_pre_sample  <= in_pcm_src_l;
-            prev_post_sample <= biquad_pcm_l;
+            prev_pre_l       <= in_pcm_src_l;
+            prev_pre_r       <= in_pcm_src_r;
+            prev_post_l      <= biquad_pcm_l;
+            prev_post_r      <= biquad_pcm_r;
             prev_decode_reg  <= (v_input_src != 2'b00) ? prev_decode_reg : do_decode;
         end
     end
 
-    wire signed [15:0] in_pcm_src_l = (v_input_src == 2'b01) ? prev_pre_sample :
-                                      (v_input_src == 2'b10) ? prev_post_sample :
+    wire signed [15:0] in_pcm_src_l = (v_input_src == 2'b01) ? prev_pre_l :
+                                      (v_input_src == 2'b10) ? prev_post_l :
                                       new_pcm;
-    wire signed [15:0] in_pcm_src_r = (v_input_src != 2'b00) ? in_pcm_src_l : new_pcm_r;
+    wire signed [15:0] in_pcm_src_r = (v_input_src == 2'b01) ? prev_pre_r :
+                                      (v_input_src == 2'b10) ? prev_post_r :
+                                      new_pcm_r;
 
     wire biquad_strobe = (v_input_src != 2'b00) ? prev_decode_reg : do_decode;
 
