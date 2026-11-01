@@ -25,6 +25,9 @@ AUD_VOL         EQU $08
 AUD_PER         EQU $0A
 AUD_CTRL        EQU $0C
 AUD_CMD         EQU $1A
+AUD_CAP         EQU $DFF802
+AUD_BUF_A       EQU $DF8000
+COLOR00         EQU $DFF180
 
 ; AUD_CTRL Bits: 0 = 16 Bit PCM, 2 = Stereo, 7 = Filter rechts, 8 = Filter links
 CTRL_16BIT      EQU $0001
@@ -61,6 +64,32 @@ Start:
         MOVE.W  #(CTRL_16BIT|CTRL_STEREO),AUD_CTRL(A0)
 
         MOVE.W  #$0001,AUD_CMD(A0)      ; Start
+
+; ------------------------------------------------------------------
+; Selbstpruefung: Ausgang mitschneiden und L gegen R vergleichen.
+; Ergebnis als Hintergrundfarbe: gruen = Kanaltrennung arbeitet,
+; rot = beide Seiten gleich. Damit ist kein Gehoer noetig.
+; ------------------------------------------------------------------
+        MOVE.W  #$0017,AUD_CAP          ; Capture an, Flags loeschen
+.WaitA: MOVE.W  AUD_CAP,D1
+        BTST    #1,D1                    ; Block A fertig?
+        BEQ.S   .WaitA
+
+        LEA     AUD_BUF_A,A1
+        MOVE.W  #1023,D0
+        MOVEQ   #0,D2                    ; Zaehler ungleicher Paare
+.Cmp:   MOVE.W  (A1)+,D3
+        CMP.W   (A1)+,D3
+        BEQ.S   .Same
+        ADDQ.W  #1,D2
+.Same:  DBRA    D0,.Cmp
+
+        MOVE.W  #$0000,AUD_CAP          ; Capture stoppen
+        MOVE.W  #$0F00,D4               ; rot
+        CMP.W   #900,D2
+        BLS.S   .Show
+        MOVE.W  #$00F0,D4               ; gruen
+.Show:  MOVE.W  D4,COLOR00
 
 Loop:
         BRA.S   Loop

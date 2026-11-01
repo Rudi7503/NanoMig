@@ -17,7 +17,7 @@ import random
 FRAMES = 2400
 FS = 48000
 AMP = 0x1000          # bewusst nicht Vollaussteuerung
-FC = 2000.0           # Grenzfrequenz einer Stufe
+FC = 8000.0           # Grenzfrequenz einer Stufe (hoerbar auch nach 32 Stufen)
 Q = 0.707
 
 # RBJ-Biquad, Tiefpass
