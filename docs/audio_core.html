@@ -285,7 +285,60 @@ dout_pred0 &lt;= ram_pred0[cur_voice_next];</div>
 </section>
 
 <section>
-  <h2>8. Gemessene Fläche</h2>
+  <h2>8. Die DMA-Maschine</h2>
+  <p>Ein einziger DMA-Kanal bedient alle 32 Stimmen reihum. Er hält immer nur
+  <b>eine</b> Anforderung offen &mdash; kein Puffer, keine Warteschlange, nur ein
+  Zeiger, der weiterwandert.</p>
+
+  <h3>Der Zustandsautomat</h3>
+  <svg viewBox="0 0 900 200" id="dmaFsmSvg"></svg>
+
+  <h3>Die Bedingungen</h3>
+  <table>
+    <tr><th>Signal</th><th>Bedeutung</th></tr>
+    <tr><td><code>dma_voice</code></td><td>5-Bit-Zähler, läuft 0&hellip;31 und springt zurück</td></tr>
+    <tr><td><code>dma_active</code></td><td>eine Anforderung ist unterwegs, wartet auf <code>dma_ack</code></td></tr>
+    <tr><td><code>|dma_len</code></td><td>die Stimme hat noch Bytes abzuholen</td></tr>
+    <tr><td><code>voice_state[1]</code></td><td>Stimme ist PREFILL oder PLAYING &mdash; gestoppte werden übersprungen</td></tr>
+    <tr><td><code>dma_fifo_full</code></td><td>FIFO hat &ge; 48 Wörter &mdash; dann pausiert diese Stimme</td></tr>
+  </table>
+
+  <div class="note">
+    <b>48 statt 64.</b> Der FIFO fasst 64 Wörter je Stimme, der DMA füllt aber nur bis 48.
+    Die 16 Wörter Reserve verhindern, dass Produzent und Konsument am selben Zeiger
+    gleichzeitig ankommen. Gleichzeitig weiß der TDM dadurch, dass immer Vorrat da ist.
+  </div>
+
+  <h3>Was bei einer Anforderung passiert</h3>
+  <div class="out">1. dma_ptr  = {ram_ptr[dma_voice], 1'b0}      23-Bit-Wort → 24-Bit-Byteadresse
+2. Anforderung an den Chip-DMA-Arbiter, wartet auf ack
+3. bei ack: fifo_ram[{dma_voice, dma_wrptr}] &lt;= dma_data
+            ram_wrptr[dma_voice] &lt;= dma_wrptr + 1
+            ram_ptr[dma_voice]   &lt;= dma_ptr + 1        (Wortzeiger)
+            ram_len[dma_voice]   &lt;= dma_len - 2        (Bytezähler)
+            dma_voice            &lt;= dma_voice + 1</div>
+
+  <h3>Beim Start einer Stimme</h3>
+  <div class="out">if (dma_need_init[dma_voice]):
+    ram_ptr[dma_voice]   &lt;= {cfg_ptr_hi, cfg_ptr_lo[15:1]}   // Adresse aus dem Register
+    ram_len[dma_voice]   &lt;= {cfg_len_hi, cfg_len_lo}         // Länge in Bytes
+    ram_wrptr[dma_voice] &lt;= 0                                // frisch anfangen</div>
+  <p style="margin-top:12px"><code>dma_need_init</code> wird gesetzt bei: Startbefehl,
+  Ablauf der Startverzögerung, und Loop-Neuladen (<code>loop_reload</code>).
+  Der TDM setzt dabei im selben Zug seinen Lesenzeiger auf 0.</p>
+
+  <h3>Interaktiv: der Zeiger läuft</h3>
+  <div class="ctl">
+    <button id="dmaStep">Takt</button>
+    <button id="dmaRun">Start</button>
+    <button id="dmaReset">Zurücksetzen</button>
+    <span id="dmaInfo" class="acc" style="font-family:Consolas,monospace;font-size:13px"></span>
+  </div>
+  <div id="dmaTable"></div>
+  <div class="out" id="dmaOut"></div>
+</section>
+<section>
+  <h2>9. Gemessene Fläche</h2>
   <p>Aus den Fitter-Reports. Die Zahlen schwanken je Build um ein bis zwei Prozent,
   weil die Packung von der Platzierung abhängt &mdash; für Flächenvergleiche ist die
   Synthese-Schätzung die stabilere Größe.</p>
@@ -317,7 +370,7 @@ dout_pred0 &lt;= ram_pred0[cur_voice_next];</div>
 </section>
 
 <section>
-  <h2>9. Die vier Korrekturen</h2>
+  <h2>10. Die vier Korrekturen</h2>
   <table>
     <tr><th>#</th><th>Wo</th><th>Was falsch war</th><th>Beleg</th></tr>
     <tr><td>6a</td><td>Mixer</td><td>Teilbereich <code>mul[23:8]</code> ist unsigned &rarr; negatives Produkt wird Vollaussteuerung</td><td>4 &times; <code>$signed()</code></td></tr>
@@ -334,7 +387,7 @@ dout_pred0 &lt;= ram_pred0[cur_voice_next];</div>
 </section>
 
 <section>
-  <h2>10. Offene Punkte</h2>
+  <h2>11. Offene Punkte</h2>
   <table>
     <tr><th>Punkt</th><th>Stand</th></tr>
     <tr><td>Pipelining über Stimmen</td><td>448 &rarr; ~224 Takte möglich, zurückgestellt</td></tr>
@@ -571,6 +624,78 @@ Object.keys(accBtns).forEach(id => {
   };
 });
 drawAcc('write');
+// ---------- 8. DMA ----------
+(function(){
+  const svg = document.getElementById('dmaFsmSvg');
+  const st = [
+    {x:40,  l:'IDLE',    s:'dma_voice prüfen'},
+    {x:270, l:'REQUEST', s:'dma_active = 1'},
+    {x:500, l:'WAIT',    s:'auf dma_ack warten'},
+    {x:730, l:'PUSH',    s:'FIFO schreiben, Zähler ++'}
+  ];
+  let s = '<defs><marker id="da" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#5fb3f0"/></marker></defs>';
+  st.forEach((n, i) => {
+    s += `<rect x="${n.x}" y="60" width="150" height="64" rx="9" fill="#0b0e12" stroke="${i===0?'#f0a04b':'#2a3340'}" stroke-width="1.5"/>`;
+    s += `<text x="${n.x+75}" y="86" fill="#e6edf3" font-size="13" text-anchor="middle" font-weight="600">${n.l}</text>`;
+    s += `<text x="${n.x+75}" y="105" fill="#8b97a6" font-size="10.5" text-anchor="middle">${n.s}</text>`;
+    if (i < 3) s += `<line x1="${n.x+150}" y1="92" x2="${st[i+1].x-6}" y2="92" stroke="#5fb3f0" stroke-width="1.6" marker-end="url(#da)"/>`;
+  });
+  s += `<path d="M 805 60 C 805 18, 115 18, 115 60" fill="none" stroke="#5fb3f0" stroke-width="1.6" marker-end="url(#da)"/>`;
+  s += `<text x="460" y="24" fill="#8b97a6" font-size="10.5" text-anchor="middle">nach jedem Push: nächste Stimme</text>`;
+  s += `<text x="460" y="160" fill="#8b97a6" font-size="11" text-anchor="middle">übersprungen wird eine Stimme, wenn len = 0, sie gestoppt ist oder ihr FIFO ≥ 48 Wörter hat</text>`;
+  svg.innerHTML = s;
+
+  const N = 8, MAXF = 64, THRESH = 48;
+  let v, active, wait, cur, pushes, skips, cycles;
+  function reset(){
+    v = [];
+    for (let i = 0; i < N; i++) v.push({len: 128 + i * 16, ptr: 0x1000 + i * 0x40,
+      state: (i % 3 === 2) ? 0 : 1, wr: 0, rd: 0});
+    active = false; wait = 0; cur = 0; pushes = 0; skips = 0; cycles = 0;
+    render('zurückgesetzt');
+  }
+  function fill(i){ return (v[i].wr - v[i].rd) & 63; }
+  function tick(){
+    cycles++;
+    if (active) {
+      if (wait > 0) { wait--; render('warten auf dma_ack für Stimme ' + cur); return; }
+      // Push
+      v[cur].wr = (v[cur].wr + 1) & 63;
+      v[cur].ptr += 1; v[cur].len -= 2; pushes++;
+      active = false; cur = (cur + 1) % N;
+      render('Push für Stimme ' + ((cur + N - 1) % N) + ' erledigt, Zähler steht auf ' + cur);
+      return;
+    }
+    const x = v[cur];
+    const ok = x.len > 0 && x.state === 1 && fill(cur) < THRESH;
+    if (ok) { active = true; wait = 1; render('Anforderung für Stimme ' + cur + ' gestartet'); }
+    else { skips++; cur = (cur + 1) % N; render('Stimme ' + ((cur + N - 1) % N) + ' übersprungen (' + (x.len <= 0 ? 'len = 0' : x.state === 0 ? 'gestoppt' : 'FIFO voll') + ')'); }
+  }
+  function render(msg){
+    let h = '<table><tr><th>Stimme</th><th>Zustand</th><th>len</th><th>Zeiger</th><th>FIFO-Füllstand</th></tr>';
+    for (let i = 0; i < N; i++) {
+      const f = fill(i), pct = f / MAXF * 100;
+      const col = f >= THRESH ? '#e05a5a' : (f > 0 ? '#5ac77e' : '#2a3340');
+      h += `<tr${i === cur ? ' style="background:#1b2430"' : ''}><td>${i}${i === cur ? ' ◄' : ''}</td>` +
+           `<td>${v[i].state ? 'aktiv' : 'gestoppt'}</td><td class="num">${v[i].len}</td>` +
+           `<td class="num">0x${v[i].ptr.toString(16)}</td>` +
+           `<td><div style="background:#0b0e12;border:1px solid #2a3340;border-radius:4px;height:12px;width:100%">` +
+           `<div style="width:${pct}%;height:100%;background:${col};border-radius:3px"></div></div></td></tr>`;
+    }
+    h += '</table>';
+    document.getElementById('dmaTable').innerHTML = h;
+    document.getElementById('dmaInfo').textContent = 'Takt ' + cycles + ' · Pushes ' + pushes + ' · übersprungen ' + skips;
+    document.getElementById('dmaOut').textContent = msg;
+  }
+  document.getElementById('dmaStep').onclick = tick;
+  document.getElementById('dmaReset').onclick = reset;
+  let run = null;
+  document.getElementById('dmaRun').onclick = function(){
+    if (run) { clearInterval(run); run = null; this.textContent = 'Start'; this.classList.remove('on'); }
+    else { run = setInterval(tick, 260); this.textContent = 'Stop'; this.classList.add('on'); }
+  };
+  reset();
+})();
 </script>
 </body>
 </html>
