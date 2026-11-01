@@ -649,9 +649,9 @@ drawAcc('write');
   let v, active, wait, cur, pushes, skips, cycles;
   function reset(){
     v = [];
-    for (let i = 0; i < N; i++) v.push({len: 128 + i * 16, ptr: 0x1000 + i * 0x40,
-      state: (i % 3 === 2) ? 0 : 1, wr: 0, rd: 0});
-    active = false; wait = 0; cur = 0; pushes = 0; skips = 0; cycles = 0;
+    for (let i = 0; i < N; i++) v.push({len: 128 + i * 16, len0: 128 + i * 16, ptr: 0x1000 + i * 0x40,
+      ptr0: 0x1000 + i * 0x40, state: (i % 3 === 2) ? 0 : 1, wr: 0, rd: 0, loops: 0});
+    active = false; wait = 0; cur = 0; pushes = 0; skips = 0; cycles = 0; reloads = 0;
     render('zurückgesetzt');
   }
   function fill(i){ return (v[i].wr - v[i].rd) & 63; }
@@ -669,7 +669,12 @@ drawAcc('write');
     const x = v[cur];
     const ok = x.len > 0 && x.state === 1 && fill(cur) < THRESH;
     if (ok) { active = true; wait = 1; render('Anforderung für Stimme ' + cur + ' gestartet'); }
-    else { skips++; cur = (cur + 1) % N; render('Stimme ' + ((cur + N - 1) % N) + ' übersprungen (' + (x.len <= 0 ? 'len = 0' : x.state === 0 ? 'gestoppt' : 'FIFO voll') + ')'); }
+    if (x.len <= 0 && fill(cur) === 0 && x.state === 1 && x.wr === x.rd) {
+      x.len = x.len0; x.ptr = x.ptr0; x.wr = 0; x.rd = 0; x.loops++; reloads++;
+      render('Stimme ' + cur + ': len = 0, FIFO leer → Loop-Neuladen (Zeiger zurück auf 0x' + x.ptr0.toString(16) + ')');
+      return;
+    }
+    if (!ok) { skips++; cur = (cur + 1) % N; render('Stimme ' + ((cur + N - 1) % N) + ' übersprungen (' + (x.len <= 0 ? 'len = 0, FIFO noch gefüllt' : x.state === 0 ? 'gestoppt' : 'FIFO voll') + ')'); }
   }
   function render(msg){
     let h = '<table><tr><th>Stimme</th><th>Zustand</th><th>len</th><th>Zeiger</th><th>FIFO-Füllstand</th></tr>';
@@ -684,7 +689,7 @@ drawAcc('write');
     }
     h += '</table>';
     document.getElementById('dmaTable').innerHTML = h;
-    document.getElementById('dmaInfo').textContent = 'Takt ' + cycles + ' · Pushes ' + pushes + ' · übersprungen ' + skips;
+    document.getElementById('dmaInfo').textContent = 'Takt ' + cycles + ' · Pushes ' + pushes + ' · übersprungen ' + skips + ' · Loops ' + reloads;
     document.getElementById('dmaOut').textContent = msg;
   }
   document.getElementById('dmaStep').onclick = tick;
@@ -692,7 +697,7 @@ drawAcc('write');
   let run = null;
   document.getElementById('dmaRun').onclick = function(){
     if (run) { clearInterval(run); run = null; this.textContent = 'Start'; this.classList.remove('on'); }
-    else { run = setInterval(tick, 260); this.textContent = 'Stop'; this.classList.add('on'); }
+    else { run = setInterval(tick, 70); this.textContent = 'Stop'; this.classList.add('on'); }
   };
   reset();
 })();
