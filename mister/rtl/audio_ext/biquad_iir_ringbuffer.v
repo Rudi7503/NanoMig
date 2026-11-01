@@ -126,10 +126,10 @@ module biquad_iir_ringbuffer (
     wire [7:0] fsm_coeff_addr = {(state == 0 ? selected : proc_ch), read_coeff};
 
     always @(posedge clk) begin
-        if (reg_cs && reg_wr) begin
-            if (reg_be[1]) coeff_ram[cpu_coeff_addr][15:8] <= reg_wdata[15:8];
-            if (reg_be[0]) coeff_ram[cpu_coeff_addr][ 7:0] <= reg_wdata[ 7:0];
-        end
+        // Ganzwort schreiben: zwei getrennt bedingte Byte-Zuweisungen sind fuer
+        // Quartus kein Speichermuster, deshalb lag dieses Array in Flip-Flops
+        // samt 32:1-Lesemuxen. Die CPU schreibt Koeffizienten ohnehin mit MOVE.W.
+        if (reg_cs && reg_wr) coeff_ram[cpu_coeff_addr] <= reg_wdata;
         cpu_rdata_raw   <= coeff_ram[cpu_coeff_addr];
         fsm_coeff_rdata <= coeff_ram[fsm_coeff_addr];
     end
