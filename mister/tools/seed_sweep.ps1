@@ -14,14 +14,15 @@
 
 param(
     [string]$Branch = "rudi/chain-stereo",
-    [int[]]$Seeds = @(2,3,4,5),
+    [string]$Seeds = "2,3,4,5",   # Komma-Liste, damit -File den Aufruf annimmt
     [string]$Repo = "D:\programmier_ordner\FPGA\NanoMig",
     [string]$QuartusBin = "C:\altera_lite\25.1std\quartus\bin64"
 )
 
+$seedList = $Seeds -split "," | ForEach-Object { [int]$_.Trim() }
 $results = @()
 
-foreach ($seed in $Seeds) {
+foreach ($seed in $seedList) {
     $wt = Join-Path $env:TEMP ("seed-$seed")
     Write-Host "=== Seed $seed ==="
 
