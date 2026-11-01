@@ -263,15 +263,10 @@ module audio_ext #(
         .out_index(dec_out_idx)
     );
 
-    // Gestoppte Stimme liefert Null, statt ihren letzten Wert als
-    // Gleichspannung zu halten. Stille ist damit eine Eigenschaft der
-    // Hardware und nicht eine Pflicht fuer jede Software.
-    wire signed [15:0] new_pcm = !v_act ? 16'sd0 :
-                                 (do_decode && v_adpcm) ? dec_out_pcm :
+    wire signed [15:0] new_pcm = (do_decode && v_adpcm) ? dec_out_pcm :
                                  (do_decode)            ? next_pcm_l :
                                  cur_pcm;
-    wire signed [15:0] new_pcm_r = !v_act ? 16'sd0 :
-                                   (do_decode && v_adpcm) ? dec_out_pcm :
+    wire signed [15:0] new_pcm_r = (do_decode && v_adpcm) ? dec_out_pcm :
                                    (do_decode)            ? next_pcm_r :
                                    cur_pcm_r;
     wire [6:0] new_idx = (do_decode && v_adpcm) ? dec_out_idx :
@@ -429,10 +424,15 @@ module audio_ext #(
 
     wire [7:0] raw_vol_l = v_mute_mix ? 8'd0 : v_vol[15:8];
     wire [7:0] raw_vol_r = v_mute_mix ? 8'd0 : v_vol[7:0];
-    // Inaktive Stimme traegt nichts bei - auch nicht im Modulationsmodus,
+    // Stille entsteht ausschliesslich hier, nicht im Dekodierpfad: letztes
+    // PCM, ADPCM-Praediktor und Index bleiben unberuehrt. Traegt eine Stimme
+    // nichts bei, wird ihr Lautstaerkefaktor null - auch im Modulationsmodus,
     // wo die Lautstaerke sonst durch den Modulationsfaktor ersetzt wird.
-    wire signed [8:0] vol_factor_l = !v_act ? 9'sd0 : (is_mod ? mod_factor : $signed({1'b0, raw_vol_l}));
-    wire signed [8:0] vol_factor_r = !v_act ? 9'sd0 : (is_mod ? mod_factor : $signed({1'b0, raw_vol_r}));
+    wire v_starved = v_act && !v_pref && !(|tdm_fifo_fill)
+                     && (v_bc < v_frame_bits) && (v_cur_len != 0);
+    wire v_silent  = !v_act || v_starved;
+    wire signed [8:0] vol_factor_l = v_silent ? 9'sd0 : (is_mod ? mod_factor : $signed({1'b0, raw_vol_l}));
+    wire signed [8:0] vol_factor_r = v_silent ? 9'sd0 : (is_mod ? mod_factor : $signed({1'b0, raw_vol_r}));
 
     wire signed [24:0] mul_l = mix_out_l * vol_factor_l;
     wire signed [24:0] mul_r = mix_out_r * vol_factor_r;
@@ -505,12 +505,21 @@ module audio_ext #(
         end else begin
             if (cmd_we && reg_wdata[0] && !has_delay[ch]) dma_need_init[ch] <= 1'b1;
             if ((del_active && del_hits_one) || loop_reload) dma_need_init[cur_voice] <= 1'b1;
+            // Frueh nachladen: sobald der DMA alle Bytes geholt hat, beginnt er
+            // die Schleife neu zu fuellen, waehrend der FIFO noch Daten haelt.
+            // Vorher wurde erst bei leerem FIFO nachgeladen, was eine variable
+            // Haltephase mit dem letzten Sample erzeugte (Knacken am Loop).
+            if (v_act && !v_pref && (v_cur_len == 0) && !v_ctrl[1])
+                dma_need_init[cur_voice] <= 1'b1;
 
             if (dma_need_init[dma_voice]) begin
                 dma_need_init[dma_voice] <= 1'b0;
                 ram_ptr[dma_voice] <= {cfg_ptr_hi[dma_voice], cfg_ptr_lo[dma_voice][15:1]};
                 ram_len[dma_voice] <= {cfg_len_hi[dma_voice], cfg_len_lo[dma_voice]};
-                ram_wrptr[dma_voice] <= 6'd0;
+                // Zeiger nur zuruecksetzen, wenn dieser FIFO wirklich leer ist.
+                // Sonst wuerde das Nachladen die noch ungehoerten Woerter
+                // ueberschreiben statt sie anzuschliessen.
+                if (dma_fifo_fill == 6'd0) ram_wrptr[dma_voice] <= 6'd0;
             end else if (dma_push) begin
                 ram_ptr[dma_voice] <= next_dma_ptr;
                 ram_len[dma_voice] <= next_dma_len;
