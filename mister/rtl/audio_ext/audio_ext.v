@@ -200,8 +200,8 @@ module audio_ext #(
     wire signed [15:0] cur_pcm  = dout_pcm_idx[31:16];
     wire [6:0]         cur_idx  = dout_pcm_idx[15:9];
     wire [15:0]        v_timer  = dout_timer_bc[31:16];
-    wire [4:0]         v_bc     = dout_timer_bc[15:11];
-    wire [23:0]        v_res    = dout_res[31:8];
+    wire [5:0]         v_bc     = dout_timer_bc[15:10];
+    wire [31:0]        v_res    = dout_res;
 
     wire        v_act    = voice_state[cur_voice][1]; // PREFILL (2'b10) or PLAYING (2'b11)
     wire        v_pref   = (voice_state[cur_voice] == 2'b10);
@@ -219,22 +219,23 @@ module audio_ext #(
     wire [15:0] timer_diff = v_timer - tick_step;
 
     wire do_decode = v_act && !v_pref && v_timer_exp && (v_bc >= v_frame_bits);
-    wire do_refill = v_act && (v_bc <= 8) && (|tdm_fifo_fill) && !do_decode;
+    wire do_refill = v_act && (v_bc <= 6'd16) && (v_bc < v_frame_bits) && (|tdm_fifo_fill) && !do_decode;
 
     wire [15:0] be_fifo = {fifo_dout[7:0], fifo_dout[15:8]};
     // FIFO data is a little-endian bit reservoir; retain only valid residual bits.
-    wire [23:0] residual_mask = 24'hffffff >> (24 - v_bc);
-    wire [23:0] next_res_fill = (v_res & residual_mask) | ({8'd0, be_fifo} << v_bc);
+    wire [31:0] residual_mask = (v_bc == 6'd0) ? 32'd0 : (32'hffffffff >> (32 - v_bc));
+    wire [31:0] next_res_fill = (v_res & residual_mask) | ({16'd0, be_fifo} << v_bc);
 
-    reg [23:0] next_res_consume;
+    reg [31:0] next_res_consume;
     always @* begin
         case (v_frame_bits)
-            6'd2:    next_res_consume = {2'd0,  v_res[23:2]};
-            6'd4:    next_res_consume = {4'd0,  v_res[23:4]};
-            6'd5:    next_res_consume = {5'd0,  v_res[23:5]};
-            6'd8:    next_res_consume = {8'd0,  v_res[23:8]};
-            6'd16:   next_res_consume = {16'd0, v_res[23:16]};
-            default: next_res_consume = 24'd0;
+            6'd2:    next_res_consume = {2'd0,  v_res[31:2]};
+            6'd4:    next_res_consume = {4'd0,  v_res[31:4]};
+            6'd5:    next_res_consume = {5'd0,  v_res[31:5]};
+            6'd8:    next_res_consume = {8'd0,  v_res[31:8]};
+            6'd16:   next_res_consume = {16'd0, v_res[31:16]};
+            6'd32:   next_res_consume = 32'd0;
+            default: next_res_consume = 32'd0;
         endcase
     end
 
@@ -268,12 +269,14 @@ module audio_ext #(
         (v_pref && (tdm_fifo_fill[5] || v_cur_len == 0)) ? v_per :
         v_timer;
 
-    wire [4:0] next_bc = tdm_need_init[cur_voice] ? 5'd0 :
-        do_refill ? {1'b1, v_bc[3:0]} :
-        do_decode ? (v_bc - v_frame_bits[4:0]) :
+    // 6 Bit, damit auch ein 32-Bit-Frame (16-Bit-Stereo, interleaved L/R)
+    // abgezaehlt werden kann: 5 Bit liefen bis 31 und erreichten nie 32.
+    wire [5:0] next_bc = tdm_need_init[cur_voice] ? 6'd0 :
+        do_refill ? (v_bc + 6'd16) :
+        do_decode ? (v_bc - v_frame_bits) :
         v_bc;
 
-    wire [23:0] next_res_val = tdm_need_init[cur_voice] ? 24'd0 :
+    wire [31:0] next_res_val = tdm_need_init[cur_voice] ? 32'd0 :
         do_refill ? next_res_fill :
         do_decode ? next_res_consume :
         v_res;
@@ -285,8 +288,8 @@ module audio_ext #(
 
     always @(posedge clk) begin
         sdpb_pcm_idx[cur_voice]  <= {next_pcm_idx_val, 9'd0};
-        sdpb_timer_bc[cur_voice] <= {next_timer, next_bc, 11'd0};
-        sdpb_res[cur_voice]      <= {next_res_val, 8'd0};
+        sdpb_timer_bc[cur_voice] <= {next_timer, next_bc, 10'd0};
+        sdpb_res[cur_voice]      <= next_res_val;
         dout_pcm_idx  <= sdpb_pcm_idx[cur_voice_next];
         dout_timer_bc <= sdpb_timer_bc[cur_voice_next];
         dout_res      <= sdpb_res[cur_voice_next];
