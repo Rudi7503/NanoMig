@@ -263,10 +263,15 @@ module audio_ext #(
         .out_index(dec_out_idx)
     );
 
-    wire signed [15:0] new_pcm = (do_decode && v_adpcm) ? dec_out_pcm :
+    // Gestoppte Stimme liefert Null, statt ihren letzten Wert als
+    // Gleichspannung zu halten. Stille ist damit eine Eigenschaft der
+    // Hardware und nicht eine Pflicht fuer jede Software.
+    wire signed [15:0] new_pcm = !v_act ? 16'sd0 :
+                                 (do_decode && v_adpcm) ? dec_out_pcm :
                                  (do_decode)            ? next_pcm_l :
                                  cur_pcm;
-    wire signed [15:0] new_pcm_r = (do_decode && v_adpcm) ? dec_out_pcm :
+    wire signed [15:0] new_pcm_r = !v_act ? 16'sd0 :
+                                   (do_decode && v_adpcm) ? dec_out_pcm :
                                    (do_decode)            ? next_pcm_r :
                                    cur_pcm_r;
     wire [6:0] new_idx = (do_decode && v_adpcm) ? dec_out_idx :
@@ -424,8 +429,10 @@ module audio_ext #(
 
     wire [7:0] raw_vol_l = v_mute_mix ? 8'd0 : v_vol[15:8];
     wire [7:0] raw_vol_r = v_mute_mix ? 8'd0 : v_vol[7:0];
-    wire signed [8:0] vol_factor_l = is_mod ? mod_factor : $signed({1'b0, raw_vol_l});
-    wire signed [8:0] vol_factor_r = is_mod ? mod_factor : $signed({1'b0, raw_vol_r});
+    // Inaktive Stimme traegt nichts bei - auch nicht im Modulationsmodus,
+    // wo die Lautstaerke sonst durch den Modulationsfaktor ersetzt wird.
+    wire signed [8:0] vol_factor_l = !v_act ? 9'sd0 : (is_mod ? mod_factor : $signed({1'b0, raw_vol_l}));
+    wire signed [8:0] vol_factor_r = !v_act ? 9'sd0 : (is_mod ? mod_factor : $signed({1'b0, raw_vol_r}));
 
     wire signed [24:0] mul_l = mix_out_l * vol_factor_l;
     wire signed [24:0] mul_r = mix_out_r * vol_factor_r;
