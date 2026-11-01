@@ -362,17 +362,17 @@ module audio_ext #(
     biquad_iir_ringbuffer biquad_inst0 (
         .clk(clk),
         .reset(reset),
-        .reg_cs(biquad_cs && !ch[4]),
+        .reg_cs(biquad_cs),
         .reg_wr(reg_wr),
         .reg_addr({ch, off[2:0]}),
         .reg_be(reg_be),
         .reg_wdata(reg_wdata),
         .reg_rdata(biquad0_rdata),
         .cur_voice(cur_voice),
-        .filter_en_l(v_flt_l && !cur_voice[4]),
-        .filter_en_r(v_flt_r && !cur_voice[4]),
-        .is_stereo(v_stereo),
-        .req_strobe(biquad_strobe && !cur_voice[4]),
+        .filter_en_l(v_flt_l),   // DSP 0 rechnet nur den linken Kanal
+        .filter_en_r(1'b0),
+        .is_stereo(1'b0),
+        .req_strobe(biquad_strobe),
         .in_pcm_l(in_pcm_src_l),
         .in_pcm_r(in_pcm_src_r),
         .out_pcm_l(biquad0_pcm_l),
@@ -382,25 +382,28 @@ module audio_ext #(
     biquad_iir_ringbuffer biquad_inst1 (
         .clk(clk),
         .reset(reset),
-        .reg_cs(biquad_cs && ch[4]),
+        .reg_cs(biquad_cs),
         .reg_wr(reg_wr),
         .reg_addr({ch, off[2:0]}),
         .reg_be(reg_be),
         .reg_wdata(reg_wdata),
         .reg_rdata(biquad1_rdata),
         .cur_voice(cur_voice),
-        .filter_en_l(v_flt_l && cur_voice[4]),
-        .filter_en_r(v_flt_r && cur_voice[4]),
-        .is_stereo(v_stereo),
-        .req_strobe(biquad_strobe && cur_voice[4]),
+        .filter_en_l(1'b0),
+        .filter_en_r(v_flt_r),   // DSP 1 rechnet nur den rechten Kanal
+        .is_stereo(1'b0),
+        .req_strobe(biquad_strobe),
         .in_pcm_l(in_pcm_src_l),
         .in_pcm_r(in_pcm_src_r),
         .out_pcm_l(biquad1_pcm_l),
         .out_pcm_r(biquad1_pcm_r)
     );
 
-    wire signed [15:0] biquad_pcm_l = cur_voice[4] ? biquad1_pcm_l : biquad0_pcm_l;
-    wire signed [15:0] biquad_pcm_r = cur_voice[4] ? biquad1_pcm_r : biquad0_pcm_r;
+    // Aufteilung nach Kanal, nicht nach Stimmenhaelfte: jede Instanz bedient
+    // alle 32 Stimmen, aber nur eine Seite. Damit bleibt eine Kaskade
+    // ch0..ch31 innerhalb einer Instanz und damit in einer Sampleperiode.
+    wire signed [15:0] biquad_pcm_l = biquad0_pcm_l;
+    wire signed [15:0] biquad_pcm_r = biquad1_pcm_r;
     wire [15:0] biquad_rdata = ch[4] ? biquad1_rdata : biquad0_rdata;
 
     // DSP Stereo Mixer with AM / Tremolo & Ringmodulation
