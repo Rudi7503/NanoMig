@@ -86,12 +86,12 @@ Start:
         LEA     AUDIO_EXT_BASE,A0
         MOVEQ   #NUM_VOICES-1,D7
 .A_Ctrl:
-        TST.W   D7
-        BNE.S   .A_Chain
-        MOVE.W  #(CTRL_16BIT|CTRL_STEREO),AUD_CTRL(A0)
-        BRA.S   .A_Next
-.A_Chain:
+        CMPA.L  #AUDIO_EXT_BASE,A0
+        BEQ.S   .A_Root
         MOVE.W  #(CTRL_16BIT|CTRL_STEREO|CTRL_CHAIN_POST),AUD_CTRL(A0)
+        BRA.S   .A_Next
+.A_Root:
+        MOVE.W  #(CTRL_16BIT|CTRL_STEREO),AUD_CTRL(A0)
 .A_Next:
         LEA     VOICE_STRIDE(A0),A0
         DBRA    D7,.A_Ctrl
@@ -118,12 +118,12 @@ Start:
         LEA     AUDIO_EXT_BASE,A0
         MOVEQ   #NUM_VOICES-1,D7
 .B_Ctrl:
-        TST.W   D7
-        BNE.S   .B_Chain
-        MOVE.W  #(CTRL_16BIT|CTRL_STEREO|CTRL_FILTER),AUD_CTRL(A0)
-        BRA.S   .B_Next
-.B_Chain:
+        CMPA.L  #AUDIO_EXT_BASE,A0
+        BEQ.S   .B_Root
         MOVE.W  #(CTRL_16BIT|CTRL_STEREO|CTRL_FILTER|CTRL_CHAIN_POST),AUD_CTRL(A0)
+        BRA.S   .B_Next
+.B_Root:
+        MOVE.W  #(CTRL_16BIT|CTRL_STEREO|CTRL_FILTER),AUD_CTRL(A0)
 .B_Next:
         LEA     VOICE_STRIDE(A0),A0
         DBRA    D7,.B_Ctrl

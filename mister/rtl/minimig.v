@@ -418,11 +418,16 @@ wire [15:0] audio_ext_rdata;
 // 16-Voice Ringbuffer Audio Extension (.. = 512 bytes)
 wire audio_ext_selected = (cpu_address_out[23:10] == 14'b1101_1111_1111_01);
 wire audio_ext_access = audio_ext_selected && !dbr && (cpu_rd || cpu_hwr || cpu_lwr);
+// Global Audio Extension Interrupt Registers (..)
+wire audio_irq_selected = (cpu_address_out[23:4] == (24'hDFF804 >> 4)) && (cpu_address_out[3:1] <= 3'd3);
+wire audio_irq_access = audio_irq_selected && !dbr && (cpu_rd || cpu_hwr || cpu_lwr);
+
 audio_ext AUDIO_EXT (
 	.clk(clk), .reset(reset), .ntsc(ntsc),
 	.reg_cs(audio_ext_access), .reg_wr(cpu_hwr || cpu_lwr),
 	.reg_addr(cpu_address_out[9:1]), .reg_be({cpu_hwr,cpu_lwr}),
 	.reg_wdata(cpu_data_out), .reg_rdata(audio_ext_rdata), .irq(audio_ext_irq),
+	.irq_cs(audio_irq_access), .irq_addr(cpu_address_out[2:1]),
 	.dma_req(audio_dma_req), .dma_addr(audio_dma_addr),
 	.dma_ack(audio_dma_ack), .dma_data(audio_dma_data), .dma_error(audio_dma_error),
 	.sample_l(audio_ext_l), .sample_r(audio_ext_r)
@@ -609,7 +614,7 @@ agnus AGNUS1
 	.clk7_en(clk7_en),
 	.cck(cck),
 	.reset(reset),
-	.aen(sel_reg && !audio_ext_selected && !ham_ext_selected && !cap_ctrl_selected && !audio_cap_selected),
+	.aen(sel_reg && !audio_ext_selected && !audio_irq_selected && !ham_ext_selected && !cap_ctrl_selected && !audio_cap_selected),
 	.rd(cpu_rd),
 	.hwr(cpu_hwr),
 	.lwr(cpu_lwr),
@@ -1261,7 +1266,7 @@ assign cdtv_selack = cdtv_bridge_selack | sel_cdtv_nvram | sel_cdtv_card;
 assign cpu_data_in[15:0]= (ham_ext_access && cpu_rd) ? ham_control_shadow :
                           (cap_ctrl_access && cpu_rd) ? cap_ctrl_rdata :
                           (audio_cap_access && cpu_rd) ? audio_cap_rdata :
-                          (audio_ext_access && cpu_rd) ? audio_ext_rdata : gary_data_out[15:0]
+                          ((audio_ext_access || audio_irq_access) && cpu_rd) ? audio_ext_rdata : gary_data_out[15:0]
 							 | cia_data_out[15:0]
 							 | gayle_data_out[15:0]
 							 | cart_data_out[15:0]

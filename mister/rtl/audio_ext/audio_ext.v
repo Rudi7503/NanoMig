@@ -13,6 +13,8 @@ module audio_ext #(
     input wire [1:0] reg_be,
     input wire [15:0] reg_wdata,
     output reg [15:0] reg_rdata,
+    input wire irq_cs,
+    input wire [1:0] irq_addr,
     output wire irq,
     output wire dma_req,
     output wire [31:0] dma_addr,
@@ -25,7 +27,14 @@ module audio_ext #(
     wire [9:0] address = {reg_addr, 1'b0};
     wire [4:0] ch  = address[9:5]; // 32 channels (0..31), 32 bytes each
     wire [3:0] off = address[4:1]; // 16 words per channel
-    wire is_ch31 = (ch == 5'd31);
+    wire irq_active = (irq_cs === 1'b1);
+    reg irq_bus_held;
+    reg [1:0] irq_bus_last;
+    wire irq_write_once = irq_active && reg_wr && (!irq_bus_held || irq_addr != irq_bus_last);
+    always @(posedge clk) begin
+        if (reset) begin irq_bus_held <= 0; irq_bus_last <= 0; end
+        else begin irq_bus_held <= irq_active && reg_wr; irq_bus_last <= irq_addr; end
+    end
 
     reg bus_held;
     reg [9:1] bus_last;
@@ -85,16 +94,19 @@ module audio_ext #(
     always @(posedge clk) begin
         if (reset) begin
             voice_irq_en <= {NUM_VOICES{1'b0}};
-        end else if (write_once) begin
-            case (off)
-                4'd0: cfg_ptr_hi[ch] <= reg_wdata[7:0];
-                4'd1: cfg_ptr_lo[ch] <= reg_wdata;
-                4'd2: cfg_len_hi[ch] <= reg_wdata;
-                4'd3: cfg_len_lo[ch] <= reg_wdata;
-                // Channel 31 Global Interrupt Enable (32-bit across words 12 and 13)
-                4'd12: if (is_ch31) voice_irq_en[31:16] <= reg_wdata; // $DFF7F8: INTENA HI
-                4'd13: if (is_ch31) voice_irq_en[15:0]  <= reg_wdata; // $DFF7FA: INTENA LO
-            endcase
+        end else begin
+            if (write_once) begin
+                case (off)
+                    4'd0: cfg_ptr_hi[ch] <= reg_wdata[7:0];
+                    4'd1: cfg_ptr_lo[ch] <= reg_wdata;
+                    4'd2: cfg_len_hi[ch] <= reg_wdata;
+                    4'd3: cfg_len_lo[ch] <= reg_wdata;
+                endcase
+            end
+            if (irq_write_once) begin
+                if (irq_addr == 2'd0) voice_irq_en[31:16] <= reg_wdata;
+                if (irq_addr == 2'd1) voice_irq_en[15:0]  <= reg_wdata;
+            end
         end
     end
 
@@ -102,7 +114,7 @@ module audio_ext #(
     reg [1:0] voice_state [0:NUM_VOICES-1];
     reg [NUM_VOICES-1:0] dma_need_init, tdm_need_init;
 
-    wire cmd_we = write_once && (off == 4'd13) && !is_ch31 && reg_be[0];
+    wire cmd_we = write_once && (off == 4'd13) && reg_be[0];
 
     // Runtime DMA voice state (23-bit word pointer, 32-bit length)
     reg [22:0] ram_ptr   [0:NUM_VOICES-1];
@@ -433,11 +445,21 @@ module audio_ext #(
         else prev_carrier_l <= mix_out_l;
     end
 
+    reg signed [15:0] prev_carrier_r;
+    always @(posedge clk) begin
+        if (reset) prev_carrier_r <= 16'd0;
+        else prev_carrier_r <= mix_out_r;
+    end
+
     wire is_mod = (v_mod_mode != 2'b00);
-    wire [7:0] mod_u8 = (prev_carrier_l[15:8] ^ 8'h80);
-    wire signed [8:0] mod_factor = (v_mod_mode == 2'b01) ? $signed({1'b0, mod_u8}) :
-                                   (v_mod_mode == 2'b10) ? $signed(prev_carrier_l[15:7]) :
-                                   $signed({1'b0, v_vol[15:8]});
+    wire [7:0] mod_u8_l = (prev_carrier_l[15:8] ^ 8'h80);
+    wire [7:0] mod_u8_r = (prev_carrier_r[15:8] ^ 8'h80);
+    wire signed [8:0] mod_factor_l = (v_mod_mode == 2'b01) ? $signed({1'b0, mod_u8_l}) :
+                                     (v_mod_mode == 2'b10) ? $signed(prev_carrier_l[15:7]) :
+                                     $signed({1'b0, v_vol[15:8]});
+    wire signed [8:0] mod_factor_r = (v_mod_mode == 2'b01) ? $signed({1'b0, mod_u8_r}) :
+                                     (v_mod_mode == 2'b10) ? $signed(prev_carrier_r[15:7]) :
+                                     $signed({1'b0, v_vol[7:0]});
 
     wire [7:0] raw_vol_l = v_mute_mix ? 8'd0 : v_vol[15:8];
     wire [7:0] raw_vol_r = v_mute_mix ? 8'd0 : v_vol[7:0];
@@ -448,8 +470,8 @@ module audio_ext #(
     wire v_starved = v_act && !v_pref && !(|tdm_fifo_fill)
                      && (v_bc < v_frame_bits) && (v_cur_len != 0);
     wire v_silent  = !v_act || v_starved;
-    wire signed [8:0] vol_factor_l = v_silent ? 9'sd0 : (is_mod ? mod_factor : $signed({1'b0, raw_vol_l}));
-    wire signed [8:0] vol_factor_r = v_silent ? 9'sd0 : (is_mod ? mod_factor : $signed({1'b0, raw_vol_r}));
+    wire signed [8:0] vol_factor_l = v_silent ? 9'sd0 : (is_mod ? mod_factor_l : $signed({1'b0, raw_vol_l}));
+    wire signed [8:0] vol_factor_r = v_silent ? 9'sd0 : (is_mod ? mod_factor_r : $signed({1'b0, raw_vol_r}));
 
     wire signed [24:0] mul_l = mix_out_l * vol_factor_l;
     wire signed [24:0] mul_r = mix_out_r * vol_factor_r;
@@ -506,7 +528,7 @@ module audio_ext #(
     wire [15:0] next_del_val = cur_del_val - 1'b1;
 
     // Single write port to del_cnt (CPU write or TDM countdown decrement)
-    wire cpu_del_we   = write_once && (off == 4'd14) && !is_ch31;
+    wire cpu_del_we   = write_once && (off == 4'd14);
     wire wr_del_we    = cpu_del_we || del_active;
     wire [4:0] wr_del_addr  = cpu_del_we ? ch : cur_voice;
     wire [15:0] wr_del_data = cpu_del_we ? reg_wdata : next_del_val;
@@ -563,7 +585,7 @@ module audio_ext #(
             end
 
             // CPU writes to delay register (single-driven write port)
-            if (write_once && (off == 4'd14) && !is_ch31) begin
+            if (write_once && (off == 4'd14)) begin
                 has_delay[ch] <= (reg_wdata != 16'd0);
             end
 
@@ -574,23 +596,33 @@ module audio_ext #(
                 end else if (reg_wdata[0]) begin
                     voice_state[ch] <= has_delay[ch] ? 2'b01 : 2'b10; // START -> DELAYING or PREFILL
                 end
-            end else if (write_once && is_ch31) begin
-                if (off == 4'd14) voice_pending[31:16] <= voice_pending[31:16] & ~reg_wdata; // W1C HI
-                if (off == 4'd15) voice_pending[15:0]  <= voice_pending[15:0]  & ~reg_wdata; // W1C LO
+            end
+
+            // Global Interrupt Request Clear (W1C at $DFF808 / $DFF80A)
+            if (irq_write_once) begin
+                if (irq_addr == 2'd2) voice_pending[31:16] <= voice_pending[31:16] & ~reg_wdata; // W1C HI
+                if (irq_addr == 2'd3) voice_pending[15:0]  <= voice_pending[15:0]  & ~reg_wdata; // W1C LO
             end
         end
     end
 
-    // Flat CPU Register Read Mux (32-Voice Option A: Global INTENA/INTREQ at Channel 31)
+    // Flat CPU Register Read Mux (Option A: Global INTENA/INTREQ at $DFF804..$DFF80A)
     always @* begin
-        case (off)
-            4'd12:   reg_rdata = is_ch31 ? voice_irq_en[31:16] : 16'd0;
-            4'd13:   reg_rdata = is_ch31 ? voice_irq_en[15:0]  : {13'd0, (voice_state[ch] == 2'b01), (voice_state[ch] == 2'b10), voice_state[ch][1]};
-            4'd14:   reg_rdata = is_ch31 ? voice_pending[31:16]: {15'd0, (voice_state[ch] == 2'b01)};
-            4'd15:   reg_rdata = is_ch31 ? voice_pending[15:0] : {15'd0, (voice_state[ch] == 2'b01)};
-            4'd8, 4'd9, 4'd10, 4'd11: reg_rdata = biquad_rdata;
-            default: reg_rdata = 16'd0;
-        endcase
+        if (irq_active) begin
+            case (irq_addr)
+                2'd0: reg_rdata = voice_irq_en[31:16];
+                2'd1: reg_rdata = voice_irq_en[15:0];
+                2'd2: reg_rdata = voice_pending[31:16];
+                2'd3: reg_rdata = voice_pending[15:0];
+            endcase
+        end else begin
+            case (off)
+                4'd8, 4'd9, 4'd10, 4'd11, 4'd12: reg_rdata = biquad_rdata;
+                4'd13: reg_rdata = {13'd0, (voice_state[ch] == 2'b01), (voice_state[ch] == 2'b10), voice_state[ch][1]};
+                4'd14, 4'd15: reg_rdata = {15'd0, (voice_state[ch] == 2'b01)};
+                default: reg_rdata = 16'd0;
+            endcase
+        end
     end
 
     assign irq = |(voice_pending & voice_irq_en);

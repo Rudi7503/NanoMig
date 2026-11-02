@@ -60,6 +60,6 @@ always @(posedge clk) if(!reset) begin
  if(req&&ack)beats=beats+1;
  if(dut.cur_voice==0 && dut.do_decode)decodes=decodes+1;
  if((^sl)!==1'bx && sl!=0)out_nonzero=out_nonzero+1; if(sl!==sr) lr_diff=lr_diff+1;
- if(dut.biquad_inst0.have_pending && dut.biquad_inst0.scan_start > maxpos) maxpos=dut.biquad_inst0.scan_start;
+ if(dut.biquad_inst0.have_pending && dut.biquad_inst0.stage > maxpos) maxpos=dut.biquad_inst0.stage;
 end
 endmodule

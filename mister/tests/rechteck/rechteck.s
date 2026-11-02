@@ -79,12 +79,12 @@ Start:
         MOVE.W  #BQ_B2,AUD_BQ_B2(A0)
         MOVE.W  #BQ_A1,AUD_BQ_A1(A0)
         MOVE.W  #BQ_A2,AUD_BQ_A2(A0)
-        TST.W   D7
-        BNE.S   .Chain
-        MOVE.W  #(CTRL_16BIT|CTRL_STEREO|CTRL_FILTER),AUD_CTRL(A0)
-        BRA.S   .Next
-.Chain:
+        CMPA.L  #AUDIO_EXT_BASE,A0
+        BEQ.S   .Root
         MOVE.W  #(CTRL_16BIT|CTRL_STEREO|CTRL_FILTER|CTRL_CHAIN_POST),AUD_CTRL(A0)
+        BRA.S   .Next
+.Root:
+        MOVE.W  #(CTRL_16BIT|CTRL_STEREO|CTRL_FILTER),AUD_CTRL(A0)
 .Next:
         LEA     VOICE_STRIDE(A0),A0
         DBRA    D7,.Setup
