@@ -57,11 +57,24 @@ foreach ($seed in $seedList) {
         if ($c -match 'Total RAM Blocks\s*:\s*(\d+)')             { $row.RAM  = $matches[1] }
         if ($c -match 'Total DSP Blocks\s*:\s*(\d+)')             { $row.DSP  = $matches[1] }
     }
+    # Die Slack-Zeile steht in der Summary oft in der NAECHSTEN Zeile,
+    # deshalb zeilenweise und mit Blick auf die folgenden vier Zeilen.
     $sta = Join-Path $wt "mister\output_files\Minimig.sta.summary"
     if (Test-Path $sta) {
-        $s = Get-Content $sta -Raw
-        if ($s -match "Setup 'emu\|pll\|[^']*counter\[0\][^']*'\s*;\s*Slack\s*:\s*(-?[\d.]+)") { $row.Setup = $matches[1] }
-        if ($s -match "Hold 'emu\|pll\|[^']*counter\[0\][^']*'\s*;\s*Slack\s*:\s*(-?[\d.]+)")  { $row.Hold  = $matches[1] }
+        $lines = Get-Content $sta
+        foreach ($kind in @('Setup','Hold')) {
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -match "Model $kind 'emu\|pll") {
+                    for ($j = $i; $j -lt [Math]::Min($i + 4, $lines.Count); $j++) {
+                        if ($lines[$j] -match 'Slack\s*:\s*(-?[\d.,]+)') {
+                            if ($kind -eq 'Setup') { $row.Setup = $matches[1] } else { $row.Hold = $matches[1] }
+                            break
+                        }
+                    }
+                    break
+                }
+            }
+        }
     }
     $rbf = Join-Path $wt "mister\output_files\Minimig.rbf"
     if (Test-Path $rbf) { $row.RBF = (Get-FileHash $rbf -Algorithm SHA256).Hash.ToLower() }
