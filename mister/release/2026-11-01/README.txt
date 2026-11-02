@@ -2,7 +2,7 @@ Release 2026-11-01
 ==================
 
 RBF  Minimig_5f83871c.rbf   4.104.228 Bytes
-SHA256 5f83871c7ee6b04a1ba189d59422bd27a17a9c7e8cff3f82afe6985edba7b9f
+SHA256 5f83871c7ee6b04a1ba189d59422bd27a17a9c7e8cff3f82afe6985edba7b99f
 
 Stand: Branch rudi/chain-stereo
   Stereo-Deadlock behoben (32-Bit-Frames)
