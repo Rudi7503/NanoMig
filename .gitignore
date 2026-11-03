@@ -24,3 +24,15 @@ src/minimig-aga/test_audio_ext_*.v
 
 src/minimig-aga/biquad_iir_4ch.v
 
+# Quartus build outputs
+/mister/db/
+/mister/incremental_db/
+/mister/output_files/
+/mister/*.rpt
+/mister/*.summary
+/mister/*.smsg
+/mister/*.qmsg
+/mister/*.log
+/mister/build_id.v
+/mister/c5_pin_model_dump.txt
+/mister/jtag.cdf
