@@ -35,16 +35,15 @@ Dieser PR behebt fundamentale Fehler im erweiterten Audio-Subsystem (`audio_ext`
   - `verify_adpcm.py` / `tb_adpcm_ref.v`: 51.240 Stimuli inkl. 48.000 Samples Apollo-ADPCM gegen Python-Referenz bitgenau verifiziert (0 Fehler).
   - `tb_opt_a_irq.v`: Option A Global IRQ ($DFF804) und Kanal-31-Vollfunktionalität (Koeffizient a2, Start-Delay, CMD) verifiziert.
 - [x] **Synthese (Quartus 25.1std)**:
-  - Vollständiger Build erfolgreich.
-  - Ressourcen: ALMs von 38.355 auf 36.094 gesenkt (-2.261 ALMs), M10K BRAM 327 -> 330 (+3), DSP 75 (unverändert).
+  - Vollständiger Build erfolgreich (Bitstream `Minimig_c106117b.rbf`, 4.123.036 Bytes, SHA256 `c106117b119706c13430087b5fa0649b54cfe63a2588c7ba707ad3151f4e482d`).
+  - Ressourcen: ALMs von 38.355 auf 36.152 gesenkt (-2.203 ALMs, 86%), 49.741 Register, M10K BRAM 327 -> 330 (+3, 60%), DSP 75 (67%, unverändert).
 - [x] **Timing**:
-  - Arbeitsstand: Setup -1,154 ns, Hold positiv.
-  - Seed 11 (`2a92564d62f6`): Setup -0,430 ns, Hold +0,245 ns.
+  - Seed 11: Setup -0,538 ns (Slow 100C), Hold +0,252 ns (Slow -40C).
   - Timing-Engpass liegt unverändert in Minimig-Altlast (`paula_floppy_fifo` -> `sdram_ctrl`), nicht im Audio-Pfad (Audiofilter hat > 17 ns Slack).
 
 ## Ausdrücklich NICHT geprüft
 
-- Hardware-Verifikation auf MiSTer steht aktuell noch aus (Testergebnisse zu den 7 Testprogrammen und Bitstream `5f83871c.b99f` von Toby/Apollo-Team werden erwartet).
+- Hardware-Verifikation auf MiSTer steht aktuell noch aus (Hardwaretest mit den 7 Amiga-Testprogrammen und Bitstream `Minimig_c106117b.rbf` durch Toby / Tobys KI ist für 7:00 Uhr morgens via GitHub Issue #9 vereinbart; Testergebnisse werden bei Vorliegen nachgetragen).
 
 ## Auswirkung
 

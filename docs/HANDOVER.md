@@ -15,11 +15,12 @@ Darstellung), `COLLABORATION.md` (Zusammenarbeit mit Toby).
 | Branch | Stand | Bedeutung |
 |---|---|---|
 | `main` | `2e3ed1e` | unverändert, auf Hardware erprobt |
-| **`rudi/chain-stereo`** | `27df88b` | **aktueller Arbeitsstand**, alle Audio-Korrekturen |
-| Seed 11 | `2a92564d62f6` (RBF) | bestes Timing aus 26 Läufen |
+| **`rudi/chain-stereo`** | `45149cd` | **aktueller Arbeitsstand**, alle Audio-Korrekturen + Option A + AM-Stereo |
+| Aktueller Bitstream | `c106117b1197` (RBF) | Fitter Seed 11, Option A, 36.152 ALMs |
+| Vorheriger Seed 11 | `2a92564d62f6` (RBF) | Zwischenstand vor Option A |
 
-**Nichts ist nach `main` gemergt.** Der Arbeitsstand ist simuliert und
-gebaut, aber **nicht auf Hardware getestet**.
+**Nichts ist nach `main` gemergt.** Der Arbeitsstand ist simuliert, bitgenau verifiziert (inkl. ADPCM gegen Python) und
+gebaut, aber **noch nicht auf MiSTer-Hardware getestet** (Test mit Toby für 7:00 Uhr vereinbart).
 
 ### Der Arbeitsstand im Einzelnen
 
@@ -75,7 +76,8 @@ Audiodaten, und überhaupt nichts auf dem MiSTer.
               ALMs    Register  RAM  DSP   Setup    Hold
 main          38.355  53.135    327  75    −1.846   −0.822
 Arbeitsstand  36.094  49.745    330  75    −1.154   positiv
-Seed 11       36.087  49.749    330  75    −0.430   +0.245
+Seed 11 (alt) 36.087  49.749    330  75    −0.430   +0.245
+Opt A (c1061) 36.152  49.741    330  75    −0.538   +0.252
 ```
 
 **Die Verletzung liegt nicht im Audio.** Gemessen auf der Datenbank:
