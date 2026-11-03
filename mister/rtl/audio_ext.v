@@ -72,7 +72,7 @@ module audio_ext #(
     end
 
     // Configuration registers (32-bit pointer & 32-bit length on MiSTer)
-    reg [7:0]  cfg_ptr_hi [0:NUM_VOICES-1];
+    reg [15:0] cfg_ptr_hi [0:NUM_VOICES-1];
     reg [15:0] cfg_ptr_lo [0:NUM_VOICES-1];
     reg [15:0] cfg_len_hi [0:NUM_VOICES-1];
     reg [15:0] cfg_len_lo [0:NUM_VOICES-1];
@@ -87,7 +87,7 @@ module audio_ext #(
             voice_irq_en <= {NUM_VOICES{1'b0}};
         end else if (write_once) begin
             case (off)
-                4'd0: cfg_ptr_hi[ch] <= reg_wdata[7:0];
+                4'd0: cfg_ptr_hi[ch] <= reg_wdata;
                 4'd1: cfg_ptr_lo[ch] <= reg_wdata;
                 4'd2: cfg_len_hi[ch] <= reg_wdata;
                 4'd3: cfg_len_lo[ch] <= reg_wdata;
@@ -105,7 +105,7 @@ module audio_ext #(
     wire cmd_we = write_once && (off == 4'd13) && !is_ch31 && reg_be[0];
 
     // Runtime DMA voice state (23-bit word pointer, 32-bit length)
-    reg [22:0] ram_ptr   [0:NUM_VOICES-1];
+    reg [30:0] ram_ptr   [0:NUM_VOICES-1];
     reg [31:0] ram_len   [0:NUM_VOICES-1];
     reg [5:0]  ram_wrptr [0:NUM_VOICES-1];
     reg [5:0]  ram_rdptr [0:NUM_VOICES-1];
@@ -115,13 +115,13 @@ module audio_ext #(
     reg dma_active;
     assign dma_req = dma_active;
 
-    wire [23:0] dma_ptr   = {ram_ptr[dma_voice], 1'b0};
+    wire [31:0] dma_ptr   = {ram_ptr[dma_voice], 1'b0};
     wire [31:0] dma_len   = ram_len[dma_voice];
     wire [5:0]  dma_wrptr = ram_wrptr[dma_voice];
-    assign dma_addr = {8'd0, dma_ptr};
+    assign dma_addr = dma_ptr;
 
     wire dma_push = dma_active && dma_ack;
-    wire [22:0] next_dma_ptr = ram_ptr[dma_voice] + 1'b1;
+    wire [30:0] next_dma_ptr = ram_ptr[dma_voice] + 1'b1;
     wire [31:0] next_dma_len = (|dma_len[31:1]) ? dma_len - 32'd2 : 32'd0;
 
     // FIFO RAM: 2048x16 -> 64 words per voice for 32 voices

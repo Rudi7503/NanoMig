@@ -81,7 +81,7 @@ module audio_ext #(
     end
 
     // Configuration registers (32-bit pointer & 32-bit length on MiSTer)
-    reg [7:0]  cfg_ptr_hi [0:NUM_VOICES-1];
+    reg [15:0] cfg_ptr_hi [0:NUM_VOICES-1];
     reg [15:0] cfg_ptr_lo [0:NUM_VOICES-1];
     reg [15:0] cfg_len_hi [0:NUM_VOICES-1];
     reg [15:0] cfg_len_lo [0:NUM_VOICES-1];
@@ -97,7 +97,7 @@ module audio_ext #(
         end else begin
             if (write_once) begin
                 case (off)
-                    4'd0: cfg_ptr_hi[ch] <= reg_wdata[7:0];
+                    4'd0: cfg_ptr_hi[ch] <= reg_wdata;
                     4'd1: cfg_ptr_lo[ch] <= reg_wdata;
                     4'd2: cfg_len_hi[ch] <= reg_wdata;
                     4'd3: cfg_len_lo[ch] <= reg_wdata;
@@ -117,7 +117,7 @@ module audio_ext #(
     wire cmd_we = write_once && (off == 4'd13) && reg_be[0];
 
     // Runtime DMA voice state (23-bit word pointer, 32-bit length)
-    reg [22:0] ram_ptr   [0:NUM_VOICES-1];
+    reg [30:0] ram_ptr   [0:NUM_VOICES-1];
     reg [31:0] ram_len   [0:NUM_VOICES-1];
     reg [5:0]  ram_wrptr [0:NUM_VOICES-1];
     reg [5:0]  ram_rdptr [0:NUM_VOICES-1];
@@ -127,13 +127,13 @@ module audio_ext #(
     reg dma_active;
     assign dma_req = dma_active;
 
-    wire [23:0] dma_ptr   = {ram_ptr[dma_voice], 1'b0};
+    wire [31:0] dma_ptr   = {ram_ptr[dma_voice], 1'b0};
     wire [31:0] dma_len   = ram_len[dma_voice];
     wire [5:0]  dma_wrptr = ram_wrptr[dma_voice];
-    assign dma_addr = {8'd0, dma_ptr};
+    assign dma_addr = dma_ptr;
 
     wire dma_push = dma_active && dma_ack;
-    wire [22:0] next_dma_ptr = ram_ptr[dma_voice] + 1'b1;
+    wire [30:0] next_dma_ptr = ram_ptr[dma_voice] + 1'b1;
     wire [31:0] next_dma_len = (|dma_len[31:1]) ? dma_len - 32'd2 : 32'd0;
 
     // FIFO RAM: 2048x16 -> 64 words per voice for 32 voices
@@ -307,10 +307,10 @@ module audio_ext #(
     // sdpb_timer_bc umgezogen, wo nach Timer (16) und bc (6) sieben Bit frei sind.
     wire [31:0] next_pcm_idx_val =
         (tdm_need_init[cur_voice] && !(tdm_loop_restart[cur_voice] && !v_adpcm))
-            ? {v_pred0, v_pred0}
+            ? (v_adpcm ? {v_pred0, v_pred0} : 32'd0)
             : {new_pcm_r, new_pcm};
     wire [6:0] next_idx_val = (tdm_need_init[cur_voice] && !(tdm_loop_restart[cur_voice] && !v_adpcm))
-            ? v_init_idx
+            ? (v_adpcm ? v_init_idx : 7'd0)
             : new_idx;
 
     always @(posedge clk) begin
@@ -538,9 +538,11 @@ module audio_ext #(
     end
 
     // Synchronous write to DMA RAMs
+    integer rst_v;
     always @(posedge clk) begin
         if (reset) begin
             dma_need_init <= {NUM_VOICES{1'b0}};
+            for (rst_v = 0; rst_v < NUM_VOICES; rst_v = rst_v + 1) ram_wrptr[rst_v] <= 6'd0;
         end else begin
             if (cmd_we && reg_wdata[0] && !has_delay[ch]) dma_need_init[ch] <= 1'b1;
             if ((del_active && del_hits_one) || loop_reload) dma_need_init[cur_voice] <= 1'b1;
@@ -558,7 +560,7 @@ module audio_ext #(
                 // Zeiger nur zuruecksetzen, wenn dieser FIFO wirklich leer ist.
                 // Sonst wuerde das Nachladen die noch ungehoerten Woerter
                 // ueberschreiben statt sie anzuschliessen.
-                if (dma_fifo_fill == 6'd0) ram_wrptr[dma_voice] <= 6'd0;
+                if (dma_fifo_fill == 6'd0 || voice_state[dma_voice] == 2'b10) ram_wrptr[dma_voice] <= 6'd0;
             end else if (dma_push) begin
                 ram_ptr[dma_voice] <= next_dma_ptr;
                 ram_len[dma_voice] <= next_dma_len;

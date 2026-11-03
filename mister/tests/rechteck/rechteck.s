@@ -47,7 +47,7 @@ AUD_BUF_A       EQU $DF8000
 CTRL_16BIT      EQU $0001
 CTRL_STEREO     EQU $0004
 CTRL_FILTER     EQU $0180
-CTRL_CHAIN_POST EQU $0200
+CTRL_CHAIN_POST EQU $0400
 
 PER_48K         EQU 521
 NUM_VOICES      EQU 32
@@ -71,8 +71,6 @@ Start:
         MOVE.W  D0,AUD_PTRL(A0)
         SWAP    D0
         MOVE.W  D0,AUD_PTRH(A0)
-        MOVE.W  #RECHTECK_BYTES,AUD_LENL(A0)
-        MOVE.W  #0,AUD_LENH(A0)
         MOVE.W  #PER_48K,AUD_PER(A0)
         MOVE.W  #BQ_B0,AUD_BQ_B0(A0)
         MOVE.W  #BQ_B1,AUD_BQ_B1(A0)
@@ -81,9 +79,13 @@ Start:
         MOVE.W  #BQ_A2,AUD_BQ_A2(A0)
         CMPA.L  #AUDIO_EXT_BASE,A0
         BEQ.S   .Root
+        MOVE.W  #0,AUD_LENL(A0)
+        MOVE.W  #0,AUD_LENH(A0)
         MOVE.W  #(CTRL_16BIT|CTRL_STEREO|CTRL_FILTER|CTRL_CHAIN_POST),AUD_CTRL(A0)
         BRA.S   .Next
 .Root:
+        MOVE.W  #RECHTECK_BYTES,AUD_LENL(A0)
+        MOVE.W  #0,AUD_LENH(A0)
         MOVE.W  #(CTRL_16BIT|CTRL_STEREO|CTRL_FILTER),AUD_CTRL(A0)
 .Next:
         LEA     VOICE_STRIDE(A0),A0
@@ -106,18 +108,33 @@ Start:
         BSR     Settle
 
 ; ------------------------------------------------------------------
-; Auswertung: Spitzenwert, dann Anteil der Samples nahe am Anschlag
+; Auswertung: Ein einziger Capture-Durchlauf fuer Block A
 ; ------------------------------------------------------------------
-        BSR     Peak                            ; D5 = Spitzenwert
-        MOVE.L  D5,D6
-        MULU    #7,D6
-        DIVU    #10,D6                          ; D6 = 70 Prozent von D5
-
         MOVE.W  #$0017,AUD_CAP
 .WaitA: MOVE.W  AUD_CAP,D1
         BTST    #1,D1
         BEQ.S   .WaitA
 
+        ; 1. Spitzenwert in Block A ermitteln
+        LEA     AUD_BUF_A,A1
+        MOVE.W  #1023,D0
+        MOVEQ   #0,D5
+.Scan:  MOVE.W  (A1)+,D3
+        ADDQ.L  #2,A1
+        EXT.L   D3
+        BPL.S   .P
+        NEG.L   D3
+.P:     CMP.L   D5,D3
+        BLE.S   .N
+        MOVE.L  D3,D5
+.N:     DBRA    D0,.Scan
+
+        ; Schwelle: 70 Prozent vom Spitzenwert
+        MOVE.L  D5,D6
+        MULU    #7,D6
+        DIVU    #10,D6
+
+        ; 2. Anzahl Samples ueber Schwelle zaehlen
         LEA     AUD_BUF_A,A1
         MOVE.W  #1023,D0
         MOVEQ   #0,D2                           ; Zaehler ueber der Schwelle
@@ -145,30 +162,6 @@ Loop:   BRA.S   Loop
 Settle:
         MOVE.L  #400000,D0
 .SL:    DBRA    D0,.SL
-        RTS
-
-; ------------------------------------------------------------------
-; Peak: groesster Betrag im linken Kanal eines Capture-Blocks
-; Rueckgabe D5
-; ------------------------------------------------------------------
-Peak:
-        MOVE.W  #$0017,AUD_CAP
-.Wait:  MOVE.W  AUD_CAP,D1
-        BTST    #1,D1
-        BEQ.S   .Wait
-        LEA     AUD_BUF_A,A1
-        MOVE.W  #1023,D0
-        MOVEQ   #0,D5
-.Scan:  MOVE.W  (A1)+,D3
-        ADDQ.L  #2,A1
-        EXT.L   D3
-        BPL.S   .P
-        NEG.L   D3
-.P:     CMP.L   D5,D3
-        BLE.S   .N
-        MOVE.L  D3,D5
-.N:     DBRA    D0,.Scan
-        MOVE.W  #$0000,AUD_CAP
         RTS
 
         EVEN

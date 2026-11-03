@@ -68,7 +68,13 @@ Start:
         MOVE.W  D0,AUD_PTRL(A0)
         SWAP    D0
         MOVE.W  D0,AUD_PTRH(A0)
+        CMPA.L  #AUDIO_EXT_BASE,A0
+        BEQ.S   .SetupRoot
+        MOVE.W  #0,AUD_LENL(A0)
+        BRA.S   .SetupLenDone
+.SetupRoot:
         MOVE.W  #BANDPASS_BYTES,AUD_LENL(A0)
+.SetupLenDone:
         MOVE.W  #0,AUD_LENH(A0)
         MOVE.W  #PER_48K,AUD_PER(A0)
         MOVE.W  #BQ_B0,AUD_BQ_B0(A0)

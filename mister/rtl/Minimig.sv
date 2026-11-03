@@ -506,6 +506,69 @@ wire [31:0] audio_dma_addr;
 wire [15:0] audio_dma_data;
 wire [15:0] audio_ext_l, audio_ext_r;
 
+wire [24:1] arb_sdram_addon_addr;
+wire        arb_sdram_addon_claim;
+wire [28:1] arb_dma_ddr_addr;
+wire        arb_dma_ddr_l;
+wire        arb_dma_ddr_u;
+wire        arb_dma_ddr_we;
+wire        arb_dma_ddr_cs;
+wire [15:0] arb_dma_ddr_wr;
+
+wire [24:1] audio_sdr_addr;
+wire        audio_sdr_claim;
+wire [28:1] audio_ddr_addr;
+wire        audio_ddr_cs;
+wire        audio_ddr_we;
+wire        audio_ddr_l;
+wire        audio_ddr_u;
+wire [15:0] audio_ddr_wr;
+
+// Dedicated Audio DMA Master (Direct DDR3 FastRAM @ 114 MHz & SDRAM without Agnus)
+audio_dma_master audio_dma_master
+(
+	.clk             (clk_sys              ),
+	.reset           (reset_d              ),
+	.c_7m            (c1                   ),
+
+	.audio_dma_req   (audio_dma_req        ),
+	.audio_dma_addr  (audio_dma_addr       ),
+	.audio_dma_ack   (audio_dma_ack        ),
+	.audio_dma_data  (audio_dma_data       ),
+	.audio_dma_error (audio_dma_error      ),
+
+	.z2ram_ena       (z2ram_ena            ),
+	.z3ram_base0     (z3ram_base0          ),
+	.z3ram_ena0      (z3ram_ena0           ),
+	.z3ram_base1     (z3ram_base1          ),
+	.z3ram_ena1      (z3ram_ena1           ),
+
+	.ddr_addr        (audio_ddr_addr       ),
+	.ddr_cs          (audio_ddr_cs         ),
+	.ddr_we          (audio_ddr_we         ),
+	.ddr_l           (audio_ddr_l          ),
+	.ddr_u           (audio_ddr_u          ),
+	.ddr_wr          (audio_ddr_wr         ),
+	.ddr_ack         (dma_ddr_ack          ),
+	.ddr_rd          (dma_ddr_rd           ),
+
+	.sdr_addr        (audio_sdr_addr       ),
+	.sdr_claim       (audio_sdr_claim      ),
+	.sdr_rd          (ramdata_in           )
+);
+
+// Mux between Audio DMA Master and chipdma_arb (Akiko/CDTV)
+assign sdram_addon_addr  = audio_sdr_claim ? audio_sdr_addr  : arb_sdram_addon_addr;
+assign sdram_addon_claim = audio_sdr_claim ? audio_sdr_claim : arb_sdram_addon_claim;
+
+wire audio_ddr_sel = audio_ddr_cs;
+assign dma_ddr_addr = audio_ddr_sel ? audio_ddr_addr : arb_dma_ddr_addr;
+assign dma_ddr_l    = audio_ddr_sel ? audio_ddr_l    : arb_dma_ddr_l;
+assign dma_ddr_u    = audio_ddr_sel ? audio_ddr_u    : arb_dma_ddr_u;
+assign dma_ddr_we   = audio_ddr_sel ? audio_ddr_we   : arb_dma_ddr_we;
+assign dma_ddr_cs   = audio_ddr_sel ? audio_ddr_cs   : arb_dma_ddr_cs;
+assign dma_ddr_wr   = audio_ddr_sel ? audio_ddr_wr   : arb_dma_ddr_wr;
+
 chipdma_arb chipdma_arb
 (
 	.clk             (clk_sys              ),
@@ -535,15 +598,15 @@ chipdma_arb chipdma_arb
 	.cdtv_dma_wbyte  (cdtv_dma_wbyte       ),
 	.cdtv_dma_rbyte  (                     ),
 	.cdtv_dma_ack    (cdtv_dma_ack         ),
-	.audio_dma_req   (audio_dma_req        ),
-	.audio_dma_addr  (audio_dma_addr       ),
-	.audio_dma_ack   (audio_dma_ack        ),
-	.audio_dma_data  (audio_dma_data       ),
-	.audio_dma_error (audio_dma_error      ),
+	.audio_dma_req   (1'b0                 ),
+	.audio_dma_addr  (32'd0                ),
+	.audio_dma_ack   (                     ),
+	.audio_dma_data  (                     ),
+	.audio_dma_error (                     ),
 
 	.chip_out_addr   (arb_chip_addr        ),
-	.sdram_addon_addr(sdram_addon_addr),
-	.sdram_addon_claim(sdram_addon_claim),
+	.sdram_addon_addr(arb_sdram_addon_addr ),
+	.sdram_addon_claim(arb_sdram_addon_claim),
 	.chip_out_l      (arb_chip_l           ),
 	.chip_out_u      (arb_chip_u           ),
 	.chip_out_rw     (arb_chip_rw          ),
@@ -559,12 +622,12 @@ chipdma_arb chipdma_arb
 	.z3ram_base1     (z3ram_base1          ),
 	.z3ram_ena1      (z3ram_ena1           ),
 
-	.ddr_out_addr    (dma_ddr_addr         ),
-	.ddr_out_l       (dma_ddr_l            ),
-	.ddr_out_u       (dma_ddr_u            ),
-	.ddr_out_we      (dma_ddr_we           ),
-	.ddr_out_cs      (dma_ddr_cs           ),
-	.ddr_out_wr      (dma_ddr_wr           ),
+	.ddr_out_addr    (arb_dma_ddr_addr     ),
+	.ddr_out_l       (arb_dma_ddr_l        ),
+	.ddr_out_u       (arb_dma_ddr_u        ),
+	.ddr_out_we      (arb_dma_ddr_we       ),
+	.ddr_out_cs      (arb_dma_ddr_cs       ),
+	.ddr_out_wr      (arb_dma_ddr_wr       ),
 	.ddr_in_ack      (dma_ddr_ack          ),
 	.ddr_in_rd       (dma_ddr_rd           )
 );
