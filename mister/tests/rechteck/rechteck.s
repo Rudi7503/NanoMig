@@ -1,28 +1,15 @@
 ; ==============================================================================
-; MiSTer FPGA / Minimig-AGA: Rechteck durch 32 Tiefpaesse (Diagnose-Version)
+; MiSTer FPGA / Minimig-AGA: Rechteck durch 32 Tiefpaesse
 ;
-; Beweist, dass die Filterkette die Oberschwingungen entfernt.
-; Mit mehrstufiger optischer Farbdiagnose fuer Toby & Tobys KI.
-;
-;   ch0      Rechteck 200 Hz, beide Kanaele, Vollaussteuerung
-;   ch1..31  Tiefpass 300 Hz, Quelle = Vorgaenger nach Filter
-;
-; Farbcode-Bedeutung:
-;   BLAU     (Default WB): Programm wurde von AmigaOS nicht gestartet
-;   GELB     ($0FF0): Programm laeuft! Initialisierung Stimmen 0..31
-;   MAGENTA  ($0F0F): Setup beendet, Stimmen gestartet
-;   CYAN     ($00FF): Settle-Phase aktiv. HIER MUSS DER 200-HZ-TON TOENEN!
-;   WEISS    ($0FFF): Hardware-Capture laeuft (wartet auf Block A)
-;   SCHWARZ  ($0000): TIMEOUT! Capture-Hardware wurde nach 1s nicht fertig
-;   ROT      ($0F00): Capture fertig, aber STILLE (Spitzenwert = 0)
-;   ORANGE   ($0F80): Capture fertig, Signal vorhanden, aber ungefiltertes RECHTECK
-;   GRUEN    ($00F0): TEST BESTANDEN! Harmonischer Sinus digital verifiziert!
+; Mit echter AmigaDOS Shell-Textausgabe (dos.library PutStr)
+; Schreibt ausfuehrliche Diagnose in die Konsole oder Logdatei (z.B. > RAM:test.log)
+; und setzt zusaetzlich COLOR00 (Gruen = Bestanden, Rot = Fehler).
 ;
 ; Assembler: vasmm68k_mot -Fhunk -o rechteck.o rechteck.s
+; Linker:    vlink -bamigahunk -x -Bstatic -o rechteck rechteck.o
 ; ==============================================================================
 
 CUSTOM          EQU $DFF000
-DMACON          EQU $096
 COLOR00         EQU $DFF180
 AUDIO_EXT_BASE  EQU $DFF400
 VOICE_STRIDE    EQU $20
@@ -52,24 +39,39 @@ CTRL_CHAIN_POST EQU $0400
 PER_48K         EQU 521
 NUM_VOICES      EQU 32
 
+_LVOOpenLibrary EQU -552
+_LVOCloseLibrary EQU -414
+_LVOPutStr      EQU -948
+
         SECTION text,CODE
 
 Start:
-        MOVE.L  A7,A5
+        MOVEM.L D2-D7/A2-A6,-(SP)
 
-        ; STUFE 1: GELB ($0FF0) = Start erreicht, CPU laeuft!
-        MOVE.W  #$0FF0,COLOR00
+        ; --------------------------------------------------------------
+        ; dos.library oeffnen fuer Shell-Textausgabe
+        ; --------------------------------------------------------------
+        MOVE.L  4.W,A6                          ; ExecBase
+        LEA     DosName(PC),A1
+        MOVEQ   #36,D0                          ; OS 2.0+
+        JSR     _LVOOpenLibrary(A6)
+        MOVE.L  D0,DOSBase
+        BEQ     .SkipDosInit
 
-        LEA     CUSTOM,A0
-        MOVE.W  #$0200,DMACON(A0)
+        LEA     MsgBanner(PC),A0
+        BSR     PrintStr
 
-; ------------------------------------------------------------------
-; Alle Stimmen vorbereiten
-; ------------------------------------------------------------------
+.SkipDosInit:
+        ; --------------------------------------------------------------
+        ; Stimmen 0..31 vorbereiten
+        ; --------------------------------------------------------------
+        LEA     MsgSetup(PC),A0
+        BSR     PrintStr
+
         LEA     AUDIO_EXT_BASE,A0
         MOVEQ   #NUM_VOICES-1,D7
 .Setup:
-        MOVE.W  #$0002,AUD_CMD(A0)
+        MOVE.W  #$0002,AUD_CMD(A0)              ; Stop
         MOVE.W  #$0000,AUD_VOL(A0)
         MOVE.L  #RechteckData,D0
         MOVE.W  D0,AUD_PTRL(A0)
@@ -95,50 +97,51 @@ Start:
         LEA     VOICE_STRIDE(A0),A0
         DBRA    D7,.Setup
 
-        ; STUFE 2: MAGENTA ($0F0F) = Setup beendet, Stimmen starten
-        MOVE.W  #$0F0F,COLOR00
+        ; --------------------------------------------------------------
+        ; Stimmen starten & Settle
+        ; --------------------------------------------------------------
+        LEA     MsgStart(PC),A0
+        BSR     PrintStr
 
-; ------------------------------------------------------------------
-; Starten, dann nur die letzte Stufe hoerbar
-; ------------------------------------------------------------------
         LEA     AUDIO_EXT_BASE,A0
         MOVEQ   #NUM_VOICES-1,D7
 .Run:
-        MOVE.W  #$0001,AUD_CMD(A0)
+        MOVE.W  #$0001,AUD_CMD(A0)              ; Start
         LEA     VOICE_STRIDE(A0),A0
         DBRA    D7,.Run
 
         LEA     AUDIO_EXT_BASE,A0
         LEA     VOICE_STRIDE*31(A0),A0
-        MOVE.W  #$8080,AUD_VOL(A0)          ; nur ch31
+        MOVE.W  #$8080,AUD_VOL(A0)              ; Volle Lautstaerke Voice 31
 
-        ; STUFE 3: CYAN ($00FF) = Stimmen gestartet, Audio laeuft (Settle-Phase)!
-        ; HIER MUSS DER 200-HZ-TON ZU HOEREN SEIN!
-        MOVE.W  #$00FF,COLOR00
         BSR     Settle
 
-; ------------------------------------------------------------------
-; Auswertung: Ein einziger Capture-Durchlauf fuer Block A mit Timeout
-; ------------------------------------------------------------------
-        ; STUFE 4: WEISS ($0FFF) = Capture aktiv, warte auf Block A (normal ~21 ms)
-        MOVE.W  #$0FFF,COLOR00
-        MOVE.W  #$0017,AUD_CAP
+        ; --------------------------------------------------------------
+        ; Hardware-Capture starten & warten mit Timeout
+        ; --------------------------------------------------------------
+        LEA     MsgCapture(PC),A0
+        BSR     PrintStr
 
-        MOVE.L  #1000000,D4                 ; Timeout ~1-2 Sekunden
+        MOVE.W  #$0017,AUD_CAP
+        MOVE.L  #500000,D4                      ; Timeout-Zaehler (~1 Sekunde)
 .WaitA:
-        MOVE.W  #$0FFF,COLOR00              ; Weiterschreiben gegen Copper
         MOVE.W  AUD_CAP,D1
         BTST    #1,D1
         BNE.S   .Captured
         SUBQ.L  #1,D4
         BNE.S   .WaitA
 
-        ; TIMEOUT! Hardware-Capture meldete Block A nicht voll -> SCHWARZ ($0000)
-.Timeout:
-        MOVE.W  #$0000,COLOR00
-        BRA.S   .Timeout
+        ; Timeout! Capture-Hardware meldet Block A nicht voll
+        LEA     MsgTimeout(PC),A0
+        BSR     PrintStr
+        MOVE.W  #$0F00,COLOR00                  ; Rot
+        MOVEQ   #20,D7                          ; RETURN_ERROR
+        BRA     .Exit
 
 .Captured:
+        LEA     MsgCapDone(PC),A0
+        BSR     PrintStr
+
         ; 1. Spitzenwert in Block A ermitteln
         LEA     AUD_BUF_A,A1
         MOVE.W  #1023,D0
@@ -153,10 +156,26 @@ Start:
         MOVE.L  D3,D5
 .N:     DBRA    D0,.Scan
 
-        ; Wenn kein Signal gemessen wurde (Spitzenwert 0): ROT ($0F00)
-        TST.W   D5
-        BEQ.S   .FailSilent
+        ; Spitzenwert ausgeben
+        LEA     MsgPeak(PC),A0
+        BSR     PrintStr
+        MOVE.L  D5,D0
+        BSR     PrintDec
+        LEA     MsgNewline(PC),A0
+        BSR     PrintStr
 
+        ; Pruefen, ob ueberhaupt Signalpegel anliegt
+        TST.W   D5
+        BNE.S   .HasSignal
+
+        ; Stille!
+        LEA     MsgSilent(PC),A0
+        BSR     PrintStr
+        MOVE.W  #$0F00,COLOR00                  ; Rot
+        MOVEQ   #20,D7                          ; RETURN_ERROR
+        BRA     .Exit
+
+.HasSignal:
         ; Schwelle: 70 Prozent vom Spitzenwert
         MOVE.L  D5,D6
         MULU    #7,D6
@@ -166,7 +185,7 @@ Start:
         ; 2. Anzahl Samples ueber Schwelle zaehlen
         LEA     AUD_BUF_A,A1
         MOVE.W  #1023,D0
-        MOVEQ   #0,D2
+        MOVEQ   #0,D2                           ; Zaehler ueber Schwelle
 .Count: MOVE.W  (A1)+,D3
         ADDQ.L  #2,A1
         EXT.L   D3
@@ -176,33 +195,123 @@ Start:
         BLE.S   .NextC
         ADDQ.W  #1,D2
 .NextC: DBRA    D0,.Count
-        MOVE.W  #$0000,AUD_CAP
+        MOVE.W  #$0000,AUD_CAP                  ; Capture aus
 
-        ; Auswertung:
-        ; gruen ($00F0), wenn weniger als 75% der Samples am Anschlag liegen
-        ; orange ($0F80), wenn noch Rechteck (Filter dämpft nicht)
-        MOVE.W  #$0F80,D1                   ; orange = Signal da, aber noch Rechteck
+        ; Sample-Anzahl ausgeben
+        LEA     MsgSamples(PC),A0
+        BSR     PrintStr
+        MOVE.W  D2,D0
+        ANDI.L  #$FFFF,D0
+        BSR     PrintDec
+        LEA     MsgOf1024(PC),A0
+        BSR     PrintStr
+
+        ; Bewertung:
+        ; Weniger als 768 von 1024 (75%) -> Sinus -> BESTANDEN
         CMP.W   #768,D2
-        BCC.S   .Show
-        MOVE.W  #$00F0,D1                   ; gruen = Sinus, Filterung erfolgreich!
-        BRA.S   .Show
+        BCC.S   .FailSquare
 
-.FailSilent:
-        MOVE.W  #$0F00,D1                   ; rot = Stille, kein Signal im Capture-Puffer
+        ; BESTANDEN!
+        LEA     MsgPass(PC),A0
+        BSR     PrintStr
+        MOVE.W  #$00F0,COLOR00                  ; Gruen
+        MOVEQ   #0,D7                           ; RETURN_OK
+        BRA.S   .Exit
 
-.Show:
-.Loop:  MOVE.W  D1,COLOR00
-        BRA.S   .Loop
+.FailSquare:
+        LEA     MsgFailSquare(PC),A0
+        BSR     PrintStr
+        MOVE.W  #$0F80,COLOR00                  ; Orange
+        MOVEQ   #20,D7                          ; RETURN_ERROR
+
+.Exit:
+        ; dos.library schliessen
+        MOVE.L  DOSBase(PC),D0
+        BEQ.S   .NoClose
+        MOVE.L  4.W,A6
+        MOVE.L  D0,A1
+        JSR     _LVOCloseLibrary(A6)
+.NoClose:
+        MOVE.L  D7,D0                           ; Return Code an Shell (0=OK, 20=Fehler)
+        MOVEM.L (SP)+,D2-D7/A2-A6
+        RTS
+
+; ------------------------------------------------------------------
+; Hilfsroutine: PrintStr (String in A0 ausgeben via dos.library)
+; ------------------------------------------------------------------
+PrintStr:
+        MOVE.L  DOSBase(PC),D0
+        BEQ.S   .Ret
+        MOVEM.L D1/A0/A1/A6,-(SP)
+        MOVE.L  D0,A6
+        MOVE.L  A0,D1                           ; Arg 1: String-Pointer
+        JSR     _LVOPutStr(A6)
+        MOVEM.L (SP)+,D1/A0/A1/A6
+.Ret:   RTS
+
+; ------------------------------------------------------------------
+; Hilfsroutine: PrintDec (32-Bit-Zahl in D0 dezimal ausgeben)
+; ------------------------------------------------------------------
+PrintDec:
+        MOVEM.L D0-D4/A0-A2,-(SP)
+        LEA     DecBufEnd(PC),A0
+        CLR.B   (A0)                            ; Null-Terminator
+        MOVE.L  D0,D1
+        MOVE.L  #10,D2
+.DLoop:
+        MOVE.L  D1,D3
+        CLR.W   D1
+        SWAP    D1
+        DIVU    D2,D1
+        MOVE.W  D1,D4
+        SWAP    D4
+        SWAP    D1
+        MOVE.W  D3,D1
+        DIVU    D2,D1
+        MOVE.W  D1,D4
+        SWAP    D1                              ; Rest = Ziffer
+        ADDI.B  #'0',D1
+        MOVE.B  D1,-(A0)
+        MOVE.L  D4,D1
+        BNE.S   .DLoop
+        BSR     PrintStr
+        MOVEM.L (SP)+,D0-D4/A0-A2
+        RTS
 
 ; ------------------------------------------------------------------
 Settle:
-        MOVE.L  #400000,D0
-.SL:    MOVE.W  #$00FF,COLOR00              ; Cyan waehrend Settle
-        SUBQ.L  #1,D0
+        MOVE.L  #300000,D0
+.SL:    SUBQ.L  #1,D0
         BNE.S   .SL
         RTS
 
-        EVEN
-        INCLUDE "rechteck_data.i"
+; ------------------------------------------------------------------
+; Konstanten & Daten
+; ------------------------------------------------------------------
+DosName:        DC.B    "dos.library",0
+MsgBanner:      DC.B    10,"==================================================",10
+                DC.B    "rechteck: 32-Stufen-Tiefpass Kaskadentest",10
+                DC.B    "==================================================",10,0
+MsgSetup:       DC.B    "rechteck: [1/4] Stimmen 0..31 initialisiert.",10,0
+MsgStart:       DC.B    "rechteck: [2/4] Stimmen gestartet (200 Hz sollte toenen)...",10,0
+MsgCapture:     DC.B    "rechteck: [3/4] Hardware-Capture ($DFF802) gestartet...",10,0
+MsgTimeout:     DC.B    "rechteck: FEHLER - Timeout! Block A nach 1s nicht fertig.",10,0
+MsgCapDone:     DC.B    "rechteck: [3/4] Capture fertig. Analysiere 1024 Samples...",10,0
+MsgPeak:        DC.B    "rechteck: [4/4] Spitzenwert (Peak) = ",0
+MsgSilent:      DC.B    "rechteck: FEHLER - Kein Signal! Spitzenwert ist 0.",10,0
+MsgSamples:     DC.B    "rechteck: [4/4] Proben ueber 70% = ",0
+MsgOf1024:      DC.B    " von 1024",10,0
+MsgPass:        DC.B    "rechteck: ERFOLG - Sinuswelle nachgewiesen (<75%).",10
+                DC.B    "rechteck: >>> TEST BESTANDEN <<<",10,10,0
+MsgFailSquare:  DC.B    "rechteck: FEHLER - Ungefiltertes Signal! Noch Rechteck (>75%).",10,0
+MsgNewline:     DC.B    10,0
 
-        END
+                EVEN
+DOSBase:        DC.L    0
+                DS.B    16
+DecBufEnd:      DC.B    0
+
+                EVEN
+                INCLUDE "rechteck_data.i"
+
+                END

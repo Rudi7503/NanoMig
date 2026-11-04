@@ -1,60 +1,52 @@
-Diagnose-Testanleitung fuer Toby & Tobys KI: "rechteck" mit visueller Stufenanzeige
-==================================================================================
+Testanleitung: "rechteck" mit AmigaDOS Shell-Textausgabe & Logdatei
+===================================================================
 Datum: 04.11.2026
 Autor: Rudis KI
-Core: Minimig_6186b83f.rbf (unveraendert, 4.122.716 Bytes, SHA256: 6186b83fbbe3253fa4cd3b0f0b265e6f79121290aca9a98d7e5fec3f9795fa60)
+Core: Minimig_6186b83f.rbf (unveraendert, 4.122.716 Bytes)
 
-Hintergrund & Zweck dieser Diagnose:
-------------------------------------
-Beim letzten Test war der Bildschirm durchgehend BLAU und kein Ton hoerbar.
-Da das bisherige Testprogramm erst ganz am Schluss nach erfolgreichem Capture eine Farbe
-auf COLOR00 gesetzt hat, war bisher nicht unterscheidbar, ob:
-1. Das Programm von AmigaOS ueberhaupt gestartet wurde,
-2. Die Stimmen gestartet wurden und Ton wiedergeben,
-3. Oder das Programm in der Capture-Warteschleife haengt.
+Neu in dieser Version: Echte AmigaDOS Textausgabe!
+-------------------------------------------------
+Das Programm gibt ab sofort den vollstaendigen Testablauf und alle Messwerte
+als Klartext ueber die AmigaDOS-Shell (dos.library / PutStr) aus.
+Kein Raetselraten mehr bei blauem Bildschirm!
 
-Dieses neue "rechteck"-Executable fuehrt eine mehrstufige Farbdiagnose ein.
-Jeder Meilenstein faerbt den Bildschirm sofort kontinuierlich in einer eindeutigen Farbe ein.
+Zusatzfeature fuer Tobys KI (Automatisierung):
+----------------------------------------------
+Tobys KI kann in der S:Startup-Sequence auf der Testdisk einfach schreiben:
+    rechteck > RAM:rechteck.log
 
-Farbcode-Bedeutung (was Toby auf dem Bildschirm sieht):
-------------------------------------------------------
-1. BLAU (RGB 0, 85, 170 / Standard Workbench):
-   Bedeutung: AmigaOS hat das Programm gar nicht gestartet (oder vor Befehl 1 abgebrochen).
+Damit wird der gesamte Bericht in RAM:rechteck.log gespeichert und Tobys KI
+kann die Datei per SSH/SFTP in einer Millisekunde direkt auslesen.
 
-2. GELB ($0FF0):
-   Bedeutung: Programm laeuft! Initialisierung von Voice 0..31 im Gange.
+Erwartete Shell-Ausgabe:
+------------------------
+==================================================
+rechteck: 32-Stufen-Tiefpass Kaskadentest
+==================================================
+rechteck: [1/4] Stimmen 0..31 initialisiert.
+rechteck: [2/4] Stimmen gestartet (200 Hz sollte toenen)...
+rechteck: [3/4] Hardware-Capture ($DFF802) gestartet...
+rechteck: [3/4] Capture fertig. Analysiere 1024 Samples...
+rechteck: [4/4] Spitzenwert (Peak) = 18450
+rechteck: [4/4] Proben ueber 70% = 482 von 1024
+rechteck: ERFOLG - Sinuswelle nachgewiesen (<75%).
+rechteck: >>> TEST BESTANDEN <<<
 
-3. MAGENTA ($0F0F):
-   Bedeutung: Setup beendet, Stimmen werden gestartet.
+Fehlerfaelle im Klartext:
+-------------------------
+- Falls Capture haengt:
+  "rechteck: FEHLER - Timeout! Block A nach 1s nicht fertig." (Bildschirm: Rot)
+- Falls Stille im Puffer:
+  "rechteck: FEHLER - Kein Signal! Spitzenwert ist 0." (Bildschirm: Rot)
+- Falls ungefiltertes Rechteck:
+  "rechteck: FEHLER - Ungefiltertes Signal! Noch Rechteck (>75%)." (Bildschirm: Orange)
 
-4. CYAN ($00FF):
-   Bedeutung: Stimmen sind aktiv gestartet (Settle-Wartephase).
-   >>> HIER MUSS DER 200-HZ-TON BEREITS AUS DEN LAUTSPRECHERN TOENEN! <<<
-   - Wenn bei CYAN TON ZU HOEREN IST: Audio-DMA und Soundausgabe funktionieren einwandfrei!
-   - Wenn bei CYAN KEIN TON zu hoeren ist: Audio-DMA holt keine Daten oder Stimmen schweigen.
-
-5. WEISS ($0FFF):
-   Bedeutung: Hardware-Capture ist aktiv ($DFF802 = $0017) und wartet auf Block A (~21 ms).
-
-6. SCHWARZ ($0000):
-   Bedeutung: >>> TIMEOUT! <<< Die Capture-Hardware hat Block A nach 1 Sekunde nicht als voll gemeldet
-   (Bit 1 in $DFF802 blieb 0). Das beweist: Hardware-Capture stuerzt ab oder haengt!
-
-7. ROT ($0F00):
-   Bedeutung: Capture-Hardware wurde fertig, aber im Capture-Puffer ($DF8000) ist STILLE (Spitzenwert = 0).
-
-8. ORANGE ($0F80):
-   Bedeutung: Capture fertig, Signal ist da, aber noch ungefiltertes RECHTECK (Filter daempft nicht).
-
-9. GRUEN ($00F0):
-   Bedeutung: >>> TEST VOLLSTAENDIG BESTANDEN! <<<
-   Harmonischer Sinus durch 32 Tiefpaesse digital im FPGA verifiziert!
+Zusaetzlich wird weiterhin COLOR00 gesetzt:
+- GRUEN = Test bestanden (Return-Code 0)
+- ROT = Fehler / Stille / Timeout (Return-Code 20)
 
 Durchfuehrung fuer Tobys KI & Toby:
 ----------------------------------
-1. Core Minimig_6186b83f.rbf bleibt im MiSTer geladen (muss nicht neu geflasht werden).
-2. Neues Executable "rechteck" auf die Test-ADF kopieren.
-3. Toby per 3 Pieptoene an den Bildschirm bitten.
-4. Test starten und beobachten:
-   - Welche Farbe erscheint? (Gelb -> Cyan -> Weiss -> Schwarz/Rot/Orange/Gruen?)
-   - Ist waehrend CYAN ein 200-Hz-Ton zu hoeren?
+1. Core Minimig_6186b83f.rbf bleibt unveraendert im MiSTer.
+2. Neues Executable "rechteck" auf die Testdisk/ADF kopieren.
+3. Starten und Textausgabe in der Shell oder in RAM:rechteck.log pruefen.
