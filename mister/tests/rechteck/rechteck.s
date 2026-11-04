@@ -1,7 +1,7 @@
 ; ==============================================================================
 ; MiSTer FPGA / Minimig-AGA: Rechteck durch 32 Tiefpaesse
 ;
-; Mit echter AmigaDOS Shell-Textausgabe (dos.library PutStr)
+; Mit echter AmigaDOS Shell-Textausgabe (kompatibel mit Kickstart 1.3 via dos.library Write)
 ; Schreibt ausfuehrliche Diagnose in die Konsole oder Logdatei (z.B. > RAM:test.log)
 ; und setzt zusaetzlich COLOR00 (Gruen = Bestanden, Rot = Fehler).
 ;
@@ -39,9 +39,10 @@ CTRL_CHAIN_POST EQU $0400
 PER_48K         EQU 521
 NUM_VOICES      EQU 32
 
-_LVOOpenLibrary EQU -552
+_LVOOpenLibrary  EQU -552
 _LVOCloseLibrary EQU -414
-_LVOPutStr      EQU -948
+_LVOWrite        EQU -48
+_LVOOutput       EQU -60
 
         SECTION text,CODE
 
@@ -49,13 +50,18 @@ Start:
         MOVEM.L D2-D7/A2-A6,-(SP)
 
         ; --------------------------------------------------------------
-        ; dos.library oeffnen fuer Shell-Textausgabe
+        ; dos.library oeffnen fuer Shell-Textausgabe (Kickstart 1.3+)
         ; --------------------------------------------------------------
         MOVE.L  4.W,A6                          ; ExecBase
         LEA     DosName(PC),A1
-        MOVEQ   #36,D0                          ; OS 2.0+
+        MOVEQ   #0,D0                           ; Beliebige Version (Kickstart 1.2, 1.3, 2.0, 3.x)
         JSR     _LVOOpenLibrary(A6)
         MOVE.L  D0,DOSBase
+        BEQ     .SkipDosInit
+
+        MOVE.L  D0,A6                           ; DOSBase
+        JSR     _LVOOutput(A6)                  ; Standard Output Handle holen
+        MOVE.L  D0,StdoutHandle
         BEQ     .SkipDosInit
 
         LEA     MsgBanner(PC),A0
@@ -134,6 +140,8 @@ Start:
         ; Timeout! Capture-Hardware meldet Block A nicht voll
         LEA     MsgTimeout(PC),A0
         BSR     PrintStr
+        LEA     MsgExitErr(PC),A0
+        BSR     PrintStr
         MOVE.W  #$0F00,COLOR00                  ; Rot
         MOVEQ   #20,D7                          ; RETURN_ERROR
         BRA     .Exit
@@ -170,6 +178,8 @@ Start:
 
         ; Stille!
         LEA     MsgSilent(PC),A0
+        BSR     PrintStr
+        LEA     MsgExitErr(PC),A0
         BSR     PrintStr
         MOVE.W  #$0F00,COLOR00                  ; Rot
         MOVEQ   #20,D7                          ; RETURN_ERROR
@@ -214,12 +224,16 @@ Start:
         ; BESTANDEN!
         LEA     MsgPass(PC),A0
         BSR     PrintStr
+        LEA     MsgExitOk(PC),A0
+        BSR     PrintStr
         MOVE.W  #$00F0,COLOR00                  ; Gruen
         MOVEQ   #0,D7                           ; RETURN_OK
         BRA.S   .Exit
 
 .FailSquare:
         LEA     MsgFailSquare(PC),A0
+        BSR     PrintStr
+        LEA     MsgExitErr(PC),A0
         BSR     PrintStr
         MOVE.W  #$0F80,COLOR00                  ; Orange
         MOVEQ   #20,D7                          ; RETURN_ERROR
@@ -237,16 +251,37 @@ Start:
         RTS
 
 ; ------------------------------------------------------------------
-; Hilfsroutine: PrintStr (String in A0 ausgeben via dos.library)
+; Hilfsroutine: PrintStr (String in A0 via dos.library Write ausgeben)
+; Funktioniert ab Kickstart 1.2 / 1.3 / 2.0 / 3.x
+; Input: A0 = Zeiger auf Null-terminierten Textstring
 ; ------------------------------------------------------------------
 PrintStr:
         MOVE.L  DOSBase(PC),D0
         BEQ.S   .Ret
-        MOVEM.L D1/A0/A1/A6,-(SP)
+        MOVE.L  StdoutHandle(PC),D1
+        BEQ.S   .Ret
+        MOVEM.L D2-D4/A0-A1/A6,-(SP)
         MOVE.L  D0,A6
-        MOVE.L  A0,D1                           ; Arg 1: String-Pointer
-        JSR     _LVOPutStr(A6)
-        MOVEM.L (SP)+,D1/A0/A1/A6
+
+        ; Laenge ermitteln (Null-Terminator suchen)
+        MOVE.L  A0,A1
+        MOVEQ   #0,D3
+.LenLoop:
+        TST.B   (A1)+
+        BEQ.S   .DoWrite
+        ADDQ.L  #1,D3
+        BRA.S   .LenLoop
+
+.DoWrite:
+        TST.L   D3
+        BEQ.S   .Done
+        MOVE.L  StdoutHandle(PC),D1             ; BPTR file handle
+        MOVE.L  A0,D2                           ; APTR buffer
+        ; D3 = LONG length
+        JSR     _LVOWrite(A6)
+
+.Done:
+        MOVEM.L (SP)+,D2-D4/A0-A1/A6
 .Ret:   RTS
 
 ; ------------------------------------------------------------------
@@ -290,6 +325,7 @@ Settle:
 ; ------------------------------------------------------------------
 DosName:        DC.B    "dos.library",0
 MsgBanner:      DC.B    10,"==================================================",10
+                DC.B    "*** RECHTECK TEST GESTARTET (KICKSTART 1.3) ***",10
                 DC.B    "rechteck: 32-Stufen-Tiefpass Kaskadentest",10
                 DC.B    "==================================================",10,0
 MsgSetup:       DC.B    "rechteck: [1/4] Stimmen 0..31 initialisiert.",10,0
@@ -302,12 +338,15 @@ MsgSilent:      DC.B    "rechteck: FEHLER - Kein Signal! Spitzenwert ist 0.",10,
 MsgSamples:     DC.B    "rechteck: [4/4] Proben ueber 70% = ",0
 MsgOf1024:      DC.B    " von 1024",10,0
 MsgPass:        DC.B    "rechteck: ERFOLG - Sinuswelle nachgewiesen (<75%).",10
-                DC.B    "rechteck: >>> TEST BESTANDEN <<<",10,10,0
+                DC.B    "rechteck: >>> TEST BESTANDEN <<<",10,0
 MsgFailSquare:  DC.B    "rechteck: FEHLER - Ungefiltertes Signal! Noch Rechteck (>75%).",10,0
+MsgExitOk:      DC.B    "rechteck: Test beendet (Return Code: 0).",10,10,0
+MsgExitErr:     DC.B    "rechteck: Test abgebrochen (Return Code: 20).",10,10,0
 MsgNewline:     DC.B    10,0
 
                 EVEN
 DOSBase:        DC.L    0
+StdoutHandle:   DC.L    0
                 DS.B    16
 DecBufEnd:      DC.B    0
 
