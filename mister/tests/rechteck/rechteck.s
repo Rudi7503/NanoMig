@@ -1,22 +1,22 @@
 ; ==============================================================================
-; MiSTer FPGA / Minimig-AGA: Rechteck durch 32 Tiefpaesse
+; MiSTer FPGA / Minimig-AGA: Rechteck durch 32 Tiefpaesse (Diagnose-Version)
 ;
 ; Beweist, dass die Filterkette die Oberschwingungen entfernt.
+; Mit mehrstufiger optischer Farbdiagnose fuer Toby & Tobys KI.
 ;
 ;   ch0      Rechteck 200 Hz, beide Kanaele, Vollaussteuerung
 ;   ch1..31  Tiefpass 300 Hz, Quelle = Vorgaenger nach Filter
 ;
-; Nach 32 Stufen ist aus dem Rechteck ein Sinus bei 200 Hz geworden.
-; Nachgewiesen ueber die Amplitudeverteilung:
-;
-;   Rechteck  fast alle Samples liegen am Anschlag   -> rund 100 Prozent
-;   Sinus     nur die Naehe der Extrema              -> rund  50 Prozent
-;
-; Schwelle 75 Prozent:
-;   gruen = darunter, also Sinus, Filter arbeitet
-;   rot   = darueber, also noch eckig, Filter greift nicht
-;
-; Hoerbar: ein weicher Sinus bei 200 Hz, leise.
+; Farbcode-Bedeutung:
+;   BLAU     (Default WB): Programm wurde von AmigaOS nicht gestartet
+;   GELB     ($0FF0): Programm laeuft! Initialisierung Stimmen 0..31
+;   MAGENTA  ($0F0F): Setup beendet, Stimmen gestartet
+;   CYAN     ($00FF): Settle-Phase aktiv. HIER MUSS DER 200-HZ-TON TOENEN!
+;   WEISS    ($0FFF): Hardware-Capture laeuft (wartet auf Block A)
+;   SCHWARZ  ($0000): TIMEOUT! Capture-Hardware wurde nach 1s nicht fertig
+;   ROT      ($0F00): Capture fertig, aber STILLE (Spitzenwert = 0)
+;   ORANGE   ($0F80): Capture fertig, Signal vorhanden, aber ungefiltertes RECHTECK
+;   GRUEN    ($00F0): TEST BESTANDEN! Harmonischer Sinus digital verifiziert!
 ;
 ; Assembler: vasmm68k_mot -Fhunk -o rechteck.o rechteck.s
 ; ==============================================================================
@@ -56,6 +56,10 @@ NUM_VOICES      EQU 32
 
 Start:
         MOVE.L  A7,A5
+
+        ; STUFE 1: GELB ($0FF0) = Start erreicht, CPU laeuft!
+        MOVE.W  #$0FF0,COLOR00
+
         LEA     CUSTOM,A0
         MOVE.W  #$0200,DMACON(A0)
 
@@ -91,6 +95,9 @@ Start:
         LEA     VOICE_STRIDE(A0),A0
         DBRA    D7,.Setup
 
+        ; STUFE 2: MAGENTA ($0F0F) = Setup beendet, Stimmen starten
+        MOVE.W  #$0F0F,COLOR00
+
 ; ------------------------------------------------------------------
 ; Starten, dann nur die letzte Stufe hoerbar
 ; ------------------------------------------------------------------
@@ -105,16 +112,33 @@ Start:
         LEA     VOICE_STRIDE*31(A0),A0
         MOVE.W  #$8080,AUD_VOL(A0)          ; nur ch31
 
+        ; STUFE 3: CYAN ($00FF) = Stimmen gestartet, Audio laeuft (Settle-Phase)!
+        ; HIER MUSS DER 200-HZ-TON ZU HOEREN SEIN!
+        MOVE.W  #$00FF,COLOR00
         BSR     Settle
 
 ; ------------------------------------------------------------------
-; Auswertung: Ein einziger Capture-Durchlauf fuer Block A
+; Auswertung: Ein einziger Capture-Durchlauf fuer Block A mit Timeout
 ; ------------------------------------------------------------------
+        ; STUFE 4: WEISS ($0FFF) = Capture aktiv, warte auf Block A (normal ~21 ms)
+        MOVE.W  #$0FFF,COLOR00
         MOVE.W  #$0017,AUD_CAP
-.WaitA: MOVE.W  AUD_CAP,D1
-        BTST    #1,D1
-        BEQ.S   .WaitA
 
+        MOVE.L  #1000000,D4                 ; Timeout ~1-2 Sekunden
+.WaitA:
+        MOVE.W  #$0FFF,COLOR00              ; Weiterschreiben gegen Copper
+        MOVE.W  AUD_CAP,D1
+        BTST    #1,D1
+        BNE.S   .Captured
+        SUBQ.L  #1,D4
+        BNE.S   .WaitA
+
+        ; TIMEOUT! Hardware-Capture meldete Block A nicht voll -> SCHWARZ ($0000)
+.Timeout:
+        MOVE.W  #$0000,COLOR00
+        BRA.S   .Timeout
+
+.Captured:
         ; 1. Spitzenwert in Block A ermitteln
         LEA     AUD_BUF_A,A1
         MOVE.W  #1023,D0
@@ -129,9 +153,9 @@ Start:
         MOVE.L  D3,D5
 .N:     DBRA    D0,.Scan
 
-        ; Wenn kein Signal gemessen wurde (Spitzenwert 0), Test fehlgeschlagen -> ROT
+        ; Wenn kein Signal gemessen wurde (Spitzenwert 0): ROT ($0F00)
         TST.W   D5
-        BEQ.S   .Fail
+        BEQ.S   .FailSilent
 
         ; Schwelle: 70 Prozent vom Spitzenwert
         MOVE.L  D5,D6
@@ -142,7 +166,7 @@ Start:
         ; 2. Anzahl Samples ueber Schwelle zaehlen
         LEA     AUD_BUF_A,A1
         MOVE.W  #1023,D0
-        MOVEQ   #0,D2                           ; Zaehler ueber der Schwelle
+        MOVEQ   #0,D2
 .Count: MOVE.W  (A1)+,D3
         ADDQ.L  #2,A1
         EXT.L   D3
@@ -154,14 +178,17 @@ Start:
 .NextC: DBRA    D0,.Count
         MOVE.W  #$0000,AUD_CAP
 
-; gruen, wenn weniger als 75 Prozent der Samples am Anschlag liegen
-        MOVE.W  #$0F00,D1                       ; rot
+        ; Auswertung:
+        ; gruen ($00F0), wenn weniger als 75% der Samples am Anschlag liegen
+        ; orange ($0F80), wenn noch Rechteck (Filter dämpft nicht)
+        MOVE.W  #$0F80,D1                   ; orange = Signal da, aber noch Rechteck
         CMP.W   #768,D2
         BCC.S   .Show
-        MOVE.W  #$00F0,D1                       ; gruen
+        MOVE.W  #$00F0,D1                   ; gruen = Sinus, Filterung erfolgreich!
         BRA.S   .Show
 
-.Fail:  MOVE.W  #$0F00,D1                       ; rot
+.FailSilent:
+        MOVE.W  #$0F00,D1                   ; rot = Stille, kein Signal im Capture-Puffer
 
 .Show:
 .Loop:  MOVE.W  D1,COLOR00
@@ -170,7 +197,9 @@ Start:
 ; ------------------------------------------------------------------
 Settle:
         MOVE.L  #400000,D0
-.SL:    DBRA    D0,.SL
+.SL:    MOVE.W  #$00FF,COLOR00              ; Cyan waehrend Settle
+        SUBQ.L  #1,D0
+        BNE.S   .SL
         RTS
 
         EVEN
