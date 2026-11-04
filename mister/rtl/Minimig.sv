@@ -515,8 +515,12 @@ wire        arb_dma_ddr_we;
 wire        arb_dma_ddr_cs;
 wire [15:0] arb_dma_ddr_wr;
 
-wire [24:1] audio_sdr_addr;
-wire        audio_sdr_claim;
+wire        audio_chip_dma_req;
+wire [31:0] audio_chip_dma_addr;
+wire        audio_chip_dma_ack;
+wire [15:0] audio_chip_dma_data;
+wire        audio_chip_dma_error;
+
 wire [28:1] audio_ddr_addr;
 wire        audio_ddr_cs;
 wire        audio_ddr_we;
@@ -524,12 +528,11 @@ wire        audio_ddr_l;
 wire        audio_ddr_u;
 wire [15:0] audio_ddr_wr;
 
-// Dedicated Audio DMA Master (Direct DDR3 FastRAM @ 114 MHz & SDRAM without Agnus)
+// Dedicated Audio DMA Master (Direct DDR3 FastRAM @ 114 MHz & SDRAM via chipdma_arb)
 audio_dma_master audio_dma_master
 (
 	.clk             (clk_sys              ),
 	.reset           (reset_d              ),
-	.c_7m            (c1                   ),
 
 	.audio_dma_req   (audio_dma_req        ),
 	.audio_dma_addr  (audio_dma_addr       ),
@@ -552,14 +555,16 @@ audio_dma_master audio_dma_master
 	.ddr_ack         (dma_ddr_ack          ),
 	.ddr_rd          (dma_ddr_rd           ),
 
-	.sdr_addr        (audio_sdr_addr       ),
-	.sdr_claim       (audio_sdr_claim      ),
-	.sdr_rd          (ramdata_in           )
+	.chip_dma_req    (audio_chip_dma_req   ),
+	.chip_dma_addr   (audio_chip_dma_addr  ),
+	.chip_dma_ack    (audio_chip_dma_ack   ),
+	.chip_dma_data   (audio_chip_dma_data  ),
+	.chip_dma_error  (audio_chip_dma_error )
 );
 
-// Mux between Audio DMA Master and chipdma_arb (Akiko/CDTV)
-assign sdram_addon_addr  = audio_sdr_claim ? audio_sdr_addr  : arb_sdram_addon_addr;
-assign sdram_addon_claim = audio_sdr_claim ? audio_sdr_claim : arb_sdram_addon_claim;
+// SDRAM addon arbitration handled directly by chipdma_arb (Akiko, CDTV, Audio Chip-RAM)
+assign sdram_addon_addr  = arb_sdram_addon_addr;
+assign sdram_addon_claim = arb_sdram_addon_claim;
 
 wire audio_ddr_sel = audio_ddr_cs;
 assign dma_ddr_addr = audio_ddr_sel ? audio_ddr_addr : arb_dma_ddr_addr;
@@ -598,11 +603,12 @@ chipdma_arb chipdma_arb
 	.cdtv_dma_wbyte  (cdtv_dma_wbyte       ),
 	.cdtv_dma_rbyte  (                     ),
 	.cdtv_dma_ack    (cdtv_dma_ack         ),
-	.audio_dma_req   (1'b0                 ),
-	.audio_dma_addr  (32'd0                ),
-	.audio_dma_ack   (                     ),
-	.audio_dma_data  (                     ),
-	.audio_dma_error (                     ),
+
+	.audio_dma_req   (audio_chip_dma_req   ),
+	.audio_dma_addr  (audio_chip_dma_addr  ),
+	.audio_dma_ack   (audio_chip_dma_ack   ),
+	.audio_dma_data  (audio_chip_dma_data  ),
+	.audio_dma_error (audio_chip_dma_error ),
 
 	.chip_out_addr   (arb_chip_addr        ),
 	.sdram_addon_addr(arb_sdram_addon_addr ),

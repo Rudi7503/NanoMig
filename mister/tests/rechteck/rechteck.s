@@ -129,10 +129,15 @@ Start:
         MOVE.L  D3,D5
 .N:     DBRA    D0,.Scan
 
+        ; Wenn kein Signal gemessen wurde (Spitzenwert 0), Test fehlgeschlagen -> ROT
+        TST.W   D5
+        BEQ.S   .Fail
+
         ; Schwelle: 70 Prozent vom Spitzenwert
         MOVE.L  D5,D6
         MULU    #7,D6
         DIVU    #10,D6
+        ANDI.L  #$FFFF,D6
 
         ; 2. Anzahl Samples ueber Schwelle zaehlen
         LEA     AUD_BUF_A,A1
@@ -154,9 +159,13 @@ Start:
         CMP.W   #768,D2
         BCC.S   .Show
         MOVE.W  #$00F0,D1                       ; gruen
-.Show:  MOVE.W  D1,COLOR00
+        BRA.S   .Show
 
-Loop:   BRA.S   Loop
+.Fail:  MOVE.W  #$0F00,D1                       ; rot
+
+.Show:
+.Loop:  MOVE.W  D1,COLOR00
+        BRA.S   .Loop
 
 ; ------------------------------------------------------------------
 Settle:

@@ -68,18 +68,20 @@
 
 ---
 
-## 2. Speicheranbindung (Option 2 – Direkter 114-MHz-Master)
+## 2. Speicheranbindung (Option 2 – Hybrider 114-MHz-Master & Chip-DMA-Handoff)
 
-Im Gegensatz zum Standard-Minimig-Audio läuft die Audio-DMA **vollständig entkoppelt von Agnus und dem 7-MHz-Chip-Bus**:
+Im Gegensatz zum Standard-Minimig-Audio läuft die Audio-DMA **vollständig entkoppelt von Agnus und dem 7-MHz-Chip-Bus für Fast-RAM**:
 
 1. **Dedizierter Bus-Master ([`audio_dma_master.v`](file:///D:/programmier_ordner/FPGA/NanoMig/mister/rtl/audio_dma_master.v)):**
    * Arbeitet mit vollem **32-Bit-Adressraum**.
    * Unterscheidet transparent über `memory_router`, ob eine Sample-Adresse im **Fast-RAM / Zorro-RAM** (`is_ddr`) oder im **Chip-RAM / Slow-RAM** liegt.
-2. **Fast-RAM / DDR3-Zugriff:**
-   * Bei Adressen $\ge \$08000000$ (DDR3 Fast-RAM) greift der Audio-DMA-Master direkt mit **114 MHz (`clk_114`)** auf den DDR3-Controller (`ddram_ctrl`) zu.
+2. **Fast-RAM / DDR3-Zugriff (Option 2 Direct):**
+   * Bei Adressen $\ge \$08000000$ (DDR3 Fast-RAM / Zorro II & III) greift der Audio-DMA-Master direkt mit **114 MHz (`clk_114`)** auf den DDR3-Controller (`ddram_ctrl`) zu.
    * Latenz: 3–5 Taktzyklen, **ohne** Agnus-Arbitrierung, **ohne** 7-MHz-Wartezyklen, **ohne** DMA-Busüberlastung.
-3. **Chip-RAM / SDRAM-Zugriff:**
-   * Bei Adressen $<\$02000000$ greift der Master über den SDRAM-Addon-Port zu (`audio_sdr_claim`).
+3. **Chip-RAM / SDRAM-Zugriff (chipdma_arb Handoff):**
+   * Bei Adressen $<\$02000000$ (Standard-Amiga-Chip-RAM) übergibt der Master die Anforderung per Handshake an [`chipdma_arb.v`](file:///D:/programmier_ordner/FPGA/NanoMig/mister/rtl/chipdma_arb.v).
+   * `chipdma_arb` synchronisiert die Transaktion sicher auf Leerlaufphasen von Agnus (`minimig_idle`), steuert `sdram_ctrl` mit sauberem SDRAM-Read-Timing und verhindert Buskonflikte mit Akiko/CDTV.
+   * Sobald die Daten im SDRAM-Zyklus bereitstehen, erhält der Master ein Acknowledge (`chip_dma_ack`) und liefert die 16-Bit-Audiodaten an `audio_ext` zurück.
 
 ---
 

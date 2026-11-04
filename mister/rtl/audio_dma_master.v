@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // ==============================================================================
 // MiSTer FPGA Minimig-AGA: Dedicated Audio DMA Master (Full 32-bit Memory Access)
-// Independent direct DDR3 Fast-RAM (114 MHz) and SDRAM (Chip/Slow) access without Agnus.
+// Independent direct DDR3 Fast-RAM (114 MHz) and Chip-RAM handoff via chipdma_arb.
 // ==============================================================================
 
 module audio_dma_master (
     input  wire        clk,            // System clock (clk_sys, 28.375 MHz)
     input  wire        reset,          // System reset
-    input  wire        c_7m,           // 7.09 MHz CCK clock enable
 
     // Interface to audio_ext (32 channels)
     input  wire        audio_dma_req,
@@ -33,10 +32,12 @@ module audio_dma_master (
     input  wire        ddr_ack,
     input  wire [15:0] ddr_rd,
 
-    // Interface to sdram_ctrl (SDRAM ChipRAM / SlowRAM)
-    output reg  [24:1] sdr_addr,
-    output reg         sdr_claim,
-    input  wire [15:0] sdr_rd
+    // Interface to chipdma_arb (SDRAM ChipRAM / SlowRAM handoff)
+    output reg         chip_dma_req,
+    output reg  [31:0] chip_dma_addr,
+    input  wire        chip_dma_ack,
+    input  wire [15:0] chip_dma_data,
+    input  wire        chip_dma_error
 );
 
     // ==========================================================================
@@ -94,35 +95,28 @@ module audio_dma_master (
     end
     wire ddr_ack_safe = ddr_ack_s2;
 
-    reg c_7m_d;
-    always @(posedge clk) c_7m_d <= c_7m;
-    wire c_7m_rise = c_7m & ~c_7m_d;
-
     // ==========================================================================
     // State Machine
     // ==========================================================================
     localparam [2:0]
         S_IDLE      = 3'd0,
         S_DDR_WAIT  = 3'd1,
-        S_SDR_ARM   = 3'd2,
-        S_SDR_READ  = 3'd3,
-        S_ACK       = 3'd4,
-        S_DRAIN     = 3'd5;
+        S_CHIP_WAIT = 3'd2,
+        S_ACK       = 3'd3,
+        S_DRAIN     = 3'd4;
 
     reg [2:0] state;
-    reg [2:0] slot_cnt;
 
     always @(posedge clk) begin
         if (reset) begin
             state           <= S_IDLE;
-            slot_cnt        <= 3'd0;
             audio_dma_ack   <= 1'b0;
             audio_dma_data  <= 16'd0;
             audio_dma_error <= 1'b0;
             ddr_cs          <= 1'b0;
             ddr_addr        <= 28'd0;
-            sdr_claim       <= 1'b0;
-            sdr_addr        <= 24'd0;
+            chip_dma_req    <= 1'b0;
+            chip_dma_addr   <= 32'd0;
         end else begin
             audio_dma_ack   <= 1'b0;
             audio_dma_error <= 1'b0;
@@ -140,9 +134,10 @@ module audio_dma_master (
                             ddr_cs   <= 1'b1;
                             state    <= S_DDR_WAIT;
                         end else begin
-                            // Direct SDRAM: ChipRAM / SlowRAM
-                            sdr_addr <= {1'b0, audio_dma_addr[23:1]};
-                            state    <= S_SDR_ARM;
+                            // Chip-RAM / Slow-RAM: Safe handoff to chipdma_arb
+                            chip_dma_addr <= audio_dma_addr;
+                            chip_dma_req  <= 1'b1;
+                            state         <= S_CHIP_WAIT;
                         end
                     end
                 end
@@ -155,20 +150,12 @@ module audio_dma_master (
                     end
                 end
 
-                S_SDR_ARM: begin
-                    if (c_7m_rise) begin
-                        sdr_claim <= 1'b1;
-                        slot_cnt  <= 3'd0;
-                        state     <= S_SDR_READ;
-                    end
-                end
-
-                S_SDR_READ: begin
-                    slot_cnt <= slot_cnt + 3'd1;
-                    if (slot_cnt == 3'd3) begin
-                        audio_dma_data <= sdr_rd;
-                        sdr_claim      <= 1'b0;
-                        state          <= S_ACK;
+                S_CHIP_WAIT: begin
+                    if (chip_dma_ack) begin
+                        audio_dma_data  <= chip_dma_data;
+                        audio_dma_error <= chip_dma_error;
+                        chip_dma_req    <= 1'b0;
+                        state           <= S_ACK;
                     end
                 end
 

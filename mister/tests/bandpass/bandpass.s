@@ -137,9 +137,9 @@ Start:
         CMP.W   #48,D2
         BGT.S   .Show
         MOVE.W  #$00F0,D1                   ; gruen
-.Show:  MOVE.W  D1,COLOR00
-
-Loop:   BRA.S   Loop
+.Show:
+Loop:   MOVE.W  D1,COLOR00
+        BRA.S   Loop
 
 ; ------------------------------------------------------------------
 Settle:

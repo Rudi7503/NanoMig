@@ -148,9 +148,9 @@ Start:
         CMP.L   D5,D4
         BCC.S   .Show
         MOVE.W  #$00F0,D1                        ; gruen
-.Show:  MOVE.W  D1,COLOR00
-        MOVE.W  #$0000,AUD_CAP
-Loop:   BRA.S   Loop
+.Show:  MOVE.W  #$0000,AUD_CAP
+Loop:   MOVE.W  D1,COLOR00
+        BRA.S   Loop
 
 ; ------------------------------------------------------------------
 ; Settle: kurz warten, damit die Kette einschwingt
