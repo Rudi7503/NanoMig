@@ -92,8 +92,9 @@ module biquad_iir_ringbuffer (
     // Latches for state pipeline
     reg signed [15:0] lat_x1, lat_y1;
 
-    // Saturation logic for Biquad output (Q2.14)
-    wire signed [19:0] y_sc = acc[33:14];
+    // Symmetric rounding (+ half LSB = +8192) and saturation logic for Biquad output (Q2.14)
+    wire signed [34:0] acc_rounded = acc + 35'sd8192;
+    wire signed [19:0] y_sc = acc_rounded[33:14];
     wire signed [15:0] y_sat = (!y_sc[19] && |y_sc[18:15]) ? 16'sh7FFF :
                                ( y_sc[19] && !(&y_sc[18:15])) ? 16'sh8000 : y_sc[15:0];
 
