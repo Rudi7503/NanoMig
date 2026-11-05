@@ -419,15 +419,16 @@ wire [15:0] audio_ext_rdata;
 wire audio_ext_selected = (cpu_address_out[23:10] == 14'b1101_1111_1111_01);
 wire audio_ext_access = audio_ext_selected && !dbr && (cpu_rd || cpu_hwr || cpu_lwr);
 // Global Audio Extension Interrupt Registers (..)
-wire audio_irq_selected = (cpu_address_out[23:4] == (24'hDFF804 >> 4)) && (cpu_address_out[3:1] <= 3'd3);
+wire audio_irq_selected = (cpu_address_out[23:4] == (24'hDFF804 >> 4)) && (cpu_address_out[3:1] >= 3'd2 && cpu_address_out[3:1] <= 3'd5);
 wire audio_irq_access = audio_irq_selected && !dbr && (cpu_rd || cpu_hwr || cpu_lwr);
+wire [1:0] audio_irq_addr = cpu_address_out[3:1] - 3'd2;
 
 audio_ext AUDIO_EXT (
 	.clk(clk), .reset(reset), .ntsc(ntsc),
 	.reg_cs(audio_ext_access), .reg_wr(cpu_hwr || cpu_lwr),
 	.reg_addr(cpu_address_out[9:1]), .reg_be({cpu_hwr,cpu_lwr}),
 	.reg_wdata(cpu_data_out), .reg_rdata(audio_ext_rdata), .irq(audio_ext_irq),
-	.irq_cs(audio_irq_access), .irq_addr(cpu_address_out[2:1]),
+	.irq_cs(audio_irq_access), .irq_addr(audio_irq_addr),
 	.dma_req(audio_dma_req), .dma_addr(audio_dma_addr),
 	.dma_ack(audio_dma_ack), .dma_data(audio_dma_data), .dma_error(audio_dma_error),
 	.sample_l(audio_ext_l), .sample_r(audio_ext_r)

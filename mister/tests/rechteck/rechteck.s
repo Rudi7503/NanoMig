@@ -351,6 +351,7 @@ StdoutHandle:   DC.L    0
 DecBufEnd:      DC.B    0
 
                 EVEN
+                SECTION chip_data,DATA_C
                 INCLUDE "rechteck_data.i"
 
                 END
