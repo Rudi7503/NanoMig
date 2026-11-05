@@ -118,7 +118,7 @@ Start:
 
         LEA     AUDIO_EXT_BASE,A0
         LEA     VOICE_STRIDE*31(A0),A0
-        MOVE.W  #$8080,AUD_VOL(A0)              ; Volle Lautstaerke Voice 31
+        MOVE.W  #$FFFF,AUD_VOL(A0)              ; 100% Volle Lautstaerke Voice 31 ($FFFF)
 
         BSR     Settle
 
@@ -147,33 +147,85 @@ Start:
         BRA     .Exit
 
 .Captured:
+        MOVE.W  #$0000,AUD_CAP                  ; Capture aus
         LEA     MsgCapDone(PC),A0
         BSR     PrintStr
 
-        ; 1. Spitzenwert in Block A ermitteln
+        ; 1. Min- und Max-Werte in Block A ermitteln
         LEA     AUD_BUF_A,A1
         MOVE.W  #1023,D0
-        MOVEQ   #0,D5
-.Scan:  MOVE.W  (A1)+,D3
-        ADDQ.L  #2,A1
-        EXT.L   D3
-        BPL.S   .P
-        NEG.L   D3
-.P:     CMP.L   D5,D3
-        BLE.S   .N
-        MOVE.L  D3,D5
-.N:     DBRA    D0,.Scan
+        MOVE.W  (A1)+,D1                        ; Erstes Sample
+        ADDQ.L  #2,A1                           ; Rechtes Sample ueberspringen
+        EXT.L   D1
+        MOVE.L  D1,D4                           ; D4 = Min
+        MOVE.L  D1,D5                           ; D5 = Max
+        SUBQ.W  #1,D0
 
-        ; Spitzenwert ausgeben
+.ScanMinMax:
+        MOVE.W  (A1)+,D1
+        ADDQ.L  #2,A1
+        EXT.L   D1
+        CMP.L   D4,D1
+        BGE.S   .NotMin
+        MOVE.L  D1,D4
+.NotMin:
+        CMP.L   D5,D1
+        BLE.S   .NotMax
+        MOVE.L  D1,D5
+.NotMax:
+        DBRA    D0,.ScanMinMax
+
+        ; Spitzenwert: Maximum aus |Min| und |Max|
+        MOVE.L  D4,D2
+        BPL.S   .MinP
+        NEG.L   D2
+.MinP:  MOVE.L  D5,D3
+        BPL.S   .MaxP
+        NEG.L   D3
+.MaxP:  CMP.L   D2,D3
+        BGE.S   .PeakD3
+        MOVE.L  D2,D3
+.PeakD3:
+        ; D3 = Absoluter Spitzenwert
         LEA     MsgPeak(PC),A0
         BSR     PrintStr
-        MOVE.L  D5,D0
+        MOVE.L  D3,D0
         BSR     PrintDec
         LEA     MsgNewline(PC),A0
         BSR     PrintStr
 
+        ; Min und Max ausgeben
+        LEA     MsgMinMax(PC),A0
+        BSR     PrintStr
+        MOVE.L  D4,D0
+        BSR     PrintSignedDec
+        LEA     MsgComma(PC),A0
+        BSR     PrintStr
+        MOVE.L  D5,D0
+        BSR     PrintSignedDec
+        LEA     MsgNewline(PC),A0
+        BSR     PrintStr
+
+        ; Rohdaten der ersten 8 Samples ausgeben
+        LEA     MsgRawSamples(PC),A0
+        BSR     PrintStr
+
+        LEA     AUD_BUF_A,A1
+        MOVEQ   #7,D6
+.DumpLoop:
+        MOVE.W  (A1)+,D0
+        ADDQ.L  #2,A1
+        EXT.L   D0
+        BSR     PrintSignedDec
+        LEA     MsgSpace(PC),A0
+        BSR     PrintStr
+        DBRA    D6,.DumpLoop
+
+        LEA     MsgNewline(PC),A0
+        BSR     PrintStr
+
         ; Pruefen, ob ueberhaupt Signalpegel anliegt
-        TST.W   D5
+        TST.W   D3
         BNE.S   .HasSignal
 
         ; Stille!
@@ -186,8 +238,24 @@ Start:
         BRA     .Exit
 
 .HasSignal:
+        ; Pruefen auf reinen Gleichspannungspegel (DC: Max - Min < 200)
+        MOVE.L  D5,D0
+        SUB.L   D4,D0
+        CMP.L   #200,D0
+        BGE.S   .IsAC
+
+        ; Reines DC-Signal!
+        LEA     MsgFailDC(PC),A0
+        BSR     PrintStr
+        LEA     MsgExitErr(PC),A0
+        BSR     PrintStr
+        MOVE.W  #$0F00,COLOR00                  ; Rot
+        MOVEQ   #20,D7
+        BRA     .Exit
+
+.IsAC:
         ; Schwelle: 70 Prozent vom Spitzenwert
-        MOVE.L  D5,D6
+        MOVE.L  D3,D6
         MULU    #7,D6
         DIVU    #10,D6
         ANDI.L  #$FFFF,D6
@@ -205,7 +273,6 @@ Start:
         BLE.S   .NextC
         ADDQ.W  #1,D2
 .NextC: DBRA    D0,.Count
-        MOVE.W  #$0000,AUD_CAP                  ; Capture aus
 
         ; Sample-Anzahl ausgeben
         LEA     MsgSamples(PC),A0
@@ -285,6 +352,19 @@ PrintStr:
 .Ret:   RTS
 
 ; ------------------------------------------------------------------
+; Hilfsroutine: PrintSignedDec (32-Bit-Zahl mit Vorzeichen)
+; ------------------------------------------------------------------
+PrintSignedDec:
+        TST.L   D0
+        BPL.S   .Pos
+        NEG.L   D0
+        MOVEM.L D0/A0,-(SP)
+        LEA     MsgMinus(PC),A0
+        BSR     PrintStr
+        MOVEM.L (SP)+,D0/A0
+.Pos:   BRA     PrintDec
+
+; ------------------------------------------------------------------
 ; Hilfsroutine: PrintDec (32-Bit-Zahl in D0 dezimal ausgeben)
 ; ------------------------------------------------------------------
 PrintDec:
@@ -334,7 +414,10 @@ MsgCapture:     DC.B    "rechteck: [3/4] Hardware-Capture ($DFF802) gestartet...
 MsgTimeout:     DC.B    "rechteck: FEHLER - Timeout! Block A nach 1s nicht fertig.",10,0
 MsgCapDone:     DC.B    "rechteck: [3/4] Capture fertig. Analysiere 1024 Samples...",10,0
 MsgPeak:        DC.B    "rechteck: [4/4] Spitzenwert (Peak) = ",0
+MsgMinMax:      DC.B    "rechteck: [4/4] Min / Max          = ",0
+MsgRawSamples:  DC.B    "rechteck: [4/4] Erste 8 Samples    = ",0
 MsgSilent:      DC.B    "rechteck: FEHLER - Kein Signal! Spitzenwert ist 0.",10,0
+MsgFailDC:      DC.B    "rechteck: FEHLER - Reiner Gleichspannungspegel (DC)! Kein Tonsignal.",10,0
 MsgSamples:     DC.B    "rechteck: [4/4] Proben ueber 70% = ",0
 MsgOf1024:      DC.B    " von 1024",10,0
 MsgPass:        DC.B    "rechteck: ERFOLG - Sinuswelle nachgewiesen (<75%).",10
@@ -343,6 +426,9 @@ MsgFailSquare:  DC.B    "rechteck: FEHLER - Ungefiltertes Signal! Noch Rechteck 
 MsgExitOk:      DC.B    "rechteck: Test beendet (Return Code: 0).",10,10,0
 MsgExitErr:     DC.B    "rechteck: Test abgebrochen (Return Code: 20).",10,10,0
 MsgNewline:     DC.B    10,0
+MsgComma:       DC.B    " bis ",0
+MsgMinus:       DC.B    "-",0
+MsgSpace:       DC.B    " ",0
 
                 EVEN
 DOSBase:        DC.L    0
