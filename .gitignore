@@ -1,5 +1,6 @@
 *~
 *.vcd
+*.vvp
 build/
 src/impl/gwsynthesis/**
 src/impl/temp/**

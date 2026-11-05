@@ -348,8 +348,8 @@ PrintDec:
 ; ------------------------------------------------------------------
 DosName:        DC.B    "dos.library",0
 MsgBanner:      DC.B    10,"==================================================",10
-                DC.B    "*** KASKADEN-STUFENTEST GESTARTET (KICK 1.3) ***",10
-                DC.B    "Messung: 1, 2, 4, 8, 16 Stufen Kaskade",10
+                DC.B    "*** KASKADEN-FEINMESSUNG GESTARTET (KICK 1.3) ***",10
+                DC.B    "Messung: 1, 2, 4, 8, 12, 16, 17..22, 24, 28, 32 Stufen",10
                 DC.B    "==================================================",10,0
 MsgStageHdr:    DC.B    10,"--- TESTE KASKADE MIT STUFEN: ",0
 MsgMinMax:      DC.B    "  Min / Max     = ",0
@@ -362,7 +362,8 @@ MsgNewline:     DC.B    10,0
 MsgMinus:       DC.B    "-",0
 MsgSpace:       DC.B    " ",0
 
-StageTable:     DC.W    1, 2, 4, 8, 16, 0       ; Stufenanzahlen (0 = Ende)
+                EVEN
+StageTable:     DC.W    1, 2, 4, 8, 12, 16, 17, 18, 19, 20, 21, 22, 24, 28, 32, 0 ; Feinstufen
 
                 EVEN
 DOSBase:        DC.L    0
