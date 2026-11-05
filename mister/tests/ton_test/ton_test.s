@@ -77,12 +77,12 @@ Start:
         MOVE.W  #$FFFF,AUD_VOL(A0)              ; 100% Links + 100% Rechts!
         MOVE.W  #(CTRL_16BIT|CTRL_STEREO),AUD_CTRL(A0) ; Ungefiltert, Stereo
 
-        LEA     MsgPlaying(PC),A0
-        BSR     PrintStr
-
-        ; 3. Stimme 0 starten
+        ; 3. Stimme 0 starten (VOR der Textausgabe, solange A0 auf $DFF400 zeigt!)
         MOVE.W  #$0001,AUD_CMD(A0)              ; Start
         MOVE.W  #$00F0,COLOR00                  ; Rahmen gruen
+
+        LEA     MsgPlaying(PC),A0
+        BSR     PrintStr
 
         ; 4. Fuer ca. 5 Sekunden toenen lassen (250 Ticks via dos.library Delay)
         MOVE.L  DOSBase(PC),D0

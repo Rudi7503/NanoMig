@@ -1,0 +1,57 @@
+==============================================================================
+MiSTer FPGA / Minimig-AGA: Software-Testpaket fuer Core b3f17590
+==============================================================================
+Datum: 05.11.2026
+Core:  Minimig_b3f17590.rbf (bleibt unveraendert im MiSTer geladen!)
+==============================================================================
+
+Hallo Toby und Tobys KI,
+
+herzlichen Glueckwunsch zum Meilenstein mit filter1_test! Das war der endgueltige
+Beweis, dass Chip-RAM Audio-DMA, 16-Bit-Biquad-Filterung, Capture-Puffer und
+die Audio-Mischung auf MiSTer grundsaetzlich voll funktionsfaehig sind.
+
+Wir haben die beiden offenen Punkte aus Tobys Testbericht sofort analysiert:
+
+1. Ursache fuer das Schweigen von ton_test:
+   In ton_test.s wurde das Register A0 durch den Textausgabe-Aufruf LEA MsgPlaying
+   kurz vor dem AUD_CMD-Startbefehl ueberschrieben. Dadurch wurde der Startbefehl
+   in den Textstring im RAM statt in das Audio-Hardware-Register $DFF41A geschrieben.
+   Stimme 0 wurde also schlicht nie gestartet!
+   -> In der beiliegenden, korrigierten Fassung von ton_test ist dies behoben.
+
+2. ADPCM Testprogramm (adpcm_test):
+   Wie gewuenscht haben wir ein ausfuehrliches 2-Phasen ADPCM Testprogramm gebaut:
+   - Phase 1 (10 Sekunden): Echte 4-Bit ADPCM Musikwiedergabe ("Kakao bei Lotte")
+     pur auf Stimme 0 im Center mit 100% Lautstaerke ($FFFF).
+   - Phase 2 (10 Sekunden): Voluminoeses Hoererlebnis mit 4 Stimmen polyphon,
+     breitem Stereo-Panorama und gestaffeltem Hardware-Echo (Spatial Reverb).
+
+------------------------------------------------------------------------------
+ENTHALTENE PROGRAMME:
+------------------------------------------------------------------------------
+1. ton_test     (10.372 Bytes, SHA-256: b5a74d0d13eda125df75d8b3e7bf2b4a4c31842da1deed6fd49a75126b3675e4)
+   - Korrigierter Direkttontest: 200 Hz Rechteck ungefiltert (5 Sekunden).
+   - Erwartung: Sauberer, lauter 200 Hz Ton.
+
+2. adpcm_test   (25.396 Bytes, SHA-256: 7b869b2dfcc82c3202accc3bc439a5b1351076b27c6a4945adac07517804f56b)
+   - 2-Phasen ADPCM Test (10s pur, danach 10s mit Raumhall/Spatial Delay).
+   - Erwartung: Klare Sprach-/Musikwiedergabe, in Phase 2 raeumlicher Hall.
+
+3. filter1_test (11.100 Bytes, SHA-256: 793f65136493617ea267bc80158a35114e70058b1ac79736cc97ac31533b9dca)
+   - Zur Vollstaendigkeit beigelegt (vom vorherigen Testlauf).
+
+------------------------------------------------------------------------------
+DURCHFUEHRUNG:
+------------------------------------------------------------------------------
+1. Programme auf die Amiga-ADF bzw. Workbench kopieren.
+2. Nacheinander ausfuehren:
+     1> ton_test
+     1> adpcm_test
+3. Hoerbeobachtung mitteilen.
+
+Waehrenddessen bereiten wir in der Hardware (Verilog) die mathematische Rundung
+fuer die 32-Stufen-Kaskade vor.
+
+Vielen Dank!
+==============================================================================
