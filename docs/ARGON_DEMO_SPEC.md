@@ -52,10 +52,10 @@ Jede der 32 Stimmen belegt 16 Wörter (32 Bytes). Basisadresse Stimme $n = \$DFF
 | :---: | :--- | :---: | :---: | :--- |
 | `+$00` | `AUDxPTRH` | W | `$0000` | Sample-Startzeiger High-Word (Bits 31..16) |
 | `+$02` | `AUDxPTRL` | W | `$0000` | Sample-Startzeiger Low-Word (Bits 15..1, Bit 0 = 0) |
-| `+$04` | `AUDxLENH` | W | `$0000` | Pufferlänge High in Words (Bits 31..16) – **Volle 32-Bit DMA!** |
-| `+$06` | `AUDxLENL` | W | `$0000` | Pufferlänge Low in Words (Bits 15..0 in 16-Bit Wörtern) |
+| `+$04` | `AUDxLENH` | W | `$0000` | Pufferlänge High in **Bytes** (Bits 31..16) – **Volle 32-Bit DMA!** |
+| `+$06` | `AUDxLENL` | W | `$0000` | Pufferlänge Low in **Bytes** (Bits 15..0, muss gerade sein) |
 | **`+$08`** | **`AUDxVOL`**  | W | `$0000` | **Lautstärke:** High-Byte = Links (0..255), Low-Byte = Rechts (0..255) |
-| **`+$0A`** | **`AUDxPER`**  | W | `$0100` | **Abtastperiode:** Farbtakt-Teiler ($f_s = 3.546.895 / \text{PER}$, 744 = 47.655 Hz / 48 kHz) |
+| **`+$0A`** | **`AUDxPER`**  | W | `$0100` | **Abtastperiode:** Teiler der virtuellen 25-MHz-Zeitbasis ($f_s = 25.000.000 / \text{PER}$, **521 = 48 kHz**) |
 | `+$0C` | `AUDxCTRL` | W | `$0000` | Steuerregister (Format, Filter, Kaskadierung, Modulation, Mute) |
 | `+$0E` | `AUDxPRED` | W | `$0000` | ADPCM Prädiktor Initialwert & Index |
 | `+$10` | `AUDxB0`   | R/W | `$4000` | Biquad Koeffizient $b_0$ (Q2.14 vorzeichenbehaftet, `$4000` = 1.0) |
