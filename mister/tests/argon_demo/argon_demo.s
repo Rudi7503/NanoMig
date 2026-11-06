@@ -135,9 +135,10 @@ Main:
         JSR     _LVOOpenLibrary(A6)
         MOVE.L  D0,DOSBase
         BEQ.S   .NoDos
-        MOVE.L  D0,A0
-        JSR     _LVOOutput(A0)
+        MOVE.L  D0,A6
+        JSR     _LVOOutput(A6)
         MOVE.L  D0,StdoutHandle
+        MOVE.L  $00000004.W,A6
 .NoDos:
         LEA     GfxName(PC),A1
         MOVEQ   #0,D0
@@ -959,6 +960,7 @@ Init_Synth_Track:
         MOVE.W  #$A0A0,AUD_VOL(A2)
         MOVE.W  #(CTRL_PCM16|CTRL_LOOP|CTRL_FLT_STEREO|CTRL_SRC_POST),AUD_CTRL(A2)
 
+        MOVEQ   #0,D0
         BSR     Set_Acid_Filter_Coeffs
         MOVE.W  #$0001,AUD_CMD(A0)
         MOVE.W  #$0001,AUD_CMD(A2)

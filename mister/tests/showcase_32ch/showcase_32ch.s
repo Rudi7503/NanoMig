@@ -82,18 +82,17 @@ _LVODelay        EQU -198
 
 Main:
         MOVEM.L D2-D7/A2-A6,-(SP)
-        LEA     CUSTOM,A6
 
-        ; 1. dos.library oeffnen
-        MOVE.L  $00000004.W,A0
+        ; 1. dos.library oeffnen (Library-Basis MUSS in A6 liegen!)
+        MOVE.L  $00000004.W,A6
         LEA     DosName(PC),A1
         MOVEQ   #0,D0
-        JSR     _LVOOpenLibrary(A0)
+        JSR     _LVOOpenLibrary(A6)
         MOVE.L  D0,DOSBase
         BEQ     .NoDos
 
-        MOVE.L  D0,A0
-        JSR     _LVOOutput(A0)
+        MOVE.L  D0,A6
+        JSR     _LVOOutput(A6)
         MOVE.L  D0,StdoutHandle
         BEQ     .NoDos
 
@@ -102,6 +101,7 @@ Main:
         BSR     PrintStr
 
 .NoDos:
+        LEA     CUSTOM,A6
         ; 2. Altes Paula Audio stummschalten
         MOVE.W  #$000F,DMACON(A6)       ; Paula Audio DMA deaktivieren
         MOVE.W  COLOR00(A6),Saved_COLOR00
@@ -296,6 +296,7 @@ Init_Scene_Track:
         MOVE.W  #(CTRL_LOOP|CTRL_FLT_STEREO|CTRL_SRC_POST),AUD_CTRL(A2)
 
         ; Filterkoeffizienten initialisieren
+        MOVEQ   #0,D0
         BSR     Set_Acid_Filter_Coeffs
 
         MOVE.W  #$0001,AUD_CMD(A0)      ; Ch 0 starten
@@ -502,6 +503,7 @@ Process_Track_Step:
 ; ------------------------------------------------------------------------------
 Update_Filter_LFO:
         ADDQ.B  #1,LFO_Phase
+        MOVEQ   #0,D0
         MOVE.B  LFO_Phase,D0
         LEA     LfoTab,A1
         MOVE.B  (A1,D0.W),D0
