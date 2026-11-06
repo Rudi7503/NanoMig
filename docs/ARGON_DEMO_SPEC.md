@@ -234,8 +234,9 @@ Main:
             MOVE.W  #$0672, AUD_BQ_B2(A0)
             MOVE.W  #$CD2B, AUD_BQ_A1(A0)
             MOVE.W  #$164D, AUD_BQ_A2(A0)
-            ; Bit 0: PCM16, Bits 8..7: Stereo-Filter, Bits 10..9: DMA (00)
-            MOVE.W  #$0181, AUD_CTRL(A0)
+            ; Bit 0: PCM16, Bits 8..7: Stereo-Filter, Bit 13: Mute in Master-Mix ($2000)
+            ; (Stimme 0 dient als reiner Vorstufen-Filter fuer Stimme 1 und soll nicht parallel im Mix hoerbar sein)
+            MOVE.W  #$2181, AUD_CTRL(A0)
 
             ; 5. Stimme 1: Moog Bass Zweite 12 dB Stufe (Kaskade von Stimme 0!)
             LEA     VOICE_SZ(A0), A1    ; Stimme 1
