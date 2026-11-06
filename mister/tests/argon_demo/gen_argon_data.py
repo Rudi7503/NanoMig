@@ -415,6 +415,9 @@ emit("    DC.W    $00E0,$0000,$00E2,$0000")
 emit("    DC.W    $00E4,$0000,$00E6,$0000")
 emit("    DC.W    $00E8,$0000,$00EA,$0000")
 emit("    DC.W    $00EC,$0000,$00EE,$0000")
+emit("CopSpritePtrs:")
+for s in range(8):
+    emit(f"    DC.W    ${0x0120 + s*4:04X},$0000,${0x0122 + s*4:04X},$0000")
 emit("CopBasePal:")
 # Anchor Palette (COLOR00..COLOR07) + Delta/Fallback Palette (COLOR08..COLOR15)
 base_pal = [

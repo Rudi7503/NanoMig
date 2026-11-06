@@ -69,9 +69,10 @@ Jede der 32 Stimmen belegt 16 Wörter (32 Bytes). Basisadresse Stimme $n = \$DFF
 
 > [!IMPORTANT]
 > **Byte-Reihenfolge (Endianness):**  
-> Sämtliche 16-Bit Audiosamples müssen im **Motorola Big-Endian Format** vorliegen (High-Byte vor Low-Byte).  
-> **16-Bit Word-Zählung bei AUDxLEN:**  
-> Die Pufferlänge wird in **16-Bit-Wörtern** angegeben: $\text{AUDxLEN} = \text{Dateigröße in Bytes} / 2$.
+> Sämtliche 16-Bit Audiosamples müssen im **Motorola Big-Endian Format** vorliegen (High-Byte vor Low-Byte; `>i2` in Python). Little-Endian erzeugt unerträgliche Kreissägen-Störgeräusche.  
+> **Byte-Zählung bei AUDxLEN:**  
+> Die Pufferlänge wird in **Bytes** angegeben (muss gerade sein; `0` bei kaskadierten Stimmen ohne eigene DMA). RTL dekrementiert um 2 Bytes pro gelesenem 16-Bit-Wort.
+
 
 ---
 
@@ -118,7 +119,13 @@ Die Engine ermittelt den Modus automatisch anhand der konfigurierten Bitplane-An
    * **Vorteil:** Unglaublich geringer Speicher- und DMA-Bedarf für 24-Bit Verläufe!
 2. **HAM04 (4 Bitplanes = 16 Werte):**
    * Wenn `Bit 3 == 0`: **Anchor-Pixel!** Lädt Farbe aus Palette (Index 0..7).
+     * Beispiel: Index 7 = Reines Weiß `(255, 255, 255)` (`c3=0, c2=1, c1=1, c0=1`).
    * Wenn `Bit 3 == 1`: **Delta-Pixel!** Unabhängige Richtungssteuerung: Bit 2 steuert Rot ($\pm 2$), Bit 1 Grün ($\pm 2$), Bit 0 Blau ($\pm 2$).
+   * **Kometen-Schweif / Waveform-Rendering (Byte-Layout):**
+     * Linkes Nibble = Weißer Leuchtpunkt (Anchor 7, `c3=0, c2=1, c1=1, c0=1`).
+     * Rechtes Nibble = Abklingender Delta-Schweif (`c3=1, c2=0, c1=0, c0=1`).
+     * Exakte Bitplane-Bytes: `BPL1 = $F5`, `BPL2 = $F3`, `BPL3 = $F0`, `BPL4 = $0F`.
+     * Lösch-Werte (Hintergrund): `BPL1 = $55`, `BPL2 = $33`, `BPL3 = $00`, `BPL4 = $FF`.
 3. **HAM05 (5 Bitplanes = 32 Werte):**
    * Wenn `Bit 4 == 0`: **Anchor-Pixel!** Palette (Index 0..15).
    * Wenn `Bit 4 == 1`: **Delta-Pixel mit Turbo-Bit!**  
@@ -151,13 +158,31 @@ CMOVE   $DFF800, $801F          ; Blauer Horizont / Meer (R=0, G=0, B=31)
 Zur perfekten Audio-Video-Synchronisation liest die CPU oder Copper das laufende Audio-Ausgangssignal direkt aus dem internen Ringpuffer:
 
 * **Puffer A:** `$DF8000 .. $DF8FFF` (1024 32-Bit Stereopaare: High-Word = Links, Low-Word = Rechts).
+* **Puffer B:** `$DF9000 .. $DF9FFF` (1024 32-Bit Stereopaare).
 * **Steuerung `$DFF802` (`CAP_CTRL`):**
-  * `MOVE.W #$0001, $DFF802` – Startet die Aufzeichnung in den internen BRAM.
-* **Auslesen im Demo-Frame (Beat-Detection):**
+  * Bit 0: `capture_en` (`1` = Capture-Engine aktiv).
+  * Bit 1: `flag_block_a` (W1C: Schreibe `1` zum Löschen des Fertig-Flags von Block A).
+  * Bit 2: `flag_block_b` (W1C: Schreibe `1` zum Löschen des Fertig-Flags von Block B).
+  * > [!CAUTION]
+    > **Capture-Stopp vermeiden:**  
+    > Beim Quittieren der Puffer-Flags muss Bit 0 gesetzt bleiben (`#$0003` für Puffer A, `#$0005` für Puffer B)! Ein Schreiben von `#$0002` oder `#$0004` schaltet `capture_en = 0` und friert die Capture-Engine dauerhaft ein!
+* **Auslesen im Demo-Frame (Beat-Detection & Oszilloskop):**
   ```assembly
-  MOVE.W  $DF8000, D0             ; Liest aktuelles linkes Sample (16-Bit vorzeichenbehaftet)
+  ; Puffer-Handshake mit aktivem Capture:
+  MOVE.W  $DFF802, D0
+  BTST    #1, D0
+  BEQ.S   .try_b
+  MOVE.W  #$0003, $DFF802         ; Flag A löschen, Capture aktiv halten!
+  LEA     $DF8000, A1
+  BRA.S   .read_samples
+.try_b:
+  BTST    #2, D0
+  BEQ.S   .read_samples
+  MOVE.W  #$0005, $DFF802         ; Flag B löschen, Capture aktiv halten!
+  LEA     $DF9000, A1
+.read_samples:
+  MOVE.W  (A1), D0                ; Liest 16-Bit vorzeichenbehaftetes Left-Sample
   ASR.W   #8, D0                  ; Skalieren auf -128..+127
-  ; Jetzt D0 nutzen, um Copper-Farben zu modulieren oder Sprites zu skalieren!
   ```
 
 ---
@@ -186,7 +211,7 @@ AUD_PTRL    EQU $02
 AUD_LENH    EQU $04
 AUD_LENL    EQU $06
 AUD_VOL     EQU $08             ; High=Links, Low=Rechts
-AUD_PER     EQU $0A             ; Farbtakt-Teiler (744 = 48 kHz)
+AUD_PER     EQU $0A             ; Teiler der 25-MHz-Zeitbasis (521 = 48 kHz)
 AUD_CTRL    EQU $0C             ; Bit 0=PCM16, 1=1Shot, 7/8=Flt, 9/10=Src, 11/12=Mod
 AUD_PRED    EQU $0E
 AUD_BQ_B0   EQU $10
@@ -225,8 +250,8 @@ Main:
             SWAP    D0
             MOVE.W  D0, AUD_PTRH(A0)
             MOVE.W  #0, AUD_LENH(A0)
-            MOVE.W  #64, AUD_LENL(A0)   ; 64 Words = 128 Bytes
-            MOVE.W  #744, AUD_PER(A0)   ; 48 kHz Basis
+            MOVE.W  #128, AUD_LENL(A0)  ; 128 Bytes = 64 Words
+            MOVE.W  #521, AUD_PER(A0)   ; 48 kHz Basis (25 MHz / 521)
             MOVE.W  #$8080, AUD_VOL(A0) ; Halbpegel
             ; Filter B0..A2 laden (1 kHz Lowpass Q2.14)
             MOVE.W  #$0672, AUD_BQ_B0(A0)

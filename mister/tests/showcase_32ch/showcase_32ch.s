@@ -544,11 +544,11 @@ Draw_Scope_Color:
 
 .read_buf_a:
         LEA     CAP_BUF_A,A1
-        MOVE.W  #$0002,AUD_CAP_CTRL
+        MOVE.W  #$0003,AUD_CAP_CTRL     ; Clear Block A flag (bit 1) and KEEP capture_en=1 (bit 0)!
         BRA.S   .render_scope
 .read_buf_b:
         LEA     CAP_BUF_B,A1
-        MOVE.W  #$0004,AUD_CAP_CTRL
+        MOVE.W  #$0005,AUD_CAP_CTRL     ; Clear Block B flag (bit 2) and KEEP capture_en=1 (bit 0)!
 
 .render_scope:
         MOVE.W  (A1),D1
