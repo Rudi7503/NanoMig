@@ -4,7 +4,7 @@ Diese Datei sammelt Fehler, die in diesem Projekt tatsächlich passiert sind,
 und die Regel, die jeden davon verhindert hätte. Sie ist für Menschen und
 für KI-Assistenten gedacht, die hier weiterarbeiten.
 
-Stand: 2026-11-02
+Stand: 2026-11-06
 
 ## 1. Zahlen niemals abschreiben
 
@@ -102,3 +102,59 @@ sauber dokumentiert. Das war richtig.
 
 **Regel:** Wenn eine Änderung nicht in einem Zug fertig wird, zurücknehmen
 und den Zwischenstand beschreiben — nicht einen halben Zustand hinterlassen.
+
+## 11. 16-Bit-Audiosamples auf dem Amiga immer in Big-Endian (`>i2`) erzeugen
+
+**Passiert:** Beim ersten Hardwaretest für AM & Ringmodulation (`am_ringmod_test`)
+wurden die 16-Bit-Sinus-Tabellen auf dem x86-PC im nativen Little-Endian-Format
+(`<i2`) geschrieben. Die 68000-/Minimig-Hardware las das sich schnell ändernde
+Low-Byte als High-Byte (Bits 15..8), wodurch aus dem sanften 4-Hz-Tremolo ein
+schneidendes 48-kHz-Sägezahngeräusch („Kreissäge“) wurde.
+
+**Regel:** Jedes Generator-Skript für 16-Bit-PCM-Daten muss explizit Motorola
+Big-Endian (`struct.pack('>h', ...)` bzw. `dtype='>i2'`) schreiben und vor dem
+Bau die Endianness verifizieren.
+
+## 12. AmigaOS-Bibliotheksaufrufe (`_LVO`) verlangen die Library-Base zwingend in `A6`
+
+**Passiert:** In `showcase_32ch.s` wurde zu Beginn `LEA CUSTOM, A6` (`$DFF000`)
+gesetzt und anschließend `ExecBase` (`$4.W`) bzw. `DOSBase` versehentlich nach
+`A0` geladen (`JSR _LVOOpenLibrary(A0)` / `JSR _LVOOutput(A0)`). Da AmigaOS-
+Routinen intern `A6` als Library-Base dereferenzieren, las `OpenLibrary` aus
+`$DFF000` ungerade Werte und stürzte sofort mit Guru Meditation `#00000003`
+(68000 Address Error) ab.
+
+**Regel:** Vor jedem `JSR _LVO...` muss die zugehörige Library-Base (`SysBase`,
+`DOSBase`, `GfxBase`, `IntuitionBase`) in **`A6`** geladen sein, und der Aufruf
+muss `JSR _LVO...(A6)` lauten.
+
+## 13. Bei 68000 Byte-Zugriffen (`MOVE.B`) vor Wort-Indizierung das High-Byte löschen
+
+**Passiert:** `MOVE.B LFO_Phase, D0` gefolgt von `MOVE.B (A1, D0.W), D0` ließ
+Bits 15..8 von `D0` unverändert (darin stand noch der `VPOSR`-Restwert aus
+`Wait_VBL`), sodass Hunderte Bytes außerhalb von `LfoTab` gelesen wurden.
+
+**Regel:** Vor jedem `MOVE.B ..., Dn`, das anschließend als 16-Bit-Index
+`(An, Dn.W)` oder für `MULU.W` genutzt wird, zwingend `MOVEQ #0, Dn` (oder
+`CLR.W Dn`) ausführen.
+
+## 14. Register-Offsets und Zeitbasis immer gegen das echte Verilog (`audio_ext.v`) prüfen
+
+**Passiert:** In einer älteren Doku-Skizze waren `+$08` (`AUDxVOL`) und `+$0A`
+(`AUDxPER`) vertauscht; außerdem wurde teils der PAL-Farbtakt (3,54 MHz) statt
+der echten 25-MHz-TDM-Zeitbasis (`PER = 521` für 48 kHz) und Words statt Bytes
+für `AUDxLEN` angenommen.
+
+**Regel:** Maßgeblich für Register-Offsets, Bitmasken (`AUDxCTRL`), Teiler
+($f_s = 25\,\text{MHz} / \text{PER}$) und Längen (`AUDxLEN` in Bytes) ist
+allein das synthetisierte RTL in `mister/rtl/audio_ext.v` und `mister/rtl/minimig.v`.
+
+## 15. Kaskadierte Vorstufen mit `CTRL_MUTE_MIX` ($2000) stummschalten und Folgestufen mit `LEN = 0` betreiben
+
+**Passiert:** Ohne `CTRL_MUTE_MIX` (`$2000`) auf der Vorstufe einer 24-dB-Moog-
+Kaskade wird das 12-dB-Zwischensignal im Master-Mix zum 24-dB-Endsignal addiert.
+
+**Regel:** Jede reine Filter-Vorstufe oder Modulator-Stimme (AM/Ringmod-Träger)
+erhält `CTRL_MUTE_MIX` (`$2000`). Kaskadierte Folgestufen (`CTRL_SRC_PRE` =
+`$0200` oder `CTRL_SRC_POST` = `$0400`) erhalten `AUDxLEN = 0`, damit sie sofort
+in `PLAYING` wechseln und 0 % DMA-Bandbreite verbrauchen.
