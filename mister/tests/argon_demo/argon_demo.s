@@ -102,7 +102,7 @@ CTRL_MOD_AM     EQU $0800
 CTRL_MOD_RING   EQU $1000
 CTRL_MUTE_MIX   EQU $2000
 
-ADPCM_BYTES     EQU 24000       ; 1.0s loop of 48 kHz 4-Bit ADPCM
+ADPCM_BYTES     EQU 240000      ; 10.0s 48 kHz 4-Bit ADPCM stream ($0003A980)
 
 ; Screen Geometry (320x200, 4 Bitplanes = HAM04)
 SCR_WIDTH_B     EQU 40
@@ -253,8 +253,9 @@ Main:
         BSR     PrintStr
 
         ; ==============================================================
-        ; ACT III [0:24 - 0:36]: "32-BAND VOCODER & 4-BIT ADPCM" (600 Frames = 12s)
-        ; Ch 0: 4-Bit ADPCM Stream | Ch 1..31: Pre-Filter Cascade + 32 Biquad BPs
+        ; ACT III [0:24 - 0:54]: "32-BAND VOCODER & 4-BIT ADPCM" (1500 Frames = 30.0s)
+        ; Ch 0: 4-Bit ADPCM 10s Loop | Ch 1..31: Pre-Filter Cascade + 32 Biquad BPs
+        ; 2.0s Fade-In (100 Frames) + 26.0s Spectral Sweep + 2.0s Fade-Out (100 Frames)
         ; ==============================================================
         MOVE.W  #3,CurrentAct
         LEA     MsgAct3(PC),A0
@@ -264,38 +265,18 @@ Main:
 
         BSR     Init_Act3_Vocoder
 
-        ; Phase 3A: Bi-directional Spectral Wah-Wah Sweep (300 Frames = 6.0s)
-        MOVE.W  #300-1,D6
-        MOVEQ   #0,D5                   ; Frame counter for sweep
-.act3_sweep:
+        MOVE.W  #1500-1,D6              ; 1500 Frames = 30.0s
+        MOVEQ   #0,D5                   ; Frame counter for sweep (0..1499)
+.act3_loop:
         BSR     Wait_VBL
-        BSR     Update_Vocoder_Sweep
+        BSR     Update_Vocoder_30s      ; 2s Fade-In, 26s Sweep (Band 14 start), 2s Fade-Out
         BSR     Update_Visuals_And_Scope
         BTST    #6,$BFE001
         BEQ     .AbortDemo
         ADDQ.W  #1,D5
-        DBRA    D6,.act3_sweep
+        DBRA    D6,.act3_loop
 
-        ; Softly transition into Outside-In build-up (prevent click & keep warm audio bed)
-        BSR     Fade_Out_All_Voices
-        BSR     Mute_Vocoder_Bands
-        MOVE.W  #$2424,AUD_VOL+AUDIO_EXT_BASE ; Voice 0 warm background bed
-
-        ; Phase 3B: Outside-In Spectral Build-Up (300 Frames = 6.0s)
-        ; Every 8 frames enable next band from OutsideInOrder (32 * 8 = 256 frames + 44 hold)
-        MOVE.W  #300-1,D6
-        MOVEQ   #0,D5
-.act3_build:
-        BSR     Wait_VBL
-        BSR     Update_Vocoder_Build
-        BSR     Update_Visuals_And_Scope
-        BTST    #6,$BFE001
-        BEQ     .AbortDemo
-        ADDQ.W  #1,D5
-        DBRA    D6,.act3_build
-
-        BSR     Fade_Out_All_Voices     ; Click-free 8-frame micro-fade
-        BSR     Silence_All_Voices
+        BSR     Silence_All_Voices      ; Already at volume 0 from 2s fadeout
 
         ; Print Act III Done marker with measured audio peak
         LEA     MsgAct3Peak,A0
@@ -975,8 +956,8 @@ Init_Act3_Vocoder:
         MOVE.W  D0,AUD_PTRL(A0)
         SWAP    D0
         MOVE.W  D0,AUD_PTRH(A0)
-        MOVE.W  #0,AUD_LENH(A0)
-        MOVE.W  #ADPCM_BYTES,AUD_LENL(A0)
+        MOVE.W  #3,AUD_LENH(A0)         ; 240,000 Bytes = $0003A980 (10.0s loop)
+        MOVE.W  #$A980,AUD_LENL(A0)
         MOVE.W  #PER_48K,AUD_PER(A0)
         MOVE.W  #0,AUD_PRED(A0)
         MOVE.W  #$0000,AUD_VOL(A0)
@@ -1015,64 +996,107 @@ Mute_Vocoder_Bands:
         DBRA    D0,.m_voc
         RTS
 
-; Frame-by-frame Bi-directional Spectral Wah-Wah Sweep (D5 = 0..299)
-; Band cluster caching prevents 50 Hz clicking: only update hardware registers
-; when center band D0 changes (once every 4 frames / 12.5 Hz).
-Update_Vocoder_Sweep:
+; ------------------------------------------------------------------------------
+; Act III: 30-Second Vocoder Engine (D5 = 0..1499)
+; 2.0s Fade-In (D5=0..99), 26.0s Bi-directional Sweep, 2.0s Fade-Out (D5=1400..1499)
+; Sweep starts centered around Band 14 (~676 Hz vowel formant) for instant vocal warmth!
+; ------------------------------------------------------------------------------
+Update_Vocoder_30s:
+        MOVEM.L D2-D4/A0,-(SP)
+
+        ; 1. Calculate Linear Fade Multiplier in D4 (0..100)
+        CMPI.W  #100,D5
+        BGE.S   .chk_fadeout
+        ; Fade-In (0..99): Smooth swell from volume 0 to 100%
+        MOVE.W  D5,D4
+        BRA.S   .calc_sweep
+.chk_fadeout:
+        CMPI.W  #1400,D5
+        BLT.S   .sustain
+        ; Fade-Out (1400..1499): Smooth fade from 100% down to 0
+        MOVE.W  #1499,D4
+        SUB.W   D5,D4
+        BRA.S   .calc_sweep
+.sustain:
+        MOVEQ   #100,D4                 ; Full volume (100%)
+
+.calc_sweep:
+        ; 2. Calculate Center Band D0 (0..31), starting at Band 14 (vocal formant)
         MOVE.W  D5,D0
-        LSR.W   #2,D0                   ; 0..74
+        LSR.W   #2,D0                   ; Advance every 4 frames (12.5 Hz step)
+        ADDI.W  #14,D0                  ; Start at Band 14 (~676 Hz)!
         ANDI.W  #$003F,D0               ; 0..63
         CMPI.W  #32,D0
-        BLT.S   .sw_up
+        BLT.S   .sw_fwd
         MOVEQ   #63,D1
         SUB.W   D0,D1
         MOVE.W  D1,D0                   ; 31..0
-.sw_up:
+.sw_fwd:
+
+        ; During sustain (D4=100), only write to hardware if band changed
+        CMPI.W  #100,D4
+        BNE.S   .do_update
         CMP.W   LastVocoderCenter(PC),D0
-        BEQ.S   .sw_done                ; Band unchanged -> zero click/pop!
+        BEQ.S   .voc_exit
+
+.do_update:
         MOVE.W  D0,LastVocoderCenter
 
-        ; Mute all bands only when moving to a new cluster
+        ; Mute all voices first
         BSR.S   Mute_Vocoder_Bands
-
-        ; Activate center band D0 at full stereo volume, plus neighbor bands
         LEA     AUDIO_EXT_BASE,A0
+
+        ; Voice 0 Warm Background Audio Bed: base $28 (40) scaled by D4
+        MOVE.W  #40,D2
+        MULU.W  D4,D2
+        DIVU.W  #100,D2                 ; 0..40
+        MOVE.W  D2,D3
+        LSL.W   #8,D2
+        OR.B    D3,D2
+        MOVE.W  D2,AUD_VOL(A0)          ; Set Voice 0 background volume
+
+        ; Center Band D0: base $D8 (216) scaled by D4
+        MOVE.W  #216,D2
+        MULU.W  D4,D2
+        DIVU.W  #100,D2                 ; 0..216
+        MOVE.W  D2,D3
+        LSL.W   #8,D2
+        OR.B    D3,D2
         MOVE.W  D0,D1
         LSL.W   #5,D1
-        MOVE.W  #$E0E0,AUD_VOL(A0,D1.W)
+        MOVE.W  D2,AUD_VOL(A0,D1.W)     ; Center band volume
+
+        ; Left Neighbor (D0-1): base $80 (128) scaled by D4
         TST.W   D0
-        BEQ.S   .no_left_nb
+        BEQ.S   .no_left
+        MOVE.W  #128,D2
+        MULU.W  D4,D2
+        DIVU.W  #100,D2
+        MOVE.W  D2,D3
+        LSL.W   #8,D2
+        OR.B    D3,D2
         MOVE.W  D0,D1
         SUBQ.W  #1,D1
         LSL.W   #5,D1
-        MOVE.W  #$9050,AUD_VOL(A0,D1.W)
-.no_left_nb:
+        MOVE.W  D2,AUD_VOL(A0,D1.W)
+.no_left:
+
+        ; Right Neighbor (D0+1): base $50 (80) scaled by D4
         CMPI.W  #31,D0
-        BGE.S   .no_right_nb
+        BGE.S   .voc_exit
+        MOVE.W  #80,D2
+        MULU.W  D4,D2
+        DIVU.W  #100,D2
+        MOVE.W  D2,D3
+        LSL.W   #8,D2
+        OR.B    D3,D2
         MOVE.W  D0,D1
         ADDQ.W  #1,D1
         LSL.W   #5,D1
-        MOVE.W  #$5090,AUD_VOL(A0,D1.W)
-.no_right_nb:
-.sw_done:
-        RTS
+        MOVE.W  D2,AUD_VOL(A0,D1.W)
 
-; Outside-In Build-Up: Every 8 frames activate next band in OutsideInOrder
-Update_Vocoder_Build:
-        MOVE.W  D5,D0
-        ANDI.W  #$0007,D0
-        BNE.S   .build_ret
-        MOVE.W  D5,D0
-        LSR.W   #3,D0                   ; Index 0..31
-        CMPI.W  #32,D0
-        BGE.S   .build_ret
-        LEA     OutsideInOrder,A1
-        MOVEQ   #0,D1
-        MOVE.B  (A1,D0.W),D1
-        LSL.W   #5,D1
-        LEA     AUDIO_EXT_BASE,A0
-        MOVE.W  #$7878,AUD_VOL(A0,D1.W)
-.build_ret:
+.voc_exit:
+        MOVEM.L (SP)+,D2-D4/A0
         RTS
 
 ; ------------------------------------------------------------------------------
@@ -1173,8 +1197,8 @@ Init_Synth_Track:
         MOVE.W  D2,AUD_PTRH(A2)
         SWAP    D2
         MOVE.W  D2,AUD_PTRL(A2)
-        MOVE.W  #0,AUD_LENH(A2)
-        MOVE.W  #ADPCM_BYTES,AUD_LENL(A2)
+        MOVE.W  #3,AUD_LENH(A2)         ; 240,000 Bytes = $0003A980 (10.0s loop)
+        MOVE.W  #$A980,AUD_LENL(A2)
         MOVE.W  #PER_48K,D2
         ADD.W   D0,D2                   ; Slight detune for stereo chorus
         MOVE.W  D2,AUD_PER(A2)
@@ -1592,16 +1616,16 @@ TxtHeader:      DC.B    "=== NANOMIG FPGA: 32CH DSP & EXT-HAM ===",0
 TxtFooter:      DC.B    "$DFF400:32CH  $DFF800:HAM04  $DF8000:CAP",0
 TxtAct1:        DC.B    "ACT 1: 32-VOICE DEEP NOTE & ZERO-DELAY  ",0
 TxtAct2:        DC.B    "ACT 2: 24dB MOOG CASCADE + AM & RINGMOD ",0
-TxtAct3:        DC.B    "ACT 3: 32-BAND VOCODER & 4-BIT ADPCM    ",0
+TxtAct3:        DC.B    "ACT 3: 32-BAND VOCODER (30s FADE-IN/OUT)",0
 TxtAct4:        DC.B    "ACT 4: 32-VOICE CYBER SYMPHONY (100%)   ",0
 TxtAct5:        DC.B    "ACT 5: GRAND FINALE & HARMONIC FADEOUT  ",0
 
 MsgBanner:      DC.B    10,"======================================================================",10
-                DC.B    "*** ARGON ODYSSEY: 1-MINUTE EXTENDED-HAM04 & 32-CH DSP GRAND DEMO ***",10
+                DC.B    "*** ARGON ODYSSEY: EXTENDED-HAM04 & 32-CH DSP GRAND DEMO (30s VOCODER) ***",10
                 DC.B    "Target:  MiSTer DE10-Nano / Minimig-AGA Core 22a912cc",10
                 DC.B    "Video:   Extended HAM04 ($DFF800) 24-Bit TrueColor + Live Audio Scope",10
                 DC.B    "Audio:   32 Voices, 24 dB Moog Cascade, AM, Ringmod, 32-Band Vocoder,",10
-                DC.B    "         4-Bit Hardware ADPCM, Zero-RAM Delay & Capture ($DF8000)",10
+                DC.B    "         4-Bit Hardware ADPCM (30s), Zero-RAM Delay & Capture ($DF8000)",10
                 DC.B    "======================================================================",10,0
 MsgAct1:        DC.B    "[0:00 - 0:10] Act I:   32-Voice Deep Note Glide & Zero-RAM Delay (500 Frames)...",10,0
 MsgAct1Done:    DC.B    "              [ACT 1 DONE] Frames: 500 | Peak Audio: $"
@@ -1611,15 +1635,15 @@ MsgAct2:        DC.B    "[0:10 - 0:24] Act II:  24 dB Moog Acid Cascade, AM Pluc
 MsgAct2Done:    DC.B    "              [ACT 2 DONE] Frames: 696 | Peak Audio: $"
 MsgAct2Peak:    DC.B    "00 | Moog Cascade & AM/Ring: PASS",10,0
 
-MsgAct3:        DC.B    "[0:24 - 0:36] Act III: 32-Band Biquad Vocoder & 4-Bit ADPCM Stream (600 Frames)...",10,0
-MsgAct3Done:    DC.B    "              [ACT 3 DONE] Frames: 600 | Peak Audio: $"
+MsgAct3:        DC.B    "[0:24 - 0:54] Act III: 32-Band Biquad Vocoder & 4-Bit ADPCM (1500 Frames = 30s)...",10,0
+MsgAct3Done:    DC.B    "              [ACT 3 DONE] Frames: 1500 | Peak Audio: $"
 MsgAct3Peak:    DC.B    "00 | Vocoder & ADPCM: PASS",10,0
 
-MsgAct4:        DC.B    "[0:36 - 0:54] Act IV:  32-Voice Cyber Symphony (Full Load) (900 Frames)...",10,0
+MsgAct4:        DC.B    "[0:54 - 1:12] Act IV:  32-Voice Cyber Symphony (Full Load) (900 Frames)...",10,0
 MsgAct4Done:    DC.B    "              [ACT 4 DONE] Frames: 900 | Peak Audio: $"
 MsgAct4Peak:    DC.B    "00 | 32-Voice Polyphony: PASS",10,0
 
-MsgAct5:        DC.B    "[0:54 - 1:00] Act V:   Grand Finale & 32-Voice Harmonic Fadeout (300 Frames)...",10,0
+MsgAct5:        DC.B    "[1:12 - 1:18] Act V:   Grand Finale & 32-Voice Harmonic Fadeout (300 Frames)...",10,0
 MsgAct5Done:    DC.B    "              [ACT 5 DONE] Frames: 300 | Peak Audio: $"
 MsgAct5Peak:    DC.B    "00 | Silence & Fade: PASS",10,0
 
@@ -1629,18 +1653,18 @@ MsgDiagHeader:  DC.B    "-------------------------------------------------------
 DiagAct1P:      DC.B    "00 | 32.7kHz Zero-RAM Delay: PASS",10
                 DC.B    "Act II  (Moog Cascade & AM/Ring):  696 Frames | Peak: $"
 DiagAct2P:      DC.B    "00 | 24dB Cascade + AM/Ring: PASS",10
-                DC.B    "Act III (Vocoder & ADPCM Stream):  600 Frames | Peak: $"
-DiagAct3P:      DC.B    "00 | 48kHz ADPCM + 32-Band:  PASS",10
+                DC.B    "Act III (Vocoder & ADPCM Stream): 1500 Frames | Peak: $"
+DiagAct3P:      DC.B    "00 | 30s 48kHz ADPCM + 32-Band:PASS",10
                 DC.B    "Act IV  (32-Voice Cyber Symphony): 900 Frames | Peak: $"
 DiagAct4P:      DC.B    "00 | 100% DMA Load (32CH):   PASS",10
                 DC.B    "Act V   (Finale & Harmonic Fade):  300 Frames | Peak: $"
 DiagAct5P:      DC.B    "00 | Clean Silence & Restore:PASS",10
-                DC.B    "Total Frames: 2996 (~60.0s) | Audio Capture Engine ($DF8000): PASS",10
+                DC.B    "Total Frames: 3896 (~78.0s) | Audio Capture Engine ($DF8000): PASS",10
                 DC.B    "Extended HAM04 TrueColor Video Engine ($DFF800):              PASS",10
                 DC.B    "----------------------------------------------------------------------",10,0
 
 MsgDone:        DC.B    "======================================================================",10
-                DC.B    "[PASS] Argon Odyssey 1-Minute Demo completed cleanly (RC: 0).",10
+                DC.B    "[PASS] Argon Odyssey Grand Demo completed cleanly (RC: 0).",10
                 DC.B    "======================================================================",10,10,0
 
                 EVEN
@@ -1672,7 +1696,7 @@ ScopeOldY:      DS.W    40
 ; 4-Bit Hardware ADPCM Music Stream (in ArgonChip DATA_C section)
         CNOP    0,4
 AdpcmData:
-        INCBIN  "../adpcm/adpcm_4bit.bin"
+        INCBIN  "../adpcm/adpcm_10s_48k.bin"
 
 ; 320x200 4-Bitplane Extended-HAM04 Screen Buffer in Chip-RAM BSS (0 bytes on disk!)
         SECTION ArgonScreen,BSS_C
