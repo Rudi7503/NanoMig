@@ -102,7 +102,7 @@ CTRL_MOD_AM     EQU $0800
 CTRL_MOD_RING   EQU $1000
 CTRL_MUTE_MIX   EQU $2000
 
-ADPCM_BYTES     EQU 240000      ; 10.0s 48 kHz 4-Bit ADPCM stream ($0003A980)
+ADPCM_BYTES     EQU 738540      ; 30.77s 48 kHz 4-Bit ADPCM stream ($000B44EC)
 
 ; Screen Geometry (320x200, 4 Bitplanes = HAM04)
 SCR_WIDTH_B     EQU 40
@@ -253,9 +253,9 @@ Main:
         BSR     PrintStr
 
         ; ==============================================================
-        ; ACT III [0:24 - 0:54]: "32-BAND VOCODER & 4-BIT ADPCM" (1500 Frames = 30.0s)
-        ; Ch 0: 4-Bit ADPCM 10s Loop | Ch 1..31: Pre-Filter Cascade + 32 Biquad BPs
-        ; 2.0s Fade-In (100 Frames) + 26.0s Spectral Sweep + 2.0s Fade-Out (100 Frames)
+        ; ACT III [0:24 - 0:55]: "32-BAND VOCODER & 4-BIT ADPCM" (1538 Frames = 30.76s)
+        ; Ch 0: 4-Bit ADPCM 30s Master Stream (Fast-RAM) | Ch 1..31: Pre-Filter Cascade + 32 BPs
+        ; 2.0s Fade-In (100 Frames) + 26.76s Spectral Sweep + 2.0s Fade-Out (100 Frames)
         ; ==============================================================
         MOVE.W  #3,CurrentAct
         LEA     MsgAct3(PC),A0
@@ -265,11 +265,11 @@ Main:
 
         BSR     Init_Act3_Vocoder
 
-        MOVE.W  #1500-1,D6              ; 1500 Frames = 30.0s
-        MOVEQ   #0,D5                   ; Frame counter for sweep (0..1499)
+        MOVE.W  #1538-1,D6              ; 1538 Frames = 30.76s
+        MOVEQ   #0,D5                   ; Frame counter for sweep (0..1537)
 .act3_loop:
         BSR     Wait_VBL
-        BSR     Update_Vocoder_30s      ; 2s Fade-In, 26s Sweep (Band 14 start), 2s Fade-Out
+        BSR     Update_Vocoder_30s      ; 2s Fade-In, 26.76s Sweep (Band 14 start), 2s Fade-Out
         BSR     Update_Visuals_And_Scope
         BTST    #6,$BFE001
         BEQ     .AbortDemo
@@ -956,8 +956,10 @@ Init_Act3_Vocoder:
         MOVE.W  D0,AUD_PTRL(A0)
         SWAP    D0
         MOVE.W  D0,AUD_PTRH(A0)
-        MOVE.W  #3,AUD_LENH(A0)         ; 240,000 Bytes = $0003A980 (10.0s loop)
-        MOVE.W  #$A980,AUD_LENL(A0)
+        MOVE.L  #ADPCM_BYTES,D0
+        MOVE.W  D0,AUD_LENL(A0)
+        SWAP    D0
+        MOVE.W  D0,AUD_LENH(A0)
         MOVE.W  #PER_48K,AUD_PER(A0)
         MOVE.W  #0,AUD_PRED(A0)
         MOVE.W  #$0000,AUD_VOL(A0)
@@ -997,8 +999,8 @@ Mute_Vocoder_Bands:
         RTS
 
 ; ------------------------------------------------------------------------------
-; Act III: 30-Second Vocoder Engine (D5 = 0..1499)
-; 2.0s Fade-In (D5=0..99), 26.0s Bi-directional Sweep, 2.0s Fade-Out (D5=1400..1499)
+; Act III: 30-Second Vocoder Engine (D5 = 0..1537)
+; 2.0s Fade-In (D5=0..99), 26.76s Bi-directional Sweep, 2.0s Fade-Out (D5=1438..1537)
 ; Sweep starts centered around Band 14 (~676 Hz vowel formant) for instant vocal warmth!
 ; ------------------------------------------------------------------------------
 Update_Vocoder_30s:
@@ -1011,10 +1013,10 @@ Update_Vocoder_30s:
         MOVE.W  D5,D4
         BRA.S   .calc_sweep
 .chk_fadeout:
-        CMPI.W  #1400,D5
+        CMPI.W  #1438,D5
         BLT.S   .sustain
-        ; Fade-Out (1400..1499): Smooth fade from 100% down to 0
-        MOVE.W  #1499,D4
+        ; Fade-Out (1438..1537): Smooth fade from 100% down to 0
+        MOVE.W  #1537,D4
         SUB.W   D5,D4
         BRA.S   .calc_sweep
 .sustain:
@@ -1197,8 +1199,10 @@ Init_Synth_Track:
         MOVE.W  D2,AUD_PTRH(A2)
         SWAP    D2
         MOVE.W  D2,AUD_PTRL(A2)
-        MOVE.W  #3,AUD_LENH(A2)         ; 240,000 Bytes = $0003A980 (10.0s loop)
-        MOVE.W  #$A980,AUD_LENL(A2)
+        MOVE.L  #ADPCM_BYTES,D2
+        MOVE.W  D2,AUD_LENL(A2)
+        SWAP    D2
+        MOVE.W  D2,AUD_LENH(A2)
         MOVE.W  #PER_48K,D2
         ADD.W   D0,D2                   ; Slight detune for stereo chorus
         MOVE.W  D2,AUD_PER(A2)
@@ -1635,15 +1639,15 @@ MsgAct2:        DC.B    "[0:10 - 0:24] Act II:  24 dB Moog Acid Cascade, AM Pluc
 MsgAct2Done:    DC.B    "              [ACT 2 DONE] Frames: 696 | Peak Audio: $"
 MsgAct2Peak:    DC.B    "00 | Moog Cascade & AM/Ring: PASS",10,0
 
-MsgAct3:        DC.B    "[0:24 - 0:54] Act III: 32-Band Biquad Vocoder & 4-Bit ADPCM (1500 Frames = 30s)...",10,0
-MsgAct3Done:    DC.B    "              [ACT 3 DONE] Frames: 1500 | Peak Audio: $"
+MsgAct3:        DC.B    "[0:24 - 0:55] Act III: 32-Band Biquad Vocoder & 4-Bit ADPCM (1538 Frames = 30.8s)...",10,0
+MsgAct3Done:    DC.B    "              [ACT 3 DONE] Frames: 1538 | Peak Audio: $"
 MsgAct3Peak:    DC.B    "00 | Vocoder & ADPCM: PASS",10,0
 
-MsgAct4:        DC.B    "[0:54 - 1:12] Act IV:  32-Voice Cyber Symphony (Full Load) (900 Frames)...",10,0
+MsgAct4:        DC.B    "[0:55 - 1:13] Act IV:  32-Voice Cyber Symphony (Full Load) (900 Frames)...",10,0
 MsgAct4Done:    DC.B    "              [ACT 4 DONE] Frames: 900 | Peak Audio: $"
 MsgAct4Peak:    DC.B    "00 | 32-Voice Polyphony: PASS",10,0
 
-MsgAct5:        DC.B    "[1:12 - 1:18] Act V:   Grand Finale & 32-Voice Harmonic Fadeout (300 Frames)...",10,0
+MsgAct5:        DC.B    "[1:13 - 1:19] Act V:   Grand Finale & 32-Voice Harmonic Fadeout (300 Frames)...",10,0
 MsgAct5Done:    DC.B    "              [ACT 5 DONE] Frames: 300 | Peak Audio: $"
 MsgAct5Peak:    DC.B    "00 | Silence & Fade: PASS",10,0
 
@@ -1653,8 +1657,8 @@ MsgDiagHeader:  DC.B    "-------------------------------------------------------
 DiagAct1P:      DC.B    "00 | 32.7kHz Zero-RAM Delay: PASS",10
                 DC.B    "Act II  (Moog Cascade & AM/Ring):  696 Frames | Peak: $"
 DiagAct2P:      DC.B    "00 | 24dB Cascade + AM/Ring: PASS",10
-                DC.B    "Act III (Vocoder & ADPCM Stream): 1500 Frames | Peak: $"
-DiagAct3P:      DC.B    "00 | 30s 48kHz ADPCM + 32-Band:PASS",10
+                DC.B    "Act III (Vocoder & ADPCM Stream): 1538 Frames | Peak: $"
+DiagAct3P:      DC.B    "00 | 30.8s ADPCM (Fast-RAM) PASS",10
                 DC.B    "Act IV  (32-Voice Cyber Symphony): 900 Frames | Peak: $"
 DiagAct4P:      DC.B    "00 | 100% DMA Load (32CH):   PASS",10
                 DC.B    "Act V   (Finale & Harmonic Fade):  300 Frames | Peak: $"
@@ -1693,10 +1697,11 @@ ScopeOldY:      DS.W    40
 ; Generated Musical, Filter, Font, Waveform & Copper Data
         INCLUDE "argon_data.i"
 
-; 4-Bit Hardware ADPCM Music Stream (in ArgonChip DATA_C section)
+; 4-Bit Hardware ADPCM Music Stream (in Fast-RAM / Public DATA section)
+        SECTION ArgonAudio,DATA
         CNOP    0,4
 AdpcmData:
-        INCBIN  "../adpcm/adpcm_10s_48k.bin"
+        INCBIN  "../adpcm/kakao_lotte_4bit_30s.bin"
 
 ; 320x200 4-Bitplane Extended-HAM04 Screen Buffer in Chip-RAM BSS (0 bytes on disk!)
         SECTION ArgonScreen,BSS_C
