@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NanoMig 32/64-Bit HAM- &amp; CLUT-Sprite-Engine</title>
+<style>
+  :root{
+    --bg:#0f1216; --panel:#171c23; --line:#2a3340; --ink:#e6edf3; --dim:#8b97a6;
+    --acc:#f0a04b; --acc2:#5fb3f0; --ok:#5ac77e; --bad:#e05a5a; --purp:#b48ead;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.6 "Segoe UI",system-ui,sans-serif}
+  header{padding:28px 24px 18px;border-bottom:1px solid var(--line);
+         background:linear-gradient(180deg,#161c24,#0f1216)}
+  h1{margin:0 0 6px;font-size:24px;font-weight:600}
+  h1 span{color:var(--acc)}
+  .sub{color:var(--dim);font-size:13.5px}
+  main{max-width:1220px;margin:0 auto;padding:24px}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+          padding:20px 22px;margin-bottom:22px}
+  h2{margin:0 0 14px;font-size:18px;font-weight:600;color:var(--acc)}
+  h3{margin:18px 0 8px;font-size:14.5px;font-weight:600;color:var(--acc2)}
+  p{margin:0 0 12px}
+  code{background:#0b0e12;border:1px solid var(--line);border-radius:4px;
+       padding:1px 5px;font:13px/1.4 Consolas,monospace;color:#cbd5e1}
+  .flow{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;margin:14px 0}
+  .node{flex:1 1 125px;min-width:120px;background:#0b0e12;border:1px solid var(--line);
+        border-radius:8px;padding:10px 12px;transition:all .2s}
+  .node.active{border-color:var(--acc);box-shadow:0 0 0 2px rgba(240,160,75,.3);background:#1b222c}
+  .node b{display:block;font-size:13px;color:var(--acc)}
+  .node small{color:var(--dim);font-size:12px;line-height:1.38;display:block;margin-top:4px}
+  .arrow{align-self:center;color:var(--dim);font-size:18px;font-weight:bold}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin-top:8px}
+  th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--dim);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  td.num{text-align:right;font-family:Consolas,monospace}
+  .ok{color:var(--ok)} .bad{color:var(--bad)} .acc{color:var(--acc)} .acc2{color:var(--acc2)}
+  .ctl{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin:10px 0 16px;
+       background:#0b0e12;padding:10px 14px;border-radius:8px;border:1px solid var(--line)}
+  .ctl label{font-size:13px;color:var(--dim);display:flex;align-items:center;gap:8px}
+  input[type=range]{width:150px;accent-color:var(--acc);cursor:pointer}
+  input[type=checkbox]{accent-color:var(--acc);width:16px;height:16px;cursor:pointer}
+  select{background:#171c23;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px 10px;font-size:13px;cursor:pointer}
+  button{background:#0b0e12;color:var(--ink);border:1px solid var(--line);
+         border-radius:6px;padding:7px 14px;font-size:13px;cursor:pointer;transition:all .15s}
+  button:hover{border-color:var(--acc);color:var(--acc)}
+  button.on{background:var(--acc);color:#12161b;border-color:var(--acc);font-weight:600}
+  .fsm{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;margin:12px 0}
+  .fsm div{min-height:54px;border-radius:6px;background:#0b0e12;border:1px solid var(--line);
+           padding:6px 8px;display:flex;flex-direction:column;justify-content:center;align-items:center;
+           text-align:center;font-size:12px;color:var(--dim);cursor:pointer;transition:all .2s}
+  .fsm div b{font-size:12.5px;color:var(--ink);margin-bottom:2px}
+  .fsm div.on{background:var(--acc);color:#12161b;border-color:var(--acc);font-weight:700}
+  .fsm div.on b{color:#12161b}
+  .out{font-family:Consolas,monospace;font-size:13px;background:#0b0e12;
+       border:1px solid var(--line);border-radius:6px;padding:12px 14px;margin-top:10px;white-space:pre-wrap}
+  .warn{border-left:3px solid var(--bad);background:#221416;padding:10px 14px;border-radius:0 6px 6px 0;margin:12px 0}
+  .note{border-left:3px solid var(--acc2);background:#101c22;padding:10px 14px;border-radius:0 6px 6px 0;margin:12px 0}
+  .badge{display:inline-block;font-size:12px;padding:2px 8px;border-radius:10px;
+         border:1px solid var(--line);color:var(--acc2);background:#0b0e12;margin-right:6px}
+  .bitbar{display:flex;width:100%;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:12px 0}
+  .bitseg{padding:10px 4px;text-align:center;font-family:Consolas,monospace;font-size:12px;
+          border-right:1px solid var(--line);transition:all .2s}
+  .bitseg:last-child{border-right:none}
+  .grid16{display:grid;grid-template-columns:repeat(16,1fr);gap:4px;margin:10px 0}
+  .lbcell{background:#0b0e12;border:1px solid var(--line);border-radius:5px;padding:5px 3px;
+          text-align:center;font-family:Consolas,monospace;font-size:11.5px}
+  .lbcell.cur{border-color:var(--acc);box-shadow:0 0 0 2px rgba(240,160,75,.35)}
+  .swatch{height:12px;border-radius:3px;margin-bottom:4px}
+  .word64{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin:10px 0}
+  .wbox{background:#0b0e12;border:1px solid var(--line);border-radius:6px;padding:8px 10px;font-family:Consolas,monospace}
+  .wbox small{display:block;color:var(--dim);font-size:11.5px}
+  .wbox b{display:block;font-size:15px;color:var(--acc);margin-top:3px}
+  svg{max-width:100%;height:auto;display:block;background:#0b0e12;border:1px solid var(--line);border-radius:8px;padding:8px}
+  footer{color:var(--dim);font-size:12px;padding:10px 24px 40px;text-align:center}
+  @media (max-width:860px){
+    .fsm{grid-template-columns:repeat(2,1fr)}
+    .grid16{grid-template-columns:repeat(8,1fr)}
+    .word64{grid-template-columns:repeat(2,1fr)}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>NanoMig <span>32/64-Bit HAM- &amp; CLUT-Sprite-Engine</span></h1>
+  <div class="sub">
+    Hardware-Architektur, animierter Datenpfad &amp; Register-Referenz &middot;
+    <span class="badge">4&times;64 Bit (256-Bit) DDR3-Burst</span>
+    <span class="badge">Eigener &lt;3,5 ns HAM/CLUT-Decoder</span>
+    <span class="badge">X/Y-Zoom + 24-Bit Interpolation</span>
+    <span class="badge">~600 ALMs &middot; 18&ndash;19 M10K</span>
+  </div>
+</header>
+
+<main>
+
+<!-- ====================================================================== -->
+<!-- SECTION 1: ÜBERSICHTSZEICHNUNG & FUNKTIONSERKLÄRUNG                     -->
+<!-- ====================================================================== -->
+<section>
+  <h2>1. Übersichtszeichnung &amp; wie die Sprite-Engine funktioniert</h2>
+  <p>
+    Die neue Sprite-Engine arbeitet <b>komplett unabhängig vom Amiga-Chip-RAM (Agnus) und unabhängig vom Playfield-HAM</b>.
+    Sie liest eine nach <code>Y_POS</code> aufsteigend sortierte Sprite-Liste direkt aus dem schnellen <b>DDR3-Fast-RAM</b>
+    in vollen <b>256-Bit-Bursts (<code>4 &times; 64 Bit</code>)</b>, dekodiert die komprimierten 32-Bit-HAM-Blöcke (oder normalen CLUT-Farbindizes)
+    mit ihrem <b>eigenen High-Speed-Decoder</b> nach 24-Bit TrueColor, skaliert/interpoliert sie auf Wunsch und trägt sie mit einer
+    <b>8-Bit-Priorität</b> in einen von zwei wechselnden <b>Ping-Pong-Zeilenbuffern (A/B)</b> ein.
+  </p>
+
+  <!-- HAUPT-ÜBERSICHTSZEICHNUNG (SVG) -->
+  <svg viewBox="0 0 1120 355" id="overviewSvg">
+    <defs>
+      <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+        <path d="M0,0 L8,4 L0,8 z" fill="#5fb3f0"/>
+      </marker>
+      <marker id="arrAcc" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+        <path d="M0,0 L8,4 L0,8 z" fill="#f0a04b"/>
+      </marker>
+      <marker id="arrOk" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+        <path d="M0,0 L8,4 L0,8 z" fill="#5ac77e"/>
+      </marker>
+    </defs>
+
+    <!-- Clock Domain Frames -->
+    <rect x="12" y="12" width="1096" height="205" rx="9" fill="#11161d" stroke="#2a3340" stroke-dasharray="6 4"/>
+    <text x="26" y="32" fill="#f0a04b" font-size="12" font-weight="600">HINTERGRUND-RENDER-PIPELINE (bereitet Zeile Y + 1 vor &middot; 100 % der Zeilenzeit = 64 &micro;s verfügbar)</text>
+
+    <rect x="12" y="232" width="1096" height="110" rx="9" fill="#10191d" stroke="#26414f" stroke-dasharray="6 4"/>
+    <text x="26" y="252" fill="#5fb3f0" font-size="12" font-weight="600">SYNCHRONE VIDEO-AUSGABE (zeigt aktuelle Zeile Y an &middot; Pixeltakt clk_sys / Denise-Ausgang)</text>
+
+    <!-- Block 1: DDR3 Fast-RAM -->
+    <rect id="ov-0" x="24" y="48" width="150" height="92" rx="8" fill="#0b0e12" stroke="#f0a04b" stroke-width="1.8"/>
+    <text x="99" y="70" fill="#f0a04b" font-size="13" font-weight="600" text-anchor="middle">1. DDR3 Fast-RAM</text>
+    <text x="99" y="88" fill="#e6edf3" font-size="11" font-family="Consolas,monospace" text-anchor="middle">BURSTCNT = 4</text>
+    <text x="99" y="105" fill="#8b97a6" font-size="10.5" text-anchor="middle">4&times;64 Bit = 256 Bit</text>
+    <text x="99" y="122" fill="#5ac77e" font-size="10.5" text-anchor="middle">2 Descr. / 32..64 px</text>
+
+    <!-- Block 2: Y-Scanner & TDM Mult -->
+    <rect id="ov-1" x="198" y="48" width="146" height="92" rx="8" fill="#0b0e12" stroke="#2a3340" stroke-width="1.5"/>
+    <text x="271" y="70" fill="#5fb3f0" font-size="12.5" font-weight="600" text-anchor="middle">2. Y-Scanner &amp; TDM</text>
+    <text x="271" y="88" fill="#e6edf3" font-size="11" font-family="Consolas,monospace" text-anchor="middle">Y_POS &le; next_y</text>
+    <text x="271" y="105" fill="#8b97a6" font-size="10.5" text-anchor="middle">Takt A: dy &times; Y_SCALE</text>
+    <text x="271" y="122" fill="#8b97a6" font-size="10.5" text-anchor="middle">Takt B: rel_y &times; W256</text>
+
+    <!-- Block 3: 64-Bit Prefetch FIFO -->
+    <rect id="ov-2" x="368" y="48" width="142" height="92" rx="8" fill="#0b0e12" stroke="#2a3340" stroke-width="1.5"/>
+    <text x="439" y="70" fill="#5ac77e" font-size="12.5" font-weight="600" text-anchor="middle">3. Prefetch-FIFO</text>
+    <text x="439" y="88" fill="#e6edf3" font-size="11" font-family="Consolas,monospace" text-anchor="middle">64 &times; 64 Bit (M10K)</text>
+    <text x="439" y="105" fill="#8b97a6" font-size="10.5" text-anchor="middle">clk_114 &rarr; Decoder</text>
+    <text x="439" y="122" fill="#5ac77e" font-size="10.5" text-anchor="middle">Zero-Stall Puffer</text>
+
+    <!-- Block 4: 32-Bit Unpacker + Zero-Word-Skip -->
+    <rect id="ov-3" x="534" y="48" width="148" height="92" rx="8" fill="#0b0e12" stroke="#2a3340" stroke-width="1.5"/>
+    <text x="608" y="70" fill="#f0a04b" font-size="12.5" font-weight="600" text-anchor="middle">4. 32-Bit Entpacker</text>
+    <text x="608" y="88" fill="#e6edf3" font-size="11" font-family="Consolas,monospace" text-anchor="middle">13 Formate (4..8 px)</text>
+    <text x="608" y="105" fill="#8b97a6" font-size="10.5" text-anchor="middle">HAM03..08 / CLUT</text>
+    <text x="608" y="122" fill="#5ac77e" font-size="10.5" text-anchor="middle">64'h0 &rarr; 1-Takt Skip!</text>
+
+    <!-- Block 5: 2-Stage High-Speed HAM/CLUT Decoder + Palette M10K -->
+    <rect id="ov-4" x="706" y="48" width="184" height="92" rx="8" fill="#0b0e12" stroke="#2a3340" stroke-width="1.5"/>
+    <text x="798" y="68" fill="#f0a04b" font-size="12.5" font-weight="600" text-anchor="middle">5. Eigener HAM-Decoder</text>
+    <text x="798" y="86" fill="#e6edf3" font-size="11" font-family="Consolas,monospace" text-anchor="middle">Stufe 1: Pre-Delta || CLUT</text>
+    <text x="798" y="103" fill="#e6edf3" font-size="11" font-family="Consolas,monospace" text-anchor="middle">Stufe 2: acc + delta (&lt;3,5ns)</text>
+    <text x="798" y="121" fill="#5fb3f0" font-size="10.5" text-anchor="middle">+ Eigene 256&times;24 Palette (1 M10K)</text>
+
+    <!-- Block 6: X-Scaler + 24-Bit Interpolator -->
+    <rect id="ov-5" x="914" y="48" width="178" height="92" rx="8" fill="#0b0e12" stroke="#2a3340" stroke-width="1.5"/>
+    <text x="1003" y="68" fill="#5fb3f0" font-size="12.5" font-weight="600" text-anchor="middle">6. X-Zoom &amp; 24-Bit Lerp</text>
+    <text x="1003" y="86" fill="#e6edf3" font-size="11" font-family="Consolas,monospace" text-anchor="middle">X_SCALE &middot; H_FLIP</text>
+    <text x="1003" y="103" fill="#8b97a6" font-size="10.5" text-anchor="middle">SMOOTH_X (2 Addierer/Ch)</text>
+    <text x="1003" y="121" fill="#5ac77e" font-size="10.5" text-anchor="middle">Transparenz-Kantenschutz</text>
+
+    <!-- Arrows top row -->
+    <line x1="174" y1="94" x2="196" y2="94" stroke="#f0a04b" stroke-width="2" marker-end="url(#arrAcc)"/>
+    <line x1="344" y1="94" x2="366" y2="94" stroke="#5fb3f0" stroke-width="2" marker-end="url(#arr)"/>
+    <line x1="510" y1="94" x2="532" y2="94" stroke="#5ac77e" stroke-width="2" marker-end="url(#arrOk)"/>
+    <line x1="682" y1="94" x2="704" y2="94" stroke="#f0a04b" stroke-width="2" marker-end="url(#arrAcc)"/>
+    <line x1="890" y1="94" x2="912" y2="94" stroke="#5fb3f0" stroke-width="2" marker-end="url(#arr)"/>
+
+    <!-- Write Path into Linebuffer B -->
+    <path d="M 1003 140 L 1003 182 L 560 182 L 560 262" fill="none" stroke="#f0a04b" stroke-width="2" marker-end="url(#arrAcc)"/>
+    <text x="780" y="175" fill="#f0a04b" font-size="11.5" font-family="Consolas,monospace" text-anchor="middle">
+      Schreibt in Zeilenbuffer B, wenn: (NEW_RGB &ne; 0) &amp;&amp; (SPR_PRIO &gt; BUF_PRIO)
+    </text>
+
+    <!-- Bottom Row: Ping-Pong Linebuffers A/B & Denise Output Mixer -->
+    <rect id="ov-6" x="350" y="264" width="330" height="66" rx="8" fill="#0b0e12" stroke="#f0a04b" stroke-width="1.8"/>
+    <text x="515" y="286" fill="#f0a04b" font-size="13" font-weight="600" text-anchor="middle">7. Ping-Pong Zeilenbuffer A &amp; B (16 M10K)</text>
+    <text x="515" y="304" fill="#e6edf3" font-size="11" font-family="Consolas,monospace" text-anchor="middle">2 &times; 2048 &times; 32 Bit: {PRIO[7:0], RGB[23:0]}</text>
+    <text x="515" y="320" fill="#5ac77e" font-size="10.5" text-anchor="middle">Buf B rendert Zeile Y+1 &middot; Buf A zeigt Zeile Y + Clear-on-Read ($00000000)</text>
+
+    <!-- Classic Amiga Denise pipeline input -->
+    <rect x="40" y="264" width="230" height="66" rx="8" fill="#0b0e12" stroke="#2a3340" stroke-width="1.5"/>
+    <text x="155" y="286" fill="#5fb3f0" font-size="12.5" font-weight="600" text-anchor="middle">Klassische Amiga-Denise</text>
+    <text x="155" y="304" fill="#e6edf3" font-size="11" font-family="Consolas,monospace" text-anchor="middle">amiga_rgb[23:0] (AGA/HAM)</text>
+    <text x="155" y="320" fill="#8b97a6" font-size="10.5" text-anchor="middle">+ sprsel, pf_front, pf_any</text>
+
+    <!-- Block 8: Final Denise Priority Mixer -->
+    <rect id="ov-7" x="750" y="264" width="335" height="66" rx="8" fill="#0b0e12" stroke="#5ac77e" stroke-width="1.8"/>
+    <text x="917" y="286" fill="#5ac77e" font-size="13" font-weight="600" text-anchor="middle">8. Denise 24-Bit Ausgangs-Mischer (4 Ebenen)</text>
+    <text x="917" y="304" fill="#e6edf3" font-size="11" font-family="Consolas,monospace" text-anchor="middle">PRIO[7:6]: 11=Vorn | 10=Vor PF | 01=Zw. PF | 00=Hinter PF</text>
+    <text x="917" y="320" fill="#8b97a6" font-size="10.5" text-anchor="middle">&rarr; Fertiges 24-Bit RGB direkt zum Video-Scaler / HDMI</text>
+
+    <line x1="270" y1="312" x2="748" y2="312" stroke="#5fb3f0" stroke-width="1.8" marker-end="url(#arr)"/>
+    <line x1="680" y1="292" x2="748" y2="292" stroke="#5ac77e" stroke-width="2" marker-end="url(#arrOk)"/>
+  </svg>
+
+  <h3>Wie der Ablauf in 5 einfachen Schritten funktioniert</h3>
+  <table>
+    <tr><th>Schritt</th><th>Was passiert in der Hardware?</th><th>Warum ist das so schnell?</th></tr>
+    <tr>
+      <td><b>1. Y-Sortierte Liste &amp; Early-Exit</b></td>
+      <td>Die CPU übergibt in <code>$DFF580</code> nur einen einzigen Zeiger auf ein nach <code>Y_POS</code> sortiertes Descriptor-Array im Fast-RAM. Die Engine liest immer <b>2 komplette Descriptoren (32 Bytes)</b> mit einem einzigen 256-Bit-DDR3-Burst.</td>
+      <td>Sobald ein Eintrag mit <code>Y_POS &gt; next_y</code> (oder <code>Y_HEIGHT == 0</code>) kommt, bricht die Suche für diese Zeile <b>sofort</b> ab. Abgelaufene Sprites am Anfang überspringt der Zeiger <code>first_active_idx</code> automatisch.</td>
+    </tr>
+    <tr>
+      <td><b>2. 256-Bit DDR3-Burst &amp; Prefetch-FIFO</b></td>
+      <td>Jede Sprite-Zeile besteht aus Vielfachen von <code>4 &times; 64 Bit = 256 Bit</code> (32 Bytes = 32..64 Pixel). Ein kleiner 64-Bit-Prefetch-FIFO (1–2 M10K) zwischen DDR3 und Entpacker puffert die Bursts.</td>
+      <td>Das physische DDR3-RAM arbeitet intern immer mit 256-Bit-Bursts (BL8). Durch <code>BURSTCNT = 4</code> steigt die Speichereffizienz um das <b>3,25-Fache</b>, und der Decoder läuft ohne einen einzigen Wartetakt (Zero-Stall) durch.</td>
+    </tr>
+    <tr>
+      <td><b>3. Zero-Word-Skip &amp; 2-Stufen HAM/CLUT-Decoder</b></td>
+      <td>Der Entpacker zerlegt jedes 32-Bit-Wort gemäß einem der 13 <code>HAM_32BIT_*</code>-Formate (oder reicht den Code bei <code>CLUT_MODE=1</code> direkt als Palettenindex weiter). Ist ein 64-Bit-Wort komplett <code>0</code>, überspringt er alle 8..16 transparenten Pixel in <b>1 Takt</b>.</td>
+      <td>Weil die Vorzeichen-Deltas <code>delta_r/g/b</code> bereits parallel zum M10K-Paletten-Read vorberechnet werden, braucht die rekursive Akkumulator-Schleife <code>acc + delta</code> nur noch <b>&lt; 3,5 ns</b> (bis 113,5 MHz taktbar!).</td>
+    </tr>
+    <tr>
+      <td><b>4. X/Y-Zoom, H/V-Flip &amp; 24-Bit Interpolation</b></td>
+      <td>Nach dem Decoder liegt jedes Pixel als lineares 24-Bit-RGB vor. Dadurch kann horizontal gestreckt/gestaucht, gespiegelt (<code>H_FLIP</code> zählt die Zielspalte rückwärts) und mit zwei 8-Bit-Addierern pro Farbkanal weich interpoliert (<code>SMOOTH_X</code>) werden.</td>
+      <td>Weil der HAM-Decoder <b>vor</b> dem Skalierer sitzt, laufen beim Verkleinern alle HAM-Deltas verlustfrei durch. Ein Transparenz-Kantenschutz verhindert dunkle Ränder an den Sprite-Konturen.</td>
+    </tr>
+    <tr>
+      <td><b>5. Ping-Pong-Zeilenbuffer &amp; Denise-Mischer</b></td>
+      <td>Zeilenbuffer B sammelt die Pixel für Zeile <code>Y+1</code> mit 8-Bit-Prioritätsvergleich (<code>SPR_PRIO &gt; BUF_PRIO</code>). Gleichzeitig liest Denise Zeilenbuffer A für Zeile <code>Y</code> aus, löscht ihn im selben Takt auf <code>0</code> (<b>Clear-on-Read</b>) und mischt ihn über <code>PRIO[7:6]</code> in 4 Tiefenebenen ins fertige 24-Bit-Amiga-Bild.</td>
+      <td>Es muss keine Zeile vorher zeitaufwendig gelöscht werden, und es ist kein Eingriff in die komplexe AGA-Bitplane-Logik nötig.</td>
+    </tr>
+  </table>
+</section>
+
+<!-- ====================================================================== -->
+<!-- SECTION 2: ANIMIERTE 8-STUFEN-PIPELINE & ZEILENBUFFER-SIMULATION        -->
+<!-- ====================================================================== -->
+<section>
+  <h2>2. Animierter Durchlauf durch die 8 Pipeline-Stufen</h2>
+  <p>
+    Starte oder pausiere die Takt-Animation oder klicke direkt auf eine der 8 Stufen, um zu sehen, wie ein Sprite-Burst Schritt für Schritt verarbeitet und in den Zeilenbuffer geschrieben wird.
+  </p>
+
+  <div class="ctl">
+    <button id="pipePlay" class="on">Stop</button>
+    <button id="pipeStep">Einzelschritt (+1 Takt)</button>
+    <button id="pipeZeroBtn">Zero-Word-Skip (64'h0) testen</button>
+    <label>Tempo <input type="range" id="pipeSpeed" min="1" max="10" value="5"></label>
+    <span id="pipeStatus" class="acc" style="font-family:Consolas,monospace;font-size:13px">Stufe 0 &middot; Spalte X = 342</span>
+  </div>
+
+  <div class="fsm" id="pipeFsm"></div>
+  <div class="out" id="pipeDetail"></div>
+
+  <h3>Live-Vorschau: Zeilenbuffer B beim Füllen von Zeile Y + 1 (Ausschnitt Spalte X = 336..351)</h3>
+  <p>
+    Jede Zelle im Zeilenbuffer speichert 32 Bit: <code>{PRIO[7:0], RGB[23:0]}</code>.
+    Das aktuelle Sprite hat <code>SPR_PRIO = 160</code>: Es überschreibt leere Pixel (<code>P:0</code>) und Sprites mit kleinerer Priorität (<code>P:80</code>, <code>P:40</code>), lässt aber das vordere Sprite #5 (<code>P:210</code>) stehen!
+  </p>
+  <div class="grid16" id="lbGrid"></div>
+  <div class="out" id="lbInfo"></div>
+</section>
+
+<!-- ====================================================================== -->
+<!-- SECTION 3: INTERAKTIVER BITSTREAM-ENTPACKER (13 FORMATE & CLUT_MODE)    -->
+<!-- ====================================================================== -->
+<section>
+  <h2>3. Die 13 festgelegten 32-Bit-Mischmodi (<code>HAM_32BIT_*</code>) &amp; <code>CLUT_MODE</code></h2>
+  <p>
+    Jedes 32-Bit-Wort enthält exakt 32 Bit für <b>4 bis 8 Pixel</b>. Ein 256-Bit-DDR3-Burst (<code>4 &times; 64 Bit = 8 &times; 32 Bit</code>) liefert damit <b>32 bis 64 Pixel auf einen Schlag</b>.
+    Wähle unten ein Format aus oder schalte <code>CLUT_MODE = 1</code> (normaler Palettenmodus statt HAM) ein:
+  </p>
+
+  <div class="ctl">
+    <label>Format (<code>FORMAT[3:0]</code>):
+      <select id="fmtSelect"></select>
+    </label>
+    <label>
+      <input type="checkbox" id="fmtClutChk">
+      <b><code>CLUT_MODE = 1</code> (Normaler Palettenmodus statt HAM &mdash; nutzt alle Bits inkl. MSB direkt als Farbindex!)</b>
+    </label>
+  </div>
+
+  <div class="bitbar" id="fmtBitBar"></div>
+  <div class="out" id="fmtSummary"></div>
+
+  <table>
+    <tr><th>Pixel im 32-Bit-Wort</th><th>Bit-Position</th><th>Bit-Breite</th><th>Modus / Bedeutung</th><th>Farben / Deltas</th></tr>
+    <tbody id="fmtTableBody"></tbody>
+  </table>
+</section>
+
+<!-- ====================================================================== -->
+<!-- SECTION 4: INTERAKTIVER 24-BIT X-INTERPOLATOR & SKALIERER              -->
+<!-- ====================================================================== -->
+<section>
+  <h2>4. X/Y-Skalierung &amp; 24-Bit RGB Horizontal-Interpolator (<code>SMOOTH_X</code>)</h2>
+  <p>
+    Da der Decoder für jedes Pixel bereits fertiges <b>lineares 24-Bit TrueColor (R, G, B)</b> ausgibt, benötigt die horizontale Interpolation zwischen zwei Nachbarpixeln <code>P0 (prev_rgb)</code> und <code>P1 (curr_rgb)</code> <b>keinen einzigen Multiplizierer</b> &mdash; nur zwei 8-Bit-Addierer pro Farbkanal:
+    <code>mid = (P0 + P1) &gt;&gt; 1</code> und <code>qtr = (mid + (frac[1] ? P1 : P0)) &gt;&gt; 1</code>.
+  </p>
+
+  <div class="ctl">
+    <label>Pixel P0 (links):
+      <select id="lerpP0">
+        <option value="224,64,32">Opak Rot-Orange ($E04020)</option>
+        <option value="32,160,240">Opak Hellblau ($20A0F0)</option>
+        <option value="0,0,0">Transparent Schwarz ($000000, code=0)</option>
+      </select>
+    </label>
+    <label>Pixel P1 (rechts):
+      <select id="lerpP1">
+        <option value="32,224,112" selected>Opak Smaragdgrün ($20E070)</option>
+        <option value="255,220,40">Opak Goldgelb ($FFDC28)</option>
+        <option value="0,0,0">Transparent Schwarz ($000000, code=0)</option>
+      </select>
+    </label>
+    <label>
+      <input type="checkbox" id="lerpSmoothChk" checked>
+      <b><code>SMOOTH_X = 1</code> (Interpolation aktiv)</b>
+    </label>
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:12px 0" id="lerpSteps"></div>
+  <div class="note" id="lerpNote"></div>
+</section>
+
+<!-- ====================================================================== -->
+<!-- SECTION 5: 8-BIT PRIORITÄTS- & DENISE-EBENEN-SIMULATOR                  -->
+<!-- ====================================================================== -->
+<section>
+  <h2>5. 8-Bit Prioritäts- &amp; Denise-Ebenen-Simulator (Mischen nach dem fertigen Amiga-Bild)</h2>
+  <p>
+    Die unteren 6 Bits <code>PRIO[5:0]</code> sortieren bis zu 64 HAM-Sprites <i>innerhalb</i> derselben Tiefenebene, während die oberen 2 Bits <code>PRIO[7:6]</code> bestimmen, wo das HAM-Sprite relativ zu den klassischen Amiga-Bitplanes und Amiga-Sprites 0..7 liegt:
+  </p>
+
+  <div class="ctl">
+    <label>HAM-Sprite <code>PRIO</code> (0..255):
+      <input type="range" id="prioSlider" min="0" max="255" value="160">
+      <span id="prioValTxt" class="acc" style="font-family:Consolas,monospace">160 (10_100000)</span>
+    </label>
+    <label><input type="checkbox" id="prioSprSel"> Amiga-Sprite 0..7 aktiv (<code>sprsel=1</code>)</label>
+    <label><input type="checkbox" id="prioPfFront" checked> Vorderes Playfield opak (<code>pf_front=1</code>)</label>
+    <label><input type="checkbox" id="prioPfAny" checked> Hinteres Playfield opak (<code>pf_any=1</code>)</label>
+  </div>
+
+  <div class="out" id="prioSimResult"></div>
+
+  <table>
+    <tr><th><code>PRIO</code>-Bereich</th><th><code>PRIO[7:6]</code></th><th>Tiefenebene im Amiga-Bild</th><th>Hardware-Bedingung für <code>BUF_RGB</code></th></tr>
+    <tr><td><code>0</code></td><td><code>00</code></td><td>Zeilenbuffer leer / transparent</td><td>Nie (zeigt immer <code>amiga_rgb</code>)</td></tr>
+    <tr><td><code>1 .. 63</code></td><td><code>00</code></td><td>Hinter allen Bitplanes, aber <b>vor <code>COLOR00</code></b></td><td><code>BUF_PRIO != 0 &amp;&amp; !sprsel &amp;&amp; !pf_any_opaque</code></td></tr>
+    <tr><td><code>64 .. 127</code></td><td><code>01</code></td><td><b>Zwischen Playfield 2 und Playfield 1</b> (Dual-Playfield)</td><td><code>BUF_PRIO != 0 &amp;&amp; !sprsel &amp;&amp; !pf_front_opaque</code></td></tr>
+    <tr><td><code>128 .. 191</code></td><td><code>10</code></td><td><b>Vor allen Bitplanes</b>, hinter Amiga-Sprites 0..7</td><td><code>BUF_PRIO != 0 &amp;&amp; !sprsel</code></td></tr>
+    <tr><td><code>192 .. 255</code></td><td><code>11</code></td><td><b>Ganz vorn</b> (vor Bitplanes und vor Amiga-Sprites 0..7)</td><td><code>BUF_PRIO != 0</code> (gewinnt immer)</td></tr>
+  </table>
+</section>
+
+<!-- ====================================================================== -->
+<!-- SECTION 6: ALLE HARDWARE-REGISTER & 16-BYTE DESCRIPTOR-LABOR           -->
+<!-- ====================================================================== -->
+<section>
+  <h2>6. Alle Hardware-Register (<code>$DFF580..$DFF590</code>) &amp; 16-Byte Descriptor-Labor</h2>
+  <p>
+    Die Sprite-Engine benötigt im Custom-Register-Raum nur 9 globale 16-Bit-Register. Alle Einstellungen einzelner Sprites liegen im <b>16-Byte-Descriptor (<code>2 &times; 64 Bit</code>)</b> im DDR3-Fast-RAM.
+  </p>
+
+  <h3>6.1 Globale Hardware-Steuerregister (Custom-Bus)</h3>
+  <table>
+    <tr><th>Adresse</th><th>Name</th><th>Bits</th><th>Funktion</th></tr>
+    <tr><td><code>$DFF580</code></td><td><code>SPR_LIST_PTR_H</code></td><td>15:0</td><td>Obere 16 Bit <code>[31:16]</code> der Startadresse des Y-sortierten Sprite-Descriptor-Arrays im DDR3-Fast-RAM</td></tr>
+    <tr><td><code>$DFF582</code></td><td><code>SPR_LIST_PTR_L</code></td><td>15:0</td><td>Untere 16 Bit <code>[15:0]</code> der Startadresse (32-Byte / 256-Bit Burst-aligned, <code>[4:0] = 00000</code>)</td></tr>
+    <tr><td><code>$DFF584</code></td><td><code>SPR_CTRL</code></td><td>15:0</td><td><code>Bit 0</code>: Engine Enable &middot; <code>Bit 2:1</code>: Zielraster (<code>00</code>=SHres, <code>01</code>=Hires, <code>10</code>=Lores) &middot; <code>Bit 3</code>: Zero-Word-Skip Enable &middot; <code>Bit 4</code>: Turbo-Takt Enable &middot; <code>Bit 15:8</code>: Max-Sprites/Zeile</td></tr>
+    <tr><td><code>$DFF586</code></td><td><code>SPR_STATUS</code></td><td>15:0</td><td>Lese-Status: <code>Bit 0</code>: Busy &middot; <code>Bit 1</code>: Zeilenzeit-Overflow &middot; <code>Bit 2</code>: Sprite-Kollision &middot; <code>Bit 15:8</code>: aktueller <code>first_active_idx</code></td></tr>
+    <tr><td><code>$DFF588</code></td><td><code>SPR_STEP_RGB</code></td><td>15:0</td><td>Globale HAM-Basis-Schrittweiten: <code>[14:10] STEP_R</code> (1..31) &middot; <code>[9:5] STEP_G</code> (1..31) &middot; <code>[4:0] STEP_B</code> (1..31)</td></tr>
+    <tr><td><code>$DFF58A</code></td><td><code>SPR_PAL_ADDR</code></td><td>7:0</td><td>Index (<code>0..255</code>) in die eigene 256&times;24-Bit-Sprite-Palette (M10K), inkrementiert automatisch nach Schreiben von <code>SPR_PAL_DATA_L</code></td></tr>
+    <tr><td><code>$DFF58C</code></td><td><code>SPR_PAL_DATA_H</code></td><td>7:0</td><td>Sprite-Palette Rot-Anteil <code>[7:0] = R[7:0]</code> (Slot 0 jeder Bank ist immer <code>$000000</code> = Transparent)</td></tr>
+    <tr><td><code>$DFF58E</code></td><td><code>SPR_PAL_DATA_L</code></td><td>15:0</td><td>Sprite-Palette Grün/Blau <code>[15:8] = G[7:0]</code>, <code>[7:0] = B[7:0]</code> (löst M10K-Schreibzugriff + Auto-Increment aus)</td></tr>
+    <tr><td><code>$DFF590</code></td><td><code>SPR_CLIP_XMAX</code></td><td>11:0</td><td>Rechte horizontale Clipping-Grenze in SuperHiRes-Pixeln (Standard <code>1280</code>, bis <code>1432</code> Overscan)</td></tr>
+  </table>
+
+  <h3>6.2 Interaktives 16-Byte Sprite-Descriptor-Labor (<code>2 &times; 64 Bit</code> im Fast-RAM)</h3>
+  <p>Stelle die Sprite-Parameter mit den Reglern ein &mdash; die beiden 64-Bit-Worte und der 68000-Assembler-Code aktualisieren sich sofort:</p>
+
+  <div class="ctl">
+    <label>Y_POS <input type="range" id="dYPos" min="-64" max="512" value="100"> <span id="dYPosV" class="acc">100</span></label>
+    <label>X_POS <input type="range" id="dXPos" min="-256" max="1280" value="320"> <span id="dXPosV" class="acc">320</span></label>
+    <label>Y_HEIGHT <input type="range" id="dYHeight" min="0" max="255" value="64"> <span id="dYHeightV" class="acc">64</span></label>
+    <label>X_WIDTH256 <input type="range" id="dXWidth" min="1" max="32" value="2"> <span id="dXWidthV" class="acc">2</span></label>
+  </div>
+  <div class="ctl">
+    <label>PRIO <input type="range" id="dPrio" min="0" max="255" value="160"> <span id="dPrioV" class="acc">160</span></label>
+    <label>PAL_OFFSET <input type="range" id="dPal" min="0" max="248" step="8" value="32"> <span id="dPalV" class="acc">32</span></label>
+    <label>X_SCALE <input type="range" id="dXScale" min="16" max="128" value="64"> <span id="dXScaleV" class="acc">$40 (1.0x)</span></label>
+    <label>Y_SCALE <input type="range" id="dYScale" min="16" max="128" value="64"> <span id="dYScaleV" class="acc">$40 (1.0x)</span></label>
+  </div>
+  <div class="ctl">
+    <label>FORMAT <select id="dFmt"></select></label>
+    <label><input type="checkbox" id="dHFlip"> H_FLIP</label>
+    <label><input type="checkbox" id="dVFlip"> V_FLIP</label>
+    <label><input type="checkbox" id="dSmooth" checked> SMOOTH_X (24-Bit Lerp)</label>
+    <label><input type="checkbox" id="dClut"> CLUT_MODE (Palette statt HAM)</label>
+  </div>
+
+  <h3>64-Bit Wort 0 (Offset <code>+$00..+$07</code>)</h3>
+  <div class="word64">
+    <div class="wbox"><small>[63:48] int16 Y_POS</small><b id="w0_y">$0064</b></div>
+    <div class="wbox"><small>[47:32] int16 X_POS</small><b id="w0_x">$0140</b></div>
+    <div class="wbox"><small>[31:24] uint8 Y_HEIGHT</small><b id="w0_h">$40</b></div>
+    <div class="wbox"><small>[23:16] uint8 X_WIDTH256</small><b id="w0_w">$02</b></div>
+    <div class="wbox"><small>[15:8] uint8 PRIO</small><b id="w0_p">$A0</b></div>
+    <div class="wbox"><small>[7:0] uint8 PAL_OFFSET</small><b id="w0_pal">$20</b></div>
+  </div>
+
+  <h3>64-Bit Wort 1 (Offset <code>+$08..+$0F</code>)</h3>
+  <div class="word64">
+    <div class="wbox" style="grid-column:span 2"><small>[63:32] uint32 DATA_PTR (32-Byte aligned)</small><b id="w1_ptr">$02080000</b></div>
+    <div class="wbox"><small>[31:24] FORMAT | FLAGS</small><b id="w1_ff">$24</b></div>
+    <div class="wbox"><small>[23:16] uint8 X_SCALE</small><b id="w1_xs">$40</b></div>
+    <div class="wbox"><small>[15:8] uint8 Y_SCALE</small><b id="w1_ys">$40</b></div>
+    <div class="wbox"><small>[7:0] uint8 STEP_CTRL</small><b id="w1_sc">$00 (HAM)</b></div>
+  </div>
+
+  <div class="out" id="dAsmOut"></div>
+</section>
+
+<!-- ====================================================================== -->
+<!-- SECTION 7: RESSOURCEN-BILANZ (CYCLONE V)                                -->
+<!-- ====================================================================== -->
+<section>
+  <h2>7. Geschätzter Ressourcenbedarf im Cyclone V (5CSEBA6U23I7)</h2>
+  <p>Aktuell im Core frei (Stand Seed 11): <b>5.758 ALMs</b>, <b>223 M10K-Blöcke</b>, <b>37 DSP-Blöcke</b>.</p>
+  <table>
+    <tr><th>Teilmodul</th><th class="num">ALMs</th><th class="num">M10K-Blöcke</th><th class="num">DSPs</th><th>Bemerkung</th></tr>
+    <tr><td><b>Ping-Pong Zeilenbuffer A &amp; B</b> (2 &times; 2048 &times; 32 Bit)</td><td class="num">~40</td><td class="num">16</td><td class="num">0</td><td>Clear-on-Read spart kompletten Löschzyklus</td></tr>
+    <tr><td><b>Dedizierte Sprite-Palette</b> (256 &times; 24 Bit Dual-Port)</td><td class="num">~20</td><td class="num">1</td><td class="num">0</td><td>100 % unabhängig von Playfield-CLUT</td></tr>
+    <tr><td><b>64-Bit Prefetch-FIFO</b> (DDR3 &rarr; Entpacker)</td><td class="num">~25</td><td class="num">1&ndash;2</td><td class="num">0</td><td>Puffert <code>4&times;64 Bit</code> (256-Bit) DDR3-BL8-Bursts</td></tr>
+    <tr><td><b>32-Bit Multi-Mode Entpacker</b> (13 Formate + Zero-Word-Skip)</td><td class="num">~105</td><td class="num">0</td><td class="num">0</td><td>Überspringt leere <code>64'h0</code>-Worte in 1 Takt</td></tr>
+    <tr><td><b>Eigener 2-Stufen High-Speed HAM/CLUT-Decoder</b></td><td class="num">~95</td><td class="num">0</td><td class="num">0</td><td>Vorberechnete Deltas &rarr; &lt; 3,5 ns Rekursionsschleife</td></tr>
+    <tr><td><b>X/Y-Skalierer, H/V-Flip &amp; 24-Bit RGB X-Interpolator</b></td><td class="num">~90</td><td class="num">0</td><td class="num">0</td><td>2&times; 8-Bit-Addierer je Kanal + Transparenz-Kantenschutz</td></tr>
+    <tr><td><b>Y-Scanner, Clipping, 8&times;8 TDM-Mult &amp; DMA-FSM</b></td><td class="num">~190</td><td class="num">0</td><td class="num">0&ndash;1</td><td>1 Multiplizierer für <code>Y_SCALE</code> und Zeilenadresse im TDM</td></tr>
+    <tr><td><b>Denise 24-Bit Ausgangs-Prioritätsmischer</b> (4 Ebenen)</td><td class="num">~35</td><td class="num">0</td><td class="num">0</td><td>Mischung ganz am Ende nach fertigem <code>amiga_rgb</code></td></tr>
+    <tr><td><b>Gesamtsumme Sprite-Engine</b></td><td class="num ok"><b>~600 ALMs</b></td><td class="num ok"><b>18&ndash;19 M10K</b></td><td class="num ok"><b>0&ndash;1 DSP</b></td><td class="ok"><b>~10,4 % der freien ALMs &middot; ~8,5 % der freien M10K</b></td></tr>
+  </table>
+</section>
+
+</main>
+
+<footer>NanoMig 32/64-Bit HAM- &amp; CLUT-Sprite-Engine &middot; Interaktive Spezifikation &amp; Simulationsseite</footer>
+
+<script>
+// =========================================================================
+// 1 & 2. PIPELINE ANIMATION & LINEBUFFER SIMULATION
+// =========================================================================
+const PIPE_STEPS = [
+  {
+    short: "1. DDR3 Burst",
+    sub: "BURSTCNT = 4",
+    text: "Stufe 1 (DDR3 256-Bit Burst): Liest 4 × 64 Bit (32 Bytes) am Stück aus dem DDR3-Fast-RAM (~16 clk_114-Takte statt 52 Einzeltakte = 3,25× Effizienz). Lädt entweder 2 komplette 16-Byte-Descriptoren oder 32..64 Sprite-Pixel."
+  },
+  {
+    short: "2. Y-Scanner",
+    sub: "TDM 8×8 Mult",
+    text: "Stufe 2 (Y-Scanner & 8×8 TDM-Multiplizierer): Prüft Y_POS <= next_y (sonst sofortiger Early-Exit!). Berechnet in Takt A scaled_y = ((next_y - Y_POS) * Y_SCALE) >> 6 und in Takt B die 32-Byte-aligned Zeilenadresse Line_Addr = DATA_PTR + ((rel_y * X_WIDTH256) << 5)."
+  },
+  {
+    short: "3. Prefetch-FIFO",
+    sub: "64×64 Bit M10K",
+    text: "Stufe 3 (64-Bit Prefetch-FIFO): Nimmt die 4 × 64-Bit Burst-Worte mit 113,5 MHz (clk_114) auf, gibt den DDR3-Bus sofort wieder für 68020-CPU und 32-Kanal-Audio frei und speist den Entpacker ohne Wartetakte (Zero-Stall)."
+  },
+  {
+    short: "4. Entpacker",
+    sub: "13 Modi + Skip",
+    text: "Stufe 4 (32-Bit Multi-Mode Entpacker & Zero-Word-Skip): Zerlegt jedes 64-Bit-Wort in zwei 32-Bit-Worte (4..8 Pixel je Wort). Ist ein 64-Bit-Wort komplett 64'h0 (transparent), setzt er acc <= 0, addiert 8..16 Pixel auf dst_x und überspringt das Wort in 1 einzigen Takt!"
+  },
+  {
+    short: "5. Decoder T1",
+    sub: "Pre-Delta || CLUT",
+    text: "Stufe 5 (Decoder Taktstufe 1): Liest synchron die 24-Bit-Ankerfarbe aus der eigenen 256×24-Bit-Sprite-Palette (M10K) und berechnet PARALLEL dazu bereits die Vorzeichen-Deltas delta_r, delta_g, delta_b (bzw. zwingt anchor_reg = 1 bei CLUT_MODE = 1)."
+  },
+  {
+    short: "6. Decoder T2",
+    sub: "< 3,5 ns Loop",
+    text: "Stufe 6 (Decoder Taktstufe 2 — RGB-Akkumulator): Führt nur noch acc_next = anchor_reg ? palette_data : clamp(acc + delta_reg) aus (< 3,5 ns Laufzeit!). Transparente Pixel (code == 0) setzen acc = 000000; opake Delta-Pixel mit Wert 000000 werden auf 000001 geklemmt (Auto-Clamp)."
+  },
+  {
+    short: "7. X-Zoom/Lerp",
+    sub: "24-Bit TrueColor",
+    text: "Stufe 7 (X-Skalierer, H_FLIP & 24-Bit RGB Interpolator): Da das Pixel als 24-Bit RGB vorliegt, erzeugt die Stufe mit nur zwei 8-Bit-Addierern pro Farbkanal (mid & qtr) weiche Zwischenfarben beim Zoomen. Der Transparenz-Kantenschutz verhindert schwarze Ränder."
+  },
+  {
+    short: "8. Buffer & Mix",
+    sub: "Ping-Pong + Prio",
+    text: "Stufe 8 (Ping-Pong Zeilenbuffer & Denise-Endmischer): Schreibt {SPR_PRIO, RGB} in Zeilenbuffer B, wenn NEW_RGB != 0 && SPR_PRIO > BUF_PRIO. Gleichzeitig liest Denise Zeilenbuffer A für die aktuelle Zeile aus, löscht ihn im selben Takt (Clear-on-Read) und mischt ihn über PRIO[7:6] ins Amiga-Bild."
+  }
+];
+
+const pipeFsm = document.getElementById('pipeFsm');
+const pipeCells = [];
+PIPE_STEPS.forEach((st, i) => {
+  const d = document.createElement('div');
+  d.innerHTML = '<b>' + st.short + '</b><span>' + st.sub + '</span>';
+  d.onclick = function() {
+    pipeIdx = i;
+    renderPipe();
+  };
+  pipeFsm.appendChild(d);
+  pipeCells.push(d);
+});
+
+const LB_CELLS = [
+  { x:336, prio:0,   rgb:'#141920', src:'Leer' },
+  { x:337, prio:80,  rgb:'#2563eb', src:'Spr#1' },
+  { x:338, prio:80,  rgb:'#3b82f6', src:'Spr#1' },
+  { x:339, prio:160, rgb:'#d97706', src:'Spr#3' },
+  { x:340, prio:160, rgb:'#ea580c', src:'Spr#3' },
+  { x:341, prio:160, rgb:'#f59e0b', src:'Spr#3' },
+  { x:342, prio:80,  rgb:'#3b82f6', src:'Spr#1' },
+  { x:343, prio:80,  rgb:'#1d4ed8', src:'Spr#1' },
+  { x:344, prio:0,   rgb:'#141920', src:'Leer' },
+  { x:345, prio:210, rgb:'#10b981', src:'Spr#5' },
+  { x:346, prio:210, rgb:'#059669', src:'Spr#5' },
+  { x:347, prio:0,   rgb:'#141920', src:'Leer' },
+  { x:348, prio:40,  rgb:'#7c3aed', src:'Spr#0' },
+  { x:349, prio:40,  rgb:'#6d28d9', src:'Spr#0' },
+  { x:350, prio:0,   rgb:'#141920', src:'Leer' },
+  { x:351, prio:0,   rgb:'#141920', src:'Leer' }
+];
+
+let pipeIdx = 0;
+let lbCursor = 6;
+let zeroSkipMode = false;
+let pipeTimer = null;
+
+function renderPipe() {
+  pipeCells.forEach((c, i) => c.className = (i === pipeIdx ? 'on' : ''));
+  for (let i = 0; i < 8; i++) {
+    const rect = document.getElementById('ov-' + i);
+    if (rect) {
+      rect.setAttribute('stroke', i === pipeIdx ? '#f0a04b' : '#2a3340');
+      rect.setAttribute('stroke-width', i === pipeIdx ? '3' : '1.5');
+    }
+  }
+  const curCell = LB_CELLS[lbCursor];
+  document.getElementById('pipeStatus').textContent =
+    'Stufe ' + (pipeIdx + 1) + '/8 · Zielspalte X = ' + curCell.x + (zeroSkipMode ? ' · [ZERO-WORD-SKIP AKTIV]' : '');
+  document.getElementById('pipeDetail').textContent = PIPE_STEPS[pipeIdx].text;
+
+  // Render 16 linebuffer cells
+  const lbGrid = document.getElementById('lbGrid');
+  lbGrid.innerHTML = '';
+  LB_CELLS.forEach((cell, idx) => {
+    const d = document.createElement('div');
+    d.className = 'lbcell' + (idx === lbCursor ? ' cur' : '');
+    const sw = document.createElement('div');
+    sw.className = 'swatch';
+    sw.style.background = cell.rgb;
+    d.appendChild(sw);
+    const p = document.createElement('div');
+    p.innerHTML = '<b>X' + cell.x + '</b><br>P:' + cell.prio + '<br><span style="color:var(--dim)">' + cell.src + '</span>';
+    d.appendChild(p);
+    lbGrid.appendChild(d);
+  });
+
+  const canOverwrite = !zeroSkipMode && (160 > curCell.prio);
+  document.getElementById('lbInfo').textContent = zeroSkipMode
+    ? 'Zero-Word-Skip bei X=' + curCell.x + ': 64-Bit-Wort ist 64\'h00000000_00000000 -> acc = 0, dst_x springt in 1 Takt um +16 Pixel weiter, Zeilenbuffer bleibt unverändert!'
+    : 'Spalte X=' + curCell.x + ': Alter Buffer-Inhalt hat BUF_PRIO=' + curCell.prio + ' (' + curCell.src + '). Neues Sprite#3 hat SPR_PRIO=160 -> ' +
+      (canOverwrite ? '160 > ' + curCell.prio + ' => WE = 1 (Pixel wird mit Prio 160 überschrieben!)' : '160 < ' + curCell.prio + ' => WE = 0 (Sprite#5 mit Prio 210 bleibt vorn!)');
+}
+
+function stepPipe() {
+  pipeIdx = (pipeIdx + 1) % 8;
+  if (pipeIdx === 0) {
+    lbCursor = (lbCursor + (zeroSkipMode ? 4 : 1)) % LB_CELLS.length;
+  }
+  renderPipe();
+}
+
+function startPipeTimer() {
+  if (pipeTimer) clearInterval(pipeTimer);
+  const speed = +document.getElementById('pipeSpeed').value;
+  const delay = 1150 - speed * 95;
+  pipeTimer = setInterval(stepPipe, delay);
+}
+
+document.getElementById('pipeStep').onclick = stepPipe;
+document.getElementById('pipePlay').onclick = function() {
+  if (pipeTimer) {
+    clearInterval(pipeTimer);
+    pipeTimer = null;
+    this.textContent = 'Start';
+    this.classList.remove('on');
+  } else {
+    startPipeTimer();
+    this.textContent = 'Stop';
+    this.classList.add('on');
+  }
+};
+document.getElementById('pipeSpeed').oninput = function() {
+  if (pipeTimer) startPipeTimer();
+};
+document.getElementById('pipeZeroBtn').onclick = function() {
+  zeroSkipMode = !zeroSkipMode;
+  this.classList.toggle('on', zeroSkipMode);
+  pipeIdx = 3;
+  renderPipe();
+};
+renderPipe();
+startPipeTimer();
+
+// =========================================================================
+// 3. 13 HAM_32BIT FORMATS & CLUT_MODE VISUALIZER
+// =========================================================================
+const FORMATS = [
+  { id:0,  name:'HAM_32BIT_44444444', seq:[4,4,4,4,4,4,4,4], slots:8,   clut:16 },
+  { id:1,  name:'HAM_32BIT_53535353', seq:[5,3,5,3,5,3,5,3], slots:16,  clut:32 },
+  { id:2,  name:'HAM_32BIT_63436343', seq:[6,3,4,3,6,3,4,3], slots:32,  clut:64 },
+  { id:3,  name:'HAM_32BIT_6446444',  seq:[6,4,4,6,4,4,4],   slots:32,  clut:64 },
+  { id:4,  name:'HAM_32BIT_5454545',  seq:[5,4,5,4,5,4,5],   slots:16,  clut:32 },
+  { id:5,  name:'HAM_32BIT_6454544',  seq:[6,4,5,4,5,4,4],   slots:32,  clut:64 },
+  { id:6,  name:'HAM_32BIT_655655',   seq:[6,5,5,6,5,5],     slots:32,  clut:64 },
+  { id:7,  name:'HAM_32BIT_844844',   seq:[8,4,4,8,4,4],     slots:128, clut:256 },
+  { id:8,  name:'HAM_32BIT_846554',   seq:[8,4,6,5,5,4],     slots:128, clut:256 },
+  { id:9,  name:'HAM_32BIT_646565',   seq:[6,4,6,5,6,5],     slots:32,  clut:64 },
+  { id:10, name:'HAM_32BIT_86666',    seq:[8,6,6,6,6],       slots:128, clut:256 },
+  { id:11, name:'HAM_32BIT_85865',    seq:[8,5,8,6,5],       slots:128, clut:256 },
+  { id:12, name:'HAM_32BIT_8888',     seq:[8,8,8,8],         slots:128, clut:256 }
+];
+
+const fmtSelect = document.getElementById('fmtSelect');
+const dFmt = document.getElementById('dFmt');
+FORMATS.forEach(f => {
+  const o1 = document.createElement('option');
+  o1.value = f.id;
+  o1.textContent = 'FORMAT ' + f.id + ': ' + f.name + ' (' + f.seq.length + ' px/32b, ' + (f.seq.length * 8) + ' px/Burst)';
+  if (f.id === 2) o1.selected = true;
+  fmtSelect.appendChild(o1);
+
+  const o2 = o1.cloneNode(true);
+  if (f.id === 2) o2.selected = true;
+  dFmt.appendChild(o2);
+});
+
+const SEG_BG = { 3:'#3b2614', 4:'#133020', 5:'#122b38', 6:'#1c2540', 8:'#311b38' };
+const SEG_COL = { 3:'#f0a04b', 4:'#5ac77e', 5:'#5fb3f0', 6:'#93c5fd', 8:'#e9d5ff' };
+
+function renderFormat() {
+  const id = +fmtSelect.value;
+  const clut = document.getElementById('fmtClutChk').checked;
+  const f = FORMATS[id];
+  const bar = document.getElementById('fmtBitBar');
+  const tbody = document.getElementById('fmtTableBody');
+  bar.innerHTML = '';
+  tbody.innerHTML = '';
+
+  let hi = 31;
+  f.seq.forEach((bits, i) => {
+    const lo = hi - bits + 1;
+    const seg = document.createElement('div');
+    seg.className = 'bitseg';
+    seg.style.width = (bits / 32 * 100) + '%';
+    seg.style.background = SEG_BG[bits] || '#1c2540';
+    seg.style.color = SEG_COL[bits] || '#e6edf3';
+    seg.innerHTML = '<b>P' + (i + 1) + ': ' + (clut ? 'CLUT' + bits : 'HAM0' + bits) + '</b><br>[' + hi + ':' + lo + ']';
+    bar.appendChild(seg);
+
+    const tr = document.createElement('tr');
+    const nCol = 1 << bits;
+    const nAnc = 1 << (bits - 1);
+    tr.innerHTML =
+      '<td><b>Pixel ' + (i + 1) + '</b></td>' +
+      '<td class="num"><code>[' + hi + ':' + lo + ']</code></td>' +
+      '<td class="num">' + bits + ' Bit</td>' +
+      '<td>' + (clut ? 'Direkter Palettenindex (<code>anchor_reg = 1</code>)' : '<code>HAM0' + bits + '</code> (MSB=0 Anker, MSB=1 Delta)') + '</td>' +
+      '<td>' + (clut
+        ? '<b>' + nCol + ' Farben</b> (Index 0..' + (nCol - 1) + ' ab <code>PAL_OFFSET</code>, 0 = Transparent)'
+        : '<b>' + nAnc + ' Anker</b> + <b>' + nAnc + ' RGB-Deltas</b> (Code 0 = Transparent &amp; Reset)') + '</td>';
+    tbody.appendChild(tr);
+    hi = lo - 1;
+  });
+
+  document.getElementById('fmtSummary').textContent =
+    'Format ' + f.id + ' (' + f.name + ') · ' +
+    f.seq.length + ' Pixel pro 32-Bit-Wort · ' +
+    (f.seq.length * 2) + ' Pixel pro 64-Bit-Wort · ' +
+    (f.seq.length * 8) + ' Pixel pro 256-Bit DDR3-Burst (4×64 Bit) · ' +
+    (clut ? 'CLUT_MODE = 1 (bis ' + f.clut + ' direkte Farben/Bank)' : 'CLUT_MODE = 0 (HAM mit ' + f.slots + ' Anker-Slots/Bank)');
+}
+fmtSelect.onchange = renderFormat;
+document.getElementById('fmtClutChk').onchange = renderFormat;
+renderFormat();
+
+// =========================================================================
+// 4. 24-BIT X-INTERPOLATOR DEMO
+// =========================================================================
+function parseRgb(str) {
+  return str.split(',').map(Number);
+}
+function rgbHex(r, g, b) {
+  return '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+function renderLerp() {
+  const p0 = parseRgb(document.getElementById('lerpP0').value);
+  const p1 = parseRgb(document.getElementById('lerpP1').value);
+  const smooth = document.getElementById('lerpSmoothChk').checked;
+  const p0Trans = (p0[0] === 0 && p0[1] === 0 && p0[2] === 0);
+  const p1Trans = (p1[0] === 0 && p1[1] === 0 && p1[2] === 0);
+  const edgeGuard = p0Trans || p1Trans;
+
+  const mid = [ (p0[0] + p1[0]) >> 1, (p0[1] + p1[1]) >> 1, (p0[2] + p1[2]) >> 1 ];
+  const qtr1 = [ (mid[0] + p0[0]) >> 1, (mid[1] + p0[1]) >> 1, (mid[2] + p0[2]) >> 1 ];
+  const qtr3 = [ (mid[0] + p1[0]) >> 1, (mid[1] + p1[1]) >> 1, (mid[2] + p1[2]) >> 1 ];
+
+  const steps = [
+    { label:'frac = 0/4 (P0)',   rgb: p0 },
+    { label:'frac = 1/4 (25%)',  rgb: (!smooth || edgeGuard) ? p0 : qtr1 },
+    { label:'frac = 2/4 (mid)',  rgb: (!smooth || edgeGuard) ? p0 : mid },
+    { label:'frac = 3/4 (75%)',  rgb: (!smooth || edgeGuard) ? p1 : qtr3 },
+    { label:'frac = 4/4 (P1)',   rgb: p1 }
+  ];
+
+  const container = document.getElementById('lerpSteps');
+  container.innerHTML = '';
+  steps.forEach(s => {
+    const isTr = (s.rgb[0] === 0 && s.rgb[1] === 0 && s.rgb[2] === 0);
+    const hex = rgbHex(s.rgb[0], s.rgb[1], s.rgb[2]);
+    const box = document.createElement('div');
+    box.style.background = '#0b0e12';
+    box.style.border = '1px solid var(--line)';
+    box.style.borderRadius = '8px';
+    box.style.padding = '10px';
+    box.style.textAlign = 'center';
+    box.style.fontFamily = 'Consolas,monospace';
+    box.style.fontSize = '12.5px';
+    box.innerHTML =
+      '<div style="height:36px;border-radius:6px;margin-bottom:8px;border:1px solid #2a3340;background:' +
+      (isTr ? 'repeating-linear-gradient(45deg,#1f2937,#1f2937 6px,#111827 6px,#111827 12px)' : hex) + '"></div>' +
+      '<b>' + s.label + '</b><br>' +
+      '<span style="color:var(--acc)">' + (isTr ? 'TRANSPARENT' : hex) + '</span>';
+    container.appendChild(box);
+  });
+
+  const note = document.getElementById('lerpNote');
+  if (edgeGuard) {
+    note.innerHTML = '<b>Transparenz-Kantenschutz (Edge-Guard) aktiv:</b> Da eines der beiden Nachbarpixel transparent (<code>$000000</code>) ist, mischt die Hardware <b>nicht</b> mit Schwarz, sondern schaltet sauber um &mdash; so entstehen niemals dunkle Trauerränder am Sprite-Saum!';
+  } else if (!smooth) {
+    note.innerHTML = '<b>Nearest-Neighbor (<code>SMOOTH_X = 0</code>):</b> Scharfe Pixelkanten ohne Zwischenstufen für klassische Retro-Pixel-Art.';
+  } else {
+    note.innerHTML = '<b>24-Bit Linear-Interpolation (<code>SMOOTH_X = 1</code>):</b> Zwei 8-Bit-Addierer pro Kanal erzeugen <code>mid = ' +
+      rgbHex(mid[0], mid[1], mid[2]) + '</code> und die Viertelschritte <code>' +
+      rgbHex(qtr1[0], qtr1[1], qtr1[2]) + '</code> / <code>' + rgbHex(qtr3[0], qtr3[1], qtr3[2]) + '</code> ohne DSP-Multiplizierer.';
+  }
+}
+['lerpP0', 'lerpP1', 'lerpSmoothChk'].forEach(id => {
+  document.getElementById(id).onchange = renderLerp;
+});
+renderLerp();
+
+// =========================================================================
+// 5. 8-BIT PRIORITY & DENISE LAYER SIMULATOR
+// =========================================================================
+function renderPrioSim() {
+  const prio = +document.getElementById('prioSlider').value;
+  const sprsel = document.getElementById('prioSprSel').checked;
+  const pfFront = document.getElementById('prioPfFront').checked;
+  const pfAny = document.getElementById('prioPfAny').checked;
+
+  const top2 = (prio >> 6) & 3;
+  const bin = top2.toString(2).padStart(2, '0') + '_' + (prio & 63).toString(2).padStart(6, '0');
+  document.getElementById('prioValTxt').textContent = prio + ' (' + bin + ')';
+
+  let win = false;
+  let reason = '';
+  if (prio === 0) {
+    win = false;
+    reason = 'BUF_PRIO == 0 (Zeilenbuffer an dieser Spalte ist leer) -> Klassisches Amiga-Pixel (amiga_rgb) wird angezeigt.';
+  } else if (top2 === 3) {
+    win = true;
+    reason = 'Ebene 11 (PRIO 192..255): Liegt ganz vorn vor allen Bitplanes und vor allen Amiga-Sprites -> HAM-Sprite (BUF_RGB) gewinnt immer!';
+  } else if (top2 === 2) {
+    win = !sprsel;
+    reason = 'Ebene 10 (PRIO 128..191): Vor allen Bitplanes, aber hinter Amiga-Sprites 0..7 -> ' +
+      (win ? 'Kein Amiga-Sprite aktiv (!sprsel) => HAM-Sprite (BUF_RGB) gewinnt!' : 'Amiga-Sprite aktiv (sprsel=1) => Amiga-Sprite liegt vor dem HAM-Sprite!');
+  } else if (top2 === 1) {
+    win = !sprsel && !pfFront;
+    reason = 'Ebene 01 (PRIO 64..127): Zwischen Playfield 1 und Playfield 2 -> ' +
+      (win ? 'Weder Amiga-Sprite noch vorderes Playfield opak => HAM-Sprite (BUF_RGB) ist sichtbar!' : 'Vorderes Playfield oder Amiga-Sprite verdeckt das HAM-Sprite.');
+  } else {
+    win = !sprsel && !pfAny;
+    reason = 'Ebene 00 (PRIO 1..63): Hintergrund-Layer vor COLOR00 -> ' +
+      (win ? 'Alle Bitplanes und Amiga-Sprites sind hier transparent (COLOR00) => HAM-Sprite (BUF_RGB) bildet den Hintergrund!' : 'Bitplane- oder Amiga-Sprite-Pixel liegt vor dem Hintergrund-HAM-Sprite.');
+  }
+
+  const out = document.getElementById('prioSimResult');
+  out.innerHTML = (win
+    ? '<b class="ok">ERGEBNIS AM MONITOR: HAM-Sprite (BUF_RGB) wird angezeigt!</b>\n'
+    : '<b class="acc2">ERGEBNIS AM MONITOR: Klassisches Amiga-Bild (amiga_rgb) liegt davor!</b>\n') + reason;
+}
+['prioSlider', 'prioSprSel', 'prioPfFront', 'prioPfAny'].forEach(id => {
+  document.getElementById(id).oninput = renderPrioSim;
+  document.getElementById(id).onchange = renderPrioSim;
+});
+renderPrioSim();
+
+// =========================================================================
+// 6. INTERACTIVE 16-BYTE DESCRIPTOR LAB
+// =========================================================================
+function hexPad(val, digits) {
+  const mask = (1 << (digits * 4)) - 1;
+  return '$' + ((val & mask) >>> 0).toString(16).toUpperCase().padStart(digits, '0');
+}
+
+function renderDescriptor() {
+  const yPos = +document.getElementById('dYPos').value;
+  const xPos = +document.getElementById('dXPos').value;
+  const yHeight = +document.getElementById('dYHeight').value;
+  const xWidth = +document.getElementById('dXWidth').value;
+  const prio = +document.getElementById('dPrio').value;
+  const pal = +document.getElementById('dPal').value;
+  const xScale = +document.getElementById('dXScale').value;
+  const yScale = +document.getElementById('dYScale').value;
+  const fmt = +document.getElementById('dFmt').value;
+
+  const hFlip = document.getElementById('dHFlip').checked ? 1 : 0;
+  const vFlip = document.getElementById('dVFlip').checked ? 1 : 0;
+  const smooth = document.getElementById('dSmooth').checked ? 1 : 0;
+  const clut = document.getElementById('dClut').checked ? 1 : 0;
+
+  const flags = hFlip | (vFlip << 1) | (smooth << 2);
+  const fmtFlags = ((fmt & 0xF) << 4) | (flags & 0xF);
+  const stepCtrl = (clut << 6);
+
+  const pxPerBurst = FORMATS[fmt].seq.length * 8;
+  document.getElementById('dYPosV').textContent = yPos;
+  document.getElementById('dXPosV').textContent = xPos;
+  document.getElementById('dYHeightV').textContent = yHeight === 0 ? '0 (SENTINEL)' : yHeight;
+  document.getElementById('dXWidthV').textContent = xWidth + ' (' + (xWidth * pxPerBurst) + ' px)';
+  document.getElementById('dPrioV').textContent = prio;
+  document.getElementById('dPalV').textContent = pal + ' (' + hexPad(pal, 2) + ')';
+  document.getElementById('dXScaleV').textContent = hexPad(xScale, 2) + ' (' + (64 / xScale).toFixed(2) + '×)';
+  document.getElementById('dYScaleV').textContent = hexPad(yScale, 2) + ' (' + (64 / yScale).toFixed(2) + '×)';
+
+  document.getElementById('w0_y').textContent = hexPad(yPos, 4);
+  document.getElementById('w0_x').textContent = hexPad(xPos, 4);
+  document.getElementById('w0_h').textContent = hexPad(yHeight, 2);
+  document.getElementById('w0_w').textContent = hexPad(xWidth, 2);
+  document.getElementById('w0_p').textContent = hexPad(prio, 2);
+  document.getElementById('w0_pal').textContent = hexPad(pal, 2);
+
+  document.getElementById('w1_ff').textContent = hexPad(fmtFlags, 2);
+  document.getElementById('w1_xs').textContent = hexPad(xScale, 2);
+  document.getElementById('w1_ys').textContent = hexPad(yScale, 2);
+  document.getElementById('w1_sc').textContent = hexPad(stepCtrl, 2) + (clut ? ' (CLUT)' : ' (HAM)');
+
+  document.getElementById('dAsmOut').textContent =
+    '; 16-Byte Sprite-Descriptor im DDR3-Fast-RAM (32-Byte Burst-aligned):\n' +
+    'Sprite_Desc:\n' +
+    '    DC.W ' + hexPad(yPos, 4) + ', ' + hexPad(xPos, 4) +
+    '          ; +$00: Y_POS = ' + yPos + ', X_POS = ' + xPos + '\n' +
+    '    DC.B ' + hexPad(yHeight, 2) + ', ' + hexPad(xWidth, 2) + ', ' + hexPad(prio, 2) + ', ' + hexPad(pal, 2) +
+    '      ; +$04: Y_HEIGHT = ' + yHeight + ', X_WIDTH256 = ' + xWidth + ' (' + (xWidth * pxPerBurst) + ' px), PRIO = ' + prio + ', PAL_OFFSET = ' + pal + '\n' +
+    '    DC.L $02080000               ; +$08: DATA_PTR (32-Byte aligned Pixel-Adresse im Fast-RAM)\n' +
+    '    DC.B ' + hexPad(fmtFlags, 2) + ', ' + hexPad(xScale, 2) + ', ' + hexPad(yScale, 2) + ', ' + hexPad(stepCtrl, 2) +
+    '      ; +$0C: FORMAT=' + fmt + '/FLAGS=' + hexPad(flags, 1) + ', X_SCALE=' + hexPad(xScale, 2) + ', Y_SCALE=' + hexPad(yScale, 2) + ', STEP_CTRL=' + (clut ? 'CLUT_MODE' : 'HAM_MODE');
+}
+
+['dYPos','dXPos','dYHeight','dXWidth','dPrio','dPal','dXScale','dYScale','dFmt','dHFlip','dVFlip','dSmooth','dClut'].forEach(id => {
+  document.getElementById(id).oninput = renderDescriptor;
+  document.getElementById(id).onchange = renderDescriptor;
+});
+renderDescriptor();
+</script>
+</body>
+</html>
