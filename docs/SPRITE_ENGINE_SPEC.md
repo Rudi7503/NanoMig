@@ -133,34 +133,50 @@ Die maximale Höhe eines einzelnen Sprites ist auf **255 Zeilen (`uint8`)** fest
 | `[15:8]` | `uint8` | **`PRIO`** | 8-Bit Priorität (`0` = dieses Sprite überspringen/unsichtbar; `1 .. 255` = aktiv) |
 | `[7:0]` | `uint8` | **`PAL_OFFSET`** | Start-Offset in der 256-Farben-Sprite-Palette (z. B. `Bank * slotsPerBank`) |
 
-### 64-Bit Wort 1 (Offset `+$08 .. +$0F`): Datenzeiger, Format & Steuerung
+### 64-Bit Wort 1 (Offset `+$08 .. +$0F`): Datenzeiger, Format, Skalierung & Steuerung
 | Bits | Typ | Feldname | Beschreibung |
 | :---: | :---: | :--- | :--- |
 | `[63:32]` | `uint32` | **`DATA_PTR`** | 32-Bit Byte-Adresse der gepackten Pixeldaten im Fast-RAM (32-Byte / 256-Bit aligned) |
 | `[31:28]` | `uint4` | **`FORMAT`** | HAM-Mischmodus `0 .. 12` (gemäß Tabelle in Abschnitt 3) |
-| `[27:16]` | `uint12` | **`FLAGS`** | Bit `[1:0]`: Pixel-Breite (`00`=SHres 1×, `01`=Hires 2×, `10`=Lores 4×)<br>Bit `2`: H-Mirror, Bit `3`: V-Mirror |
-| `[15:0]` | `uint16` | **`STEP_CTRL`** | Bit `15 == 0`: Globale HAM-Steps nutzen<br>Bit `15 == 1`: Eigene Sprite-HAM-Steps `R[14:10]`, `G[9:5]`, `B[4:0]` |
+| `[27:24]` | `uint4` | **`FLAGS`** | Bit `0`: `H_FLIP` (Horizontal spiegeln)<br>Bit `1`: `V_FLIP` (Vertikal spiegeln)<br>Bit `2`: `SMOOTH_X` (24-Bit RGB Horizontal-Interpolation ein)<br>Bit `3`: `PRIO_GE` (`>=` statt `>` bei gleicher Priorität) |
+| `[23:16]` | `uint8` | **`X_SCALE`** | Horizontaler Skalierungsfaktor (Festkomma `2.6`, `64` (`$40`) = 1,0× Originalgröße; `< 64` = Vergrößern, `> 64` = Verkleinern) |
+| `[15:8]` | `uint8` | **`Y_SCALE`** | Vertikaler Skalierungsfaktor (Festkomma `2.6`, `64` (`$40`) = 1,0× Originalgröße; unabhängig von `X_SCALE` für Strecken/Stauchen!) |
+| `[7:0]` | `uint8` | **`STEP_CTRL`** | Bit `7 == 0`: Globale HAM-Steps nutzen<br>Bit `7 == 1`: Auswahl eines von 128 vordefinierten/konfigurierbaren Sprite-HAM-Step-Profilen `[6:0]` |
 
 ---
 
-## 7. Clipping-Algorithmus, Zero-Word-Skip & Listen-Traversierung
+## 7. Clipping, X/Y-Skalierung, 24-Bit-Interpolation & Zero-Word-Skip
 
 Für jede vorzubereitende Zielzeile `next_y` (`0 .. Screen_Height - 1`):
 
 1. **Sliding-Window Start-Index (`first_active_idx`):**
    * Zu Beginn des Frames (`next_y == 0`) ist `first_active_idx = 0`.
-   * Da die maximale Sprite-Höhe `255` beträgt, sind alle Sprites am Listenanfang, deren `Y_POS + Y_HEIGHT <= next_y` ist (sofern davor kein noch laufendes höheres Sprite lag), endgültig abgelaufen; `first_active_idx` rückt entsprechend vor, sodass abgelaufene Sprites in späteren Zeilen nicht erneut gelesen werden müssen.
+   * Abgelaufene Sprites am Listenanfang werden über `first_active_idx` übersprungen.
 2. **Early Exit durch Y-Sortierung:**
    * Liest die Engine einen Descriptor mit `Y_HEIGHT == 0` (Listenende) **oder** `Y_POS > next_y`, ist die Zeile fertig! Alle nachfolgenden Sprites starten erst in tieferen Bildschirmzeilen.
-3. **Vertikales Clipping (Oben / Unten) & 32-Byte-aligned Zeilenadresse:**
-   * Bedingung für Sichtbarkeit auf `next_y`: `next_y >= Y_POS` und `rel_y = next_y - Y_POS < Y_HEIGHT`.
-   * Bei `V-Mirror` wird `rel_y = (Y_HEIGHT - 1) - (next_y - Y_POS)` verwendet.
+3. **Vertikales Clipping, Y-Skalierung (`Y_SCALE`) & `V_FLIP`:**
+   * Aus dem Zeilenabstand `dy = next_y - Y_POS` wird über denselben 8×8-Multiplizierer (im 2-Takt-Zeitmultiplex vor der Zeilenadress-Multiplikation, daher **0 Extra-DSPs!**) die skalierte Quellzeile berechnet:
+     $$\text{scaled\_y} = (\text{dy} \times \text{Y\_SCALE}) \gg 6$$
+   * Ist `scaled_y >= Y_HEIGHT`, ist das (ggf. gestreckte oder gestauchte) Sprite auf dieser Bildschirmzeile bereits zu Ende.
+   * Bei `V_FLIP == 1` wird `rel_y = (Y_HEIGHT - 1) - scaled_y[7:0]` gewählt, sonst `rel_y = scaled_y[7:0]`.
    * Startadresse der aktuellen Sprite-Zeile im RAM (immer exakt 32-Byte / 256-Bit-Burst-aligned!):
      $$\text{Line\_Addr} = \text{DATA\_PTR} + (\text{rel\_y}[7:0] \times \text{X\_WIDTH256}[7:0]) \ll 5$$
-4. **Horizontales Clipping (Links / Rechts) & Hardware Zero-Word-Skip:**
-   * **Links (`cur_x < 0`):** Der HAM-Decoder verarbeitet die Pixel ab `X_POS` normal mit (damit der RGB-Akkumulator bei `cur_x == 0` exakt den richtigen Farbwert erreicht!), unterdrückt aber für `cur_x < 0` das Schreibsignal in den Zeilenbuffer.
-   * **Rechts (`cur_x >= Screen_Width`):** Sobald `cur_x` den rechten Bildschirmrand erreicht, bricht die Engine den Lese- und Decodiervorgang für den Rest dieser Sprite-Zeile sofort ab.
-   * **Zero-Word-Skip (1-Takt-Schnellübersprung für transparente 64-Bit-Worte):** Ist ein aus dem FIFO gelesenes 64-Bit-Wort komplett `64'h00000000_00000000` (d. h. alle 8..16 darin enthaltenen Pixel haben `code == 0` = transparenter Anker 0), setzt der Entpacker `acc <= 24'h000000`, erhöht `cur_x` direkt um die Wort-Pixelanzahl (`8..16`) und springt in **nur 1 Takt** sofort zum nächsten 64-Bit-Wort! Damit kosten schmale Sprites (die den 256-Bit-Burst nur teilweise füllen) keinerlei unnötige Decoder-Zeit.
+4. **Horizontale Skalierung (`X_SCALE`), `H_FLIP` & 24-Bit-RGB-Interpolation (`SMOOTH_X`):**
+   * **Warum X-Skalierung & H-Flip nach dem HAM-Decoder 100 % artefaktfrei arbeiten:**  
+     Der HAM-Decoder verarbeitet die Quellpixel einer Zeile immer lückenlos von links nach rechts, damit der rekursive RGB-Akkumulator zu jedem Zeitpunkt exakt stimmt.
+   * **Beim Vergrößern (`X_SCALE < 64`):** Der Phasenakkumulator `x_phase` hält den HAM-Decoder für Zwischenspalten kurz an (`decoder_hold`), während der Zeilenbuffer-Schreiber vorrückt.
+   * **Beim Verkleinern (`X_SCALE > 64`):** Der HAM-Decoder läuft für jedes Quellpixel weiter, aber nur bei Überlauf der Zielspalte wird in den Zeilenbuffer geschrieben.
+   * **Bei `H_FLIP == 1`:** Der Decoder läuft trotzdem von links nach rechts durch die Quelldaten, aber der Zielspalten-Zähler `dst_x` zählt vom rechten Sprite-Rand rückwärts (`dst_x - 1`) in den Zeilenbuffer!
+   * **24-Bit RGB Horizontal-Interpolation (`SMOOTH_X`):**  
+     Da der HAM-Decoder bereits lineares 24-Bit TrueColor (`R, G, B`) liefert, hält die Stufe nach dem Decoder das vorherige Quellpixel `prev_rgb[23:0]` und das aktuelle Quellpixel `curr_rgb[23:0]`.  
+     Mit **nur zwei 8-Bit-Addierern pro Farbkanal** (ohne Multiplizierer!) werden alle 4 Subpixel-Zwischenstufen (`0 %`, `25 %`, `50 %`, `75 %`) erzeugt:
+     * `mid = (P0 + P1) >> 1` *(dient gleichzeitig als 50:50 Anti-Aliasing-Mittelwert beim Verkleinern!)*
+     * `qtr = (mid + (frac[1] ? P1 : P0)) >> 1`
+     * **Transparenz-Kantenschutz (Edge-Guard):** Ist `P0` oder `P1` transparent (`24'h000000`), wird **nicht** mit Schwarz gemischt, sondern hart umgeschaltet – so entstehen niemals dunkle Trauerränder an den Außenkanten gezoomter Sprites!
+5. **Horizontales Clipping (Links / Rechts) & Hardware Zero-Word-Skip:**
+   * **Links (`dst_x < 0`):** Der HAM-Decoder verarbeitet die Pixel ab `X_POS` normal mit (damit der RGB-Akkumulator bei `dst_x == 0` exakt stimmt!), unterdrückt aber für `dst_x < 0` das Schreibsignal in den Zeilenbuffer.
+   * **Rechts (`dst_x >= Screen_Width`):** Sobald `dst_x` den rechten Bildschirmrand erreicht (bei `H_FLIP == 0`), bricht die Engine den Lese- und Decodiervorgang für den Rest dieser Sprite-Zeile sofort ab.
+   * **Zero-Word-Skip (1-Takt-Schnellübersprung für transparente 64-Bit-Worte):** Ist ein aus dem FIFO gelesenes 64-Bit-Wort komplett `64'h00000000_00000000` (lauter transparente Anker-0-Pixel), setzt der Entpacker `acc <= 24'h000000`, rückt `dst_x` entsprechend vor und springt in **nur 1 Takt** sofort zum nächsten 64-Bit-Wort!
 
 ---
 
@@ -194,9 +210,10 @@ Aktuell frei im Core (Stand Seed 11): **5.758 ALMs**, **223 M10K-Blöcke**, **37
 | **Ping-Pong Zeilenbuffer A & B** (2 × 2048 × 32 Bit) | ~40 | **16** | 0 |
 | **Dedizierte Sprite-Palette** (256 × 24 Bit Dual-Port) | ~20 | **1** | 0 |
 | **64-Bit Prefetch-FIFO** (z. B. 64 × 64 Bit zwischen DDR3 & Unpacker) | ~25 | **1–2** | 0 |
-| **32-Bit Multi-Mode Unpacker** (13 Formate `HAM_32BIT_*`) | ~100 | 0 | 0 |
+| **32-Bit Multi-Mode Unpacker** (13 Formate `HAM_32BIT_*` + Zero-Word-Skip) | ~105 | 0 | 0 |
 | **Dedizierter High-Speed HAM-Decoder** (mit Pre-Delta-Stufe) | ~95 | 0 | 0 |
-| **Y-Listen-Scanner, Clipping, 8×8-Multiplizierer & DMA-FSM** | ~195 | 0 | 0–1 |
+| **X/Y-Skalierer, `H_FLIP`/`V_FLIP` & 24-Bit RGB X-Interpolator (`SMOOTH_X`)** | **~90** | **0** | **0** |
+| **Y-Listen-Scanner, Clipping, 8×8-Multiplizierer (TDM) & DMA-FSM** | ~190 | 0 | 0–1 |
 | **Denise-Ausgangs-Prioritätsmischer** (4 Ebenen) | ~35 | 0 | 0 |
-| **Gesamtsumme** | **~510 ALMs** | **18–19 M10K** | **0–1 DSP** |
-| *Anteil an den freien Ressourcen* | *~8,8 % der freien ALMs* | *~8,5 % der freien M10K* | *< 3 %* |
+| **Gesamtsumme** | **~600 ALMs** | **18–19 M10K** | **0–1 DSP** |
+| *Anteil an den freien Ressourcen* | *~10,4 % der freien ALMs* | *~8,5 % der freien M10K* | *< 3 %* |
