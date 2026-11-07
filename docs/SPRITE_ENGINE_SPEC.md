@@ -72,6 +72,17 @@ Dadurch nutzt jeder DMA-Lesezugriff mit **`BURSTCNT = 4`** den physischen **DDR3
 
 *(IDs `13..15` sind als Reserve frei).*
 
+### 3.1 Wahlweise HAM-Modus oder normaler Palettenmodus (`CLUT_MODE`) pro Sprite
+Über ein Steuerbit im Descriptor (`STEP_CTRL[6] = CLUT_MODE`) kann für jedes Sprite individuell zwischen **HAM-Modus (`0`)** und **normalem Palettenmodus / CLUT (`1`)** gewählt werden (~1 ALM Zusatzlogik):
+* **`CLUT_MODE = 0` (HAM-Modus):**  
+  Das oberste Bit (`MSB`) jedes Pixel-Codes entscheidet zwischen **Paletten-Anker (`MSB == 0`)** und **RGB-Delta (`MSB == 1`)**.
+* **`CLUT_MODE = 1` (Normaler Palettenmodus / CLUT):**  
+  Die Hardware zwingt intern `anchor_reg = 1` für jedes Pixel und nutzt **alle Bits des Pixel-Codes (inklusive `MSB`!)** direkt als Paletten-Offset (`palette_index = PAL_OFFSET + code`):
+  * Im Format `0` (`44444444`, **64 Pixel pro 256-Bit-Burst**) stehen damit volle **16 Palettenfarben (`0..15`)** pro Pixel zur Verfügung.
+  * Im Format `12` (`8888`, **32 Pixel pro 256-Bit-Burst**) stehen volle **256 Palettenfarben (`0..255`)** pro Pixel zur Verfügung.
+  * Auch in allen 5-Bit-, 6-Bit- oder Mischformaten adressiert jedes Feld direkt `32` bzw. `64` Farben ab `PAL_OFFSET`.
+  * Index `0` bleibt wie im HAM-Modus **Transparent (`24'h000000`)**, sodass sowohl der **1-Takt `Zero-Word-Skip`** als auch die **24-Bit RGB Horizontal-Interpolation (`SMOOTH_X`)** im normalen Palettenmodus zu 100 % identisch weiterarbeiten!
+
 ---
 
 ## 4. Transparenz & Farb-Regeln
@@ -141,7 +152,7 @@ Die maximale Höhe eines einzelnen Sprites ist auf **255 Zeilen (`uint8`)** fest
 | `[27:24]` | `uint4` | **`FLAGS`** | Bit `0`: `H_FLIP` (Horizontal spiegeln)<br>Bit `1`: `V_FLIP` (Vertikal spiegeln)<br>Bit `2`: `SMOOTH_X` (24-Bit RGB Horizontal-Interpolation ein)<br>Bit `3`: `PRIO_GE` (`>=` statt `>` bei gleicher Priorität) |
 | `[23:16]` | `uint8` | **`X_SCALE`** | Horizontaler Skalierungsfaktor (Festkomma `2.6`, `64` (`$40`) = 1,0× Originalgröße; `< 64` = Vergrößern, `> 64` = Verkleinern) |
 | `[15:8]` | `uint8` | **`Y_SCALE`** | Vertikaler Skalierungsfaktor (Festkomma `2.6`, `64` (`$40`) = 1,0× Originalgröße; unabhängig von `X_SCALE` für Strecken/Stauchen!) |
-| `[7:0]` | `uint8` | **`STEP_CTRL`** | Bit `7 == 0`: Globale HAM-Steps nutzen<br>Bit `7 == 1`: Auswahl eines von 128 vordefinierten/konfigurierbaren Sprite-HAM-Step-Profilen `[6:0]` |
+| `[7:0]` | `uint8` | **`STEP_CTRL`** | Bit `6`: **`CLUT_MODE`** (`0` = HAM-Modus, `1` = Normaler Palettenmodus / CLUT)<br>Bit `7`: `CUSTOM_STEP` (`0` = Globale HAM-Steps, `1` = Sprite-eigene HAM-Step-Skalierung `R[5:4]`, `G[3:2]`, `B[1:0]`) |
 
 ---
 
