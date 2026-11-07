@@ -202,6 +202,7 @@ Main:
         BEQ     .AbortDemo
         DBRA    D6,.act1_hold
 
+        BSR     Fade_Out_All_Voices     ; Click-free 8-frame micro-fade
         BSR     Silence_All_Voices
 
         ; Print Act I Done marker with measured audio peak
@@ -241,6 +242,7 @@ Main:
         ANDI.W  #$003F,D5
         DBRA    D6,.act2_step
 
+        BSR     Fade_Out_All_Voices     ; Click-free 8-frame micro-fade
         BSR     Silence_All_Voices
 
         ; Print Act II Done marker with measured audio peak
@@ -274,8 +276,10 @@ Main:
         ADDQ.W  #1,D5
         DBRA    D6,.act3_sweep
 
-        ; Silence all 32 band volumes before Outside-In build-up
+        ; Softly transition into Outside-In build-up (prevent click & keep warm audio bed)
+        BSR     Fade_Out_All_Voices
         BSR     Mute_Vocoder_Bands
+        MOVE.W  #$2424,AUD_VOL+AUDIO_EXT_BASE ; Voice 0 warm background bed
 
         ; Phase 3B: Outside-In Spectral Build-Up (300 Frames = 6.0s)
         ; Every 8 frames enable next band from OutsideInOrder (32 * 8 = 256 frames + 44 hold)
@@ -290,6 +294,7 @@ Main:
         ADDQ.W  #1,D5
         DBRA    D6,.act3_build
 
+        BSR     Fade_Out_All_Voices     ; Click-free 8-frame micro-fade
         BSR     Silence_All_Voices
 
         ; Print Act III Done marker with measured audio peak
@@ -330,6 +335,7 @@ Main:
         ANDI.W  #$003F,D5
         DBRA    D6,.act4_step
 
+        BSR     Fade_Out_All_Voices     ; Click-free 8-frame micro-fade
         BSR     Silence_All_Voices
 
         ; Print Act IV Done marker with measured audio peak
@@ -587,14 +593,11 @@ Draw_Text_Row:
         MOVEQ   #0,D5                   ; 8 scanlines of glyph
         MOVEQ   #7,D7
 .glyph_line:
-        MOVE.B  (A6)+,D2                ; Glyph bits (1 = foreground)
-        MOVE.B  D2,D3
-        ORI.B   #$55,D3                 ; Background delta pattern in BPL1/2
-        MOVE.B  D2,(A2,D5.W)            ; BPL1
-        MOVE.B  D3,(A3,D5.W)            ; BPL2
-        MOVE.B  D2,(A4,D5.W)            ; BPL3
-        NOT.B   D2                      ; Foreground: BPL4=0 (Anchor 7!), Background: BPL4=1 (Delta!)
-        MOVE.B  D2,(A5,D5.W)            ; BPL4
+        MOVE.B  (A6)+,D2                ; Glyph bits: 1 = Foreground (White), 0 = Background (Black)
+        MOVE.B  D2,(A2,D5.W)            ; BPL1 (c0) = D2
+        MOVE.B  D2,(A3,D5.W)            ; BPL2 (c1) = D2
+        MOVE.B  D2,(A4,D5.W)            ; BPL3 (c2) = D2
+        CLR.B   (A5,D5.W)               ; BPL4 (c3) = 0 (Anchor mode for razor-sharp text: zero color bleed!)
         ADDI.W  #SCR_WIDTH_B,D5
         DBRA    D7,.glyph_line
 
@@ -843,6 +846,34 @@ Update_Visuals_And_Scope:
 ; ==============================================================================
 ; AUDIO ENGINE SUBROUTINES (ALL 32 VOICES)
 ; ==============================================================================
+
+; ------------------------------------------------------------------------------
+; Fade_Out_All_Voices: Smooth 8-frame micro-fade (160 ms) to avoid audio clicks
+; Exponentially ramps volume of all 32 voices down to 0 before stopping DMA
+; ------------------------------------------------------------------------------
+Fade_Out_All_Voices:
+        MOVEM.L D2-D7/A0-A2,-(SP)
+        MOVEQ   #8-1,D7                 ; 8 frames
+.f_step:
+        BSR     Wait_VBL
+        BSR     Update_Visuals_And_Scope
+        LEA     AUDIO_EXT_BASE,A0
+        MOVEQ   #31,D6
+.f_voice:
+        MOVE.W  AUD_VOL(A0),D0          ; High=L, Low=R
+        MOVE.W  D0,D1
+        LSR.W   #8,D0                   ; Left vol
+        ANDI.W  #$00FF,D1               ; Right vol
+        LSR.W   #1,D0                   ; Halve left volume
+        LSR.W   #1,D1                   ; Halve right volume
+        LSL.W   #8,D0
+        OR.B    D1,D0
+        MOVE.W  D0,AUD_VOL(A0)
+        LEA     VOICE_STRIDE(A0),A0
+        DBRA    D6,.f_voice
+        DBRA    D7,.f_step
+        MOVEM.L (SP)+,D2-D7/A0-A2
+        RTS
 
 Silence_All_Voices:
         LEA     AUDIO_EXT_BASE,A0
