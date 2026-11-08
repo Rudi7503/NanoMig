@@ -1,38 +1,48 @@
 #!/usr/bin/env python3
 """
-Decomposes `D:\\programmier_ordner\\Vampire\\new-ham\\testbilder\\real-spacecraft.jpg`
-into 8 independent HAM_32BIT_63436343 (FORMAT 2) & CLUT_MODE hardware sprites,
-verifies them through the bit-accurate `sprite_ref_model.py` (including Zero-Word-Skip
-equivalence, X/Y scaling, SMOOTH_X interpolation, and 8-bit priority layering),
+Decomposes `real-spacecraft.jpg` into 8 independent hardware sprites and encodes them across
+the user-selected HAM / HighColor formats:
+  - FORMAT 13: HAM_32BIT_12_6_8_6       (12 - 6 - 8 - 6, 32 px/Burst)
+  - FORMAT 14: HAM_32BIT_12_5555        (12 - 5 - 5 - 5 - 5, 40 px/Burst)
+  - FORMAT 15: HAM_64BIT_16_12_12_12_12 (16 - 12 - 12 - 12 - 12 in 64-bit word, 20 px/Burst, 100% palette-free)
+  - FORMAT 2 : HAM_32BIT_63436343       (6 - 3 - 4 - 3 - 6 - 3 - 4 - 3, 64 px/Burst)
+
+Verifies all formats through the bit-accurate `sprite_ref_model.py` (including Zero-Word-Skip
+equivalence, 4-bit step_r/g/b, X/Y scaling, SMOOTH_X interpolation, and 8-bit priority layering),
 and generates:
   1. `mister/tests/sprite_engine/spacecraft_sprites_preview.png` (visual verification sheet)
-  2. `docs/spacecraft_sprite_test.html` (interactive 60-FPS bit-exact hardware pipeline demo)
+  2. `docs/spacecraft_sprite_test.html` (interactive 60-FPS bit-exact hardware pipeline demo with live format switcher)
 """
 
+import argparse
 import json
 import math
 import os
+from pathlib import Path
 from typing import List, Tuple, Dict
 import numpy as np
 from PIL import Image, ImageDraw
 
 from sprite_ref_model import (
     SpriteDescriptor,
-    FORMAT_SEQS,
+    FORMAT_SEQS_64,
     precompute_ham_stage1,
     clamp_u8,
     render_scanline,
 )
 
-SRC_JPG = r"D:\programmier_ordner\Vampire\new-ham\testbilder\real-spacecraft.jpg"
-OUT_PREVIEW = r"D:\programmier_ordner\FPGA\NanoMig\mister\tests\sprite_engine\spacecraft_sprites_preview.png"
-OUT_HTML = r"D:\programmier_ordner\FPGA\NanoMig\docs\spacecraft_sprite_test.html"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_SRC_JPG = Path(r"D:\programmier_ordner\Vampire\new-ham\testbilder\real-spacecraft.jpg")
+DEFAULT_OUT_PREVIEW = REPO_ROOT / "mister" / "tests" / "sprite_engine" / "spacecraft_sprites_preview.png"
+DEFAULT_OUT_HTML = REPO_ROOT / "docs" / "spacecraft_sprite_test.html"
+
+SHOWCASE_FORMATS = (13, 14, 15, 2)
 
 
 def build_palette_bank(rgb_pixels: np.ndarray, n_slots: int = 32) -> List[int]:
     """
-    Builds a 24-bit palette bank of `n_slots` colors (Slot 0 = 0x000000 transparent).
-    Uses k-means/quantization via PIL adaptive palette on non-transparent pixels.
+    Builds a 24-bit palette bank of `n_slots` colors (Slot 0 = 0x000000).
+    Uses MEDIANCUT quantization on non-transparent pixels.
     """
     if len(rgb_pixels) == 0:
         return [0x000000] * n_slots
@@ -52,102 +62,196 @@ def build_palette_bank(rgb_pixels: np.ndarray, n_slots: int = 32) -> List[int]:
     return bank[:n_slots]
 
 
-def encode_ham_row_fmt2(
+def best_ham12_code(
+    tr: int, tg: int, tb: int, acc_r: int, acc_g: int, acc_b: int, sr: int, sg: int, sb: int
+) -> Tuple[int, Tuple[int, int, int]]:
+    """
+    O(1) globally optimal HAM12 encoder (12-bit code: Bit11=0 -> 11-bit direct RGB anchor, Bit11=1 -> 3/4/3 delta).
+    """
+    best_err = 1 << 30
+    best_code = 1
+    best_rgb = (0, 0, 0)
+
+    # 1. Evaluate 11-bit direct RGB anchor (code[11] == 0) for b10 in (0, 1)
+    g4 = min(15, max(0, (tg + 8) >> 4))
+    g_anc = g4 << 4
+    for b10 in (0, 1):
+        r3 = min(7, max(0, (tr - (b10 << 4) + 16) >> 5))
+        b3 = min(7, max(0, (tb - (b10 << 4) + 16) >> 5))
+        g4_use = g4
+        if b10 == 0 and r3 == 0 and g4_use == 0 and b3 == 0:
+            g4_use = 1  # Avoid raw_code == 0 (transparent)
+        r_anc = ((r3 << 1) | b10) << 4
+        b_anc = ((b3 << 1) | b10) << 4
+        g_a = g4_use << 4
+        err = (r_anc - tr) ** 2 + (g_a - tg) ** 2 + (b_anc - tb) ** 2
+        if err < best_err:
+            best_err = err
+            best_code = (b10 << 10) | (r3 << 7) | (g4_use << 3) | b3
+            best_rgb = (r_anc, g_a, b_anc)
+
+    # 2. Evaluate 11-bit two's complement delta (code[11] == 1) for turbo in (0, 1)
+    for turbo in (0, 1):
+        mr = max(1, sr * (4 if turbo else 1))
+        mg = max(1, sg * (4 if turbo else 1))
+        mb = max(1, sb * (4 if turbo else 1))
+        dr = min(3, max(-4, int(round((tr - acc_r) / mr))))
+        dg = min(7, max(-8, int(round((tg - acc_g) / mg))))
+        db = min(3, max(-4, int(round((tb - acc_b) / mb))))
+        nr = clamp_u8(acc_r + dr * mr)
+        ng = clamp_u8(acc_g + dg * mg)
+        nb = clamp_u8(acc_b + db * mb)
+        err = (nr - tr) ** 2 + (ng - tg) ** 2 + (nb - tb) ** 2
+        if err < best_err:
+            best_err = err
+            best_code = 0x800 | (turbo << 10) | ((dr & 0x7) << 7) | ((dg & 0xF) << 3) | (db & 0x7)
+            best_rgb = (nr, ng, nb)
+
+    return best_code, best_rgb
+
+
+def best_ham16_code(
+    tr: int, tg: int, tb: int, acc_r: int, acc_g: int, acc_b: int, sr: int, sg: int, sb: int
+) -> Tuple[int, Tuple[int, int, int]]:
+    """
+    O(1) globally optimal HAM16 encoder (16-bit code: Bit15=0 -> 15-bit RGB555 anchor, Bit15=1 -> 4/5/5 delta).
+    """
+    # 1. Direct 15-bit RGB555 anchor (code[15] == 0)
+    r5 = min(31, max(0, (tr + 4) >> 3))
+    g5 = min(31, max(0, (tg + 4) >> 3))
+    b5 = min(31, max(0, (tb + 4) >> 3))
+    if r5 == 0 and g5 == 0 and b5 == 0:
+        g5 = 1  # Avoid raw_code == 0 (transparent)
+    r_anc, g_anc, b_anc = r5 << 3, g5 << 3, b5 << 3
+    best_err = (r_anc - tr) ** 2 + (g_anc - tg) ** 2 + (b_anc - tb) ** 2
+    best_code = (r5 << 10) | (g5 << 5) | b5
+    best_rgb = (r_anc, g_anc, b_anc)
+
+    # 2. 15-bit two's complement delta (code[15] == 1) for turbo in (0, 1)
+    for turbo in (0, 1):
+        mr = max(1, sr * (4 if turbo else 1))
+        mg = max(1, sg * (4 if turbo else 1))
+        mb = max(1, sb * (4 if turbo else 1))
+        dr = min(7, max(-8, int(round((tr - acc_r) / mr))))
+        dg = min(15, max(-16, int(round((tg - acc_g) / mg))))
+        db = min(15, max(-16, int(round((tb - acc_b) / mb))))
+        nr = clamp_u8(acc_r + dr * mr)
+        ng = clamp_u8(acc_g + dg * mg)
+        nb = clamp_u8(acc_b + db * mb)
+        err = (nr - tr) ** 2 + (ng - tg) ** 2 + (nb - tb) ** 2
+        if err < best_err:
+            best_err = err
+            best_code = 0x8000 | (turbo << 14) | ((dr & 0xF) << 10) | ((dg & 0x1F) << 5) | (db & 0x1F)
+            best_rgb = (nr, ng, nb)
+
+    return best_code, best_rgb
+
+
+def encode_ham_row_fmt(
     row_rgb: np.ndarray,
     row_opaque: np.ndarray,
+    fmt5: int,
     palette256: List[int],
     pal_offset: int,
-    steps: Tuple[int, int, int] = (6, 6, 6),
+    steps: Tuple[int, int, int] = (4, 4, 4),
 ) -> List[int]:
     """
-    Encodes a horizontal line of pixels (width = multiple of 64) into 64-bit words
-    using FORMAT 2 (`HAM_32BIT_63436343`: 8 pixels per 32-bit word, 64 pixels per 256-bit burst).
+    Encodes a horizontal line of pixels into 64-bit words for any format `fmt5` (0..17).
+    Pads the right edge with transparent pixels if `len(row_opaque)` is not a multiple of `px_per_burst`.
     """
-    width = len(row_opaque)
-    assert width % 64 == 0
-    seq = FORMAT_SEQS[2]  # (6, 3, 4, 3, 6, 3, 4, 3)
-    sr, sg, sb = steps
+    seq64 = FORMAT_SEQS_64[fmt5]
+    px_per_64 = len(seq64)
+    px_per_burst = px_per_64 * 4
+    orig_w = len(row_opaque)
+    w_bursts = (orig_w + px_per_burst - 1) // px_per_burst
+    padded_w = w_bursts * px_per_burst
 
-    # Pre-extract bank colors (32 slots for 6-bit anchor, 8 slots for 4-bit, 4 slots for 3-bit)
-    bank_r = np.array([(palette256[(pal_offset + i) & 0xFF] >> 16) & 0xFF for i in range(32)], dtype=np.int32)
-    bank_g = np.array([(palette256[(pal_offset + i) & 0xFF] >> 8) & 0xFF for i in range(32)], dtype=np.int32)
-    bank_b = np.array([palette256[(pal_offset + i) & 0xFF] & 0xFF for i in range(32)], dtype=np.int32)
+    sr, sg, sb = steps
+    bank_r = np.array([(palette256[(pal_offset + i) & 0xFF] >> 16) & 0xFF for i in range(128)], dtype=np.int32)
+    bank_g = np.array([(palette256[(pal_offset + i) & 0xFF] >> 8) & 0xFF for i in range(128)], dtype=np.int32)
+    bank_b = np.array([palette256[(pal_offset + i) & 0xFF] & 0xFF for i in range(128)], dtype=np.int32)
+
+    # Pre-build delta lookup tables for bw in (3, 4, 5, 6, 8)
+    delta_lut: Dict[int, List[Tuple[int, int, int, int]]] = {}
+    for bw in set(seq64):
+        if bw <= 8:
+            n_anc = 1 << (bw - 1)
+            lst = []
+            for d_code in range(n_anc, 1 << bw):
+                _, _, _, _, _, dr, dg, db = precompute_ham_stage1(
+                    d_code, bw, False, pal_offset, sr, sg, sb
+                )
+                lst.append((d_code, dr, dg, db))
+            delta_lut[bw] = lst
 
     acc_r = acc_g = acc_b = 0
-    words32: List[int] = []
+    words64: List[int] = []
 
-    for base_x in range(0, width, 8):
-        # Fast-path: if all 8 pixels are transparent, emit 32'h00000000
-        if not np.any(row_opaque[base_x : base_x + 8]):
+    for base_x in range(0, padded_w, px_per_64):
+        # Fast-path: if all pixels in this 64-bit word are transparent, emit 64'h0
+        end_x = min(orig_w, base_x + px_per_64)
+        if base_x >= orig_w or not np.any(row_opaque[base_x:end_x]):
             acc_r = acc_g = acc_b = 0
-            words32.append(0)
+            words64.append(0)
             continue
 
-        w32 = 0
-        for p_i, bw in enumerate(seq):
+        w64 = 0
+        for p_i, bw in enumerate(seq64):
             x = base_x + p_i
-            if not row_opaque[x]:
+            if x >= orig_w or not row_opaque[x]:
                 code = 0
                 acc_r = acc_g = acc_b = 0
             else:
                 tr, tg, tb = int(row_rgb[x, 0]), int(row_rgb[x, 1]), int(row_rgb[x, 2])
-                n_anc = 1 << (bw - 1)  # 32 for bw=6, 8 for bw=4, 4 for bw=3
+                if bw == 12:
+                    code, (acc_r, acc_g, acc_b) = best_ham12_code(tr, tg, tb, acc_r, acc_g, acc_b, sr, sg, sb)
+                elif bw == 16:
+                    code, (acc_r, acc_g, acc_b) = best_ham16_code(tr, tg, tb, acc_r, acc_g, acc_b, sr, sg, sb)
+                else:
+                    n_anc = 1 << (bw - 1)
+                    dr_a = bank_r[1:n_anc] - tr
+                    dg_a = bank_g[1:n_anc] - tg
+                    db_a = bank_b[1:n_anc] - tb
+                    err_a = dr_a * dr_a + dg_a * dg_a + db_a * db_a
+                    best_anc_idx = int(np.argmin(err_a)) + 1
+                    best_err = int(err_a[best_anc_idx - 1])
+                    best_code = best_anc_idx
+                    best_rgb = (int(bank_r[best_anc_idx]), int(bank_g[best_anc_idx]), int(bank_b[best_anc_idx]))
 
-                # Evaluate best non-zero anchor (1 .. n_anc - 1)
-                dr_a = bank_r[1:n_anc] - tr
-                dg_a = bank_g[1:n_anc] - tg
-                db_a = bank_b[1:n_anc] - tb
-                err_a = dr_a * dr_a + dg_a * dg_a + db_a * db_a
-                best_anc_idx = int(np.argmin(err_a)) + 1
-                best_err = int(err_a[best_anc_idx - 1])
-                best_code = best_anc_idx
-                best_rgb = (int(bank_r[best_anc_idx]), int(bank_g[best_anc_idx]), int(bank_b[best_anc_idx]))
+                    for d_code, dr, dg, db in delta_lut[bw]:
+                        nr = clamp_u8(acc_r + dr)
+                        ng = clamp_u8(acc_g + dg)
+                        nb = clamp_u8(acc_b + db)
+                        err = (nr - tr) ** 2 + (ng - tg) ** 2 + (nb - tb) ** 2
+                        if err < best_err:
+                            best_err = err
+                            best_code = d_code
+                            best_rgb = (nr, ng, nb)
 
-                # Evaluate all delta codes (MSB = 1: n_anc .. (2*n_anc - 1))
-                for d_code in range(n_anc, 1 << bw):
-                    _, _, _, dr, dg, db = precompute_ham_stage1(
-                        d_code, bw, False, pal_offset, sr, sg, sb
-                    )
-                    nr = clamp_u8(acc_r + dr)
-                    ng = clamp_u8(acc_g + dg)
-                    nb = clamp_u8(acc_b + db)
-                    err = (nr - tr) ** 2 + (ng - tg) ** 2 + (nb - tb) ** 2
-                    if err < best_err:
-                        best_err = err
-                        best_code = d_code
-                        best_rgb = (nr, ng, nb)
+                    code = best_code
+                    acc_r, acc_g, acc_b = best_rgb
 
-                code = best_code
-                acc_r, acc_g, acc_b = best_rgb
+            w64 = (w64 << bw) | (code & ((1 << bw) - 1))
+        words64.append(w64 & 0xFFFFFFFFFFFFFFFF)
 
-            w32 = (w32 << bw) | (code & ((1 << bw) - 1))
-        words32.append(w32 & 0xFFFFFFFF)
-
-    words64: List[int] = []
-    for i in range(0, len(words32), 2):
-        w64 = ((words32[i] & 0xFFFFFFFF) << 32) | (words32[i + 1] & 0xFFFFFFFF)
-        words64.append(w64)
     return words64
 
 
-def decompose_spacecraft():
+def decompose_spacecraft(src_jpg: Path):
     """
     Loads `real-spacecraft.jpg`, resizes to 384x388, and extracts 8 layered sprite components
-    with intentional overlap margins on lower-priority parts so animated movement never creates seams.
+    across all showcase formats (FORMAT 13: 12-6-8-6, FORMAT 14: 12-5-5-5-5, FORMAT 15: 16-12-12-12-12, FORMAT 2: 63436343).
     """
-    im_orig = Image.open(SRC_JPG).convert("RGB")
+    im_orig = Image.open(src_jpg).convert("RGB")
     W, H = 384, 388
     im = im_orig.resize((W, H), Image.Resampling.LANCZOS)
     arr = np.array(im, dtype=np.uint8)
     r, g, b = arr[:, :, 0].astype(np.int32), arr[:, :, 1].astype(np.int32), arr[:, :, 2].astype(np.int32)
 
-    # Global foreground mask (non-black pixels of the spacecraft)
     fg = (np.maximum(np.maximum(r, g), b) > 14)
-
     yy, xx = np.mgrid[0:H, 0:W]
 
     # 1 & 2. Left & Right Thruster Pod Circular Rings (PRIO 152)
-    # Left pod center ~(143, 47), Right pod center ~(240, 47), radius ~ 23
     dist_l_pod = np.sqrt((xx - 143.0) ** 2 + (yy - 47.5) ** 2)
     dist_r_pod = np.sqrt((xx - 240.0) ** 2 + (yy - 47.5) ** 2)
     mask_l_pod = fg & (dist_l_pod <= 23.5) & (yy >= 21) & (yy <= 74)
@@ -159,21 +263,17 @@ def decompose_spacecraft():
     mask_r_flame = fg & (xx >= 210) & (xx < 270) & (yy < 48) & (is_flame_col | (yy < 36))
 
     # 5. Cockpit Canopy & Central Dorsal Spine (PRIO 185, highest layer on top of hull)
-    # Tapered central diamond/hexagonal canopy region
     half_w_cockpit = np.clip(38.0 - np.abs(yy - 185.0) * 0.16, 14.0, 38.0)
     mask_cockpit = fg & (yy >= 72) & (yy <= 296) & (np.abs(xx - 191.5) <= half_w_cockpit)
 
     # 6 & 7. Left & Right Outer Swept Wings (PRIO 140, under main hull)
-    # Natural mechanical wing seam: inner root seam + lower wing notch (bronze radiator housing)
     seam_left_x = 144.0 - (yy - 82.0) * 0.42
     seam_right_x = 239.0 + (yy - 82.0) * 0.42
     wing_bot_y = 126.0 + np.abs(xx - 191.5) * 0.30
-    # Extend wing mask 14px inward/downward under the hull so banking/scaling never opens a gap!
     mask_l_wing = fg & (yy >= 76) & (yy <= wing_bot_y + 10.0) & (xx <= seam_left_x + 14.0)
     mask_r_wing = fg & (yy >= 76) & (yy <= wing_bot_y + 10.0) & (xx >= seam_right_x - 14.0)
 
-    # 8. Central Main Hull (PRIO 165: covers everything inside the wing seam and below wing_bot_y,
-    #    including underneath the cockpit and thruster pods so parallax shifts never show holes!)
+    # 8. Central Main Hull (PRIO 165)
     mask_hull = (
         fg
         & (~mask_l_flame)
@@ -185,41 +285,40 @@ def decompose_spacecraft():
     )
     mask_hull = mask_hull | mask_cockpit
 
-    def crop_part(mask: np.ndarray, x0: int, y0: int, w_bursts: int, h_lines: int) -> Tuple[np.ndarray, np.ndarray]:
-        w_px = w_bursts * 64
-        part_rgb = np.zeros((h_lines, w_px, 3), dtype=np.uint8)
-        part_op = np.zeros((h_lines, w_px), dtype=bool)
+    def crop_part(mask: np.ndarray, x0: int, y0: int, orig_w_px: int, h_lines: int) -> Tuple[np.ndarray, np.ndarray]:
+        part_rgb = np.zeros((h_lines, orig_w_px, 3), dtype=np.uint8)
+        part_op = np.zeros((h_lines, orig_w_px), dtype=bool)
         for dy in range(h_lines):
             sy = y0 + dy
             if 0 <= sy < H:
-                for dx in range(w_px):
+                for dx in range(orig_w_px):
                     sx = x0 + dx
                     if 0 <= sx < W and mask[sy, sx]:
                         part_rgb[dy, dx] = arr[sy, sx]
                         part_op[dy, dx] = True
         return part_rgb, part_op
 
-    # Extract all 7 spacecraft parts on 64-pixel (1 burst = 256-bit) boundaries:
     parts_spec = [
-        # (name, mask, x0, y0, w_bursts, h_lines, prio, bank_idx)
-        ("flame_l", mask_l_flame, 112, 4,   1, 44,  130, 0),
-        ("flame_r", mask_r_flame, 208, 4,   1, 44,  130, 0),
-        ("wing_l",  mask_l_wing,  0,   76,  3, 120, 140, 1),
-        ("wing_r",  mask_r_wing,  192, 76,  3, 120, 140, 1),
-        ("pod_l",   mask_l_pod,   112, 20,  1, 56,  152, 2),
-        ("pod_r",   mask_r_pod,   208, 20,  1, 56,  152, 2),
-        ("hull",    mask_hull,    48,  44,  5, 340, 165, 3),
-        ("cockpit", mask_cockpit, 128, 72,  2, 224, 185, 4),
+        # (name, mask, x0, y0, orig_w_px, h_lines, prio, bank_idx)
+        ("flame_l", mask_l_flame, 112, 4,   64,  44,  130, 0),
+        ("flame_r", mask_r_flame, 208, 4,   64,  44,  130, 0),
+        ("wing_l",  mask_l_wing,  0,   76,  192, 120, 140, 1),
+        ("wing_r",  mask_r_wing,  192, 76,  192, 120, 140, 1),
+        ("pod_l",   mask_l_pod,   112, 20,  64,  56,  152, 2),
+        ("pod_r",   mask_r_pod,   208, 20,  64,  56,  152, 2),
+        ("hull",    mask_hull,    48,  44,  320, 340, 165, 3),
+        ("cockpit", mask_cockpit, 128, 72,  128, 224, 185, 4),
     ]
 
-    # Build 256-color sprite palette across 6 banks of 32 slots
     palette256 = [0x000000] * 256
     extracted = []
-    for name, msk, x0, y0, wb, hl, prio, bank_id in parts_spec:
-        p_rgb, p_op = crop_part(msk, x0, y0, wb, hl)
-        extracted.append((name, p_rgb, p_op, x0, y0, wb, hl, prio, bank_id))
+    for name, msk, x0, y0, ow, hl, prio, bank_id in parts_spec:
+        p_rgb, p_op = crop_part(msk, x0, y0, ow, hl)
+        extracted.append((name, p_rgb, p_op, x0, y0, ow, hl, prio, bank_id))
 
-    # Populate palette banks 0..4 from part pixels
+    # Populate 64-slot palette banks (0, 64, 128, 192) for HAM06/HAM08/HAM05 formats
+    # Wait: let's keep 32-slot banks (0..4 * 32) so 5 banks fit alongside Star Bank 5 (offset 160)!
+    # For HAM08 in FORMAT 13 (12-6-8-6), any index 1..31 within the part's 32-slot bank is a valid HAM08 anchor too!
     for bank_id in range(5):
         pix_list = [p_rgb[p_op] for (_, p_rgb, p_op, *_, b_id) in extracted if b_id == bank_id and np.any(p_op)]
         all_pix = np.concatenate(pix_list, axis=0) if pix_list else np.zeros((0, 3), dtype=np.uint8)
@@ -237,45 +336,60 @@ def decompose_spacecraft():
     for i, c in enumerate(star_bank):
         palette256[160 + i] = c
 
-    # Encode all spacecraft parts into DDR3 64-bit RAM words using FORMAT 2 (HAM_32BIT_63436343)
     ram_words64: Dict[int, int] = {}
-    part_meta = []
+    formats_meta: Dict[int, List[Dict]] = {}
     cur_addr = 0x00100000
-    total_words64 = 0
-    zero_words64 = 0
 
-    for name, p_rgb, p_op, x0, y0, wb, hl, prio, bank_id in extracted:
-        base_addr = cur_addr
-        part_words: List[int] = []
-        for row_y in range(hl):
-            row_w64 = encode_ham_row_fmt2(
-                p_rgb[row_y], p_op[row_y], palette256, bank_id * 32, steps=(6, 6, 6)
-            )
-            for w_i, w64 in enumerate(row_w64):
-                ram_words64[cur_addr + w_i * 8] = w64
-                part_words.append(w64)
-                total_words64 += 1
-                if w64 == 0:
-                    zero_words64 += 1
-            cur_addr += wb * 32  # 32 bytes per 256-bit burst
-        part_meta.append({
-            "name": name,
-            "x0": x0,
-            "y0": y0,
-            "w_bursts": wb,
-            "h_lines": hl,
-            "prio": prio,
-            "pal_offset": bank_id * 32,
-            "base_addr": base_addr,
-            "fmt": 2,
-            "words64": [[(w >> 32) & 0xFFFFFFFF, w & 0xFFFFFFFF] for w in part_words],
-        })
+    # Use 4-bit HAM steps (6, 6, 6) in [0..15]
+    steps4 = (6, 6, 6)
 
-    print(
-        f"Encoded 8 spacecraft HAM sprites: {total_words64} x 64-bit words "
-        f"({zero_words64} zero words = {zero_words64 * 100.0 / total_words64:.1f}% 1-cycle Zero-Word-Skip!)"
-    )
-    return arr, palette256, ram_words64, part_meta
+    for fmt5 in SHOWCASE_FORMATS:
+        px_per_64 = len(FORMAT_SEQS_64[fmt5])
+        px_per_burst = px_per_64 * 4
+        f_parts = []
+        tot_w64 = 0
+        zero_w64 = 0
+        for name, p_rgb, p_op, x0, y0, ow, hl, prio, bank_id in extracted:
+            w_bursts = (ow + px_per_burst - 1) // px_per_burst
+            base_addr = cur_addr
+            part_words: List[int] = []
+            for row_y in range(hl):
+                row_w64 = encode_ham_row_fmt(
+                    p_rgb[row_y], p_op[row_y], fmt5, palette256, bank_id * 32, steps=steps4
+                )
+                assert len(row_w64) == w_bursts * 4
+                for w_i, w64 in enumerate(row_w64):
+                    ram_words64[cur_addr + w_i * 8] = w64
+                    part_words.append(w64)
+                    tot_w64 += 1
+                    if w64 == 0:
+                        zero_w64 += 1
+                cur_addr += w_bursts * 32
+            f_parts.append({
+                "name": name,
+                "x0": x0,
+                "y0": y0,
+                "orig_w_px": ow,
+                "w_bursts": w_bursts,
+                "h_lines": hl,
+                "prio": prio,
+                "pal_offset": bank_id * 32,
+                "base_addr": base_addr,
+                "fmt": fmt5,
+                "words64": [[(w >> 32) & 0xFFFFFFFF, w & 0xFFFFFFFF] for w in part_words],
+            })
+        formats_meta[fmt5] = f_parts
+        print(
+            f"Format {fmt5:2d} ({px_per_burst:2d} px/Burst): {tot_w64:5d} x 64-bit words "
+            f"({zero_w64:5d} zero words = {zero_w64 * 100.0 / tot_w64:.1f}% 1-cycle Zero-Word-Skip!)"
+        )
+
+    return arr, palette256, ram_words64, formats_meta
+
+
+def ceil_scaled_span(n_src: int, scale: int) -> int:
+    """Exact sample count emitted by u_fp loop `(u_fp >> 6) < n_src`."""
+    return (n_src * 64 + scale - 1) // scale
 
 
 def render_animated_frame(
@@ -292,10 +406,6 @@ def render_animated_frame(
     Builds the frame's Y-sorted SpriteDescriptor list for time `frame_t` and renders all scanlines
     through the bit-accurate `render_scanline` hardware model!
     """
-    # Ship motion parameters:
-    # - Banking roll left/right (`roll` in -1..+1)
-    # - Hovering pitch up/down (`pitch` in -1..+1)
-    # - Breathing zoom (`zoom_s`)
     roll = math.sin(frame_t * 2.2)
     pitch = math.cos(frame_t * 1.5)
     ship_dx = int(round(roll * 26.0))
@@ -306,15 +416,14 @@ def render_animated_frame(
     descriptors: List[SpriteDescriptor] = []
     meta_by_name = {m["name"]: m for m in part_meta}
 
-    # 1. Flame flicker (independent high-frequency Y_SCALE + H_FLIP toggle)
+    # 1. Flame flicker
     for side_idx, fname in enumerate(("flame_l", "flame_r")):
         m = meta_by_name[fname]
-        # y_scale < 64 stretches the flame taller!
         flicker_y_scale = 46 + int(16 * math.sin(frame_t * 19.0 + side_idx * 2.1))
-        # Compensate top y0 so flame stays anchored to the thruster nozzle at y0 + 44
-        stretched_h = (m["h_lines"] * 64) // flicker_y_scale
+        stretched_h = ceil_scaled_span(m["h_lines"], flicker_y_scale)
         fy = base_oy + m["y0"] + (m["h_lines"] - stretched_h) - int(explode * 38)
         fx = base_ox + m["x0"] + (int(-explode * 25) if side_idx == 0 else int(explode * 25))
+        fmt5 = m["fmt"]
         descriptors.append(
             SpriteDescriptor(
                 y_pos=fy,
@@ -323,8 +432,8 @@ def render_animated_frame(
                 x_width256=m["w_bursts"],
                 prio=m["prio"],
                 pal_offset=m["pal_offset"],
-                data_ptr=m["base_addr"] | ((m["h_lines"] >> 8) & 0x7),
-                fmt=2,
+                data_ptr=m["base_addr"] | (((fmt5 >> 4) & 0x1) << 3) | ((m["h_lines"] >> 8) & 0x7),
+                fmt=fmt5 & 0xF,
                 flags=0x4,  # SMOOTH_X = 1
                 x_scale=64,
                 y_scale=flicker_y_scale,
@@ -332,21 +441,20 @@ def render_animated_frame(
             )
         )
 
-    # 2. Left & Right Wings (differential X_SCALE and Y shift during banking roll!)
+    # 2. Left & Right Wings
     for side_idx, wname in enumerate(("wing_l", "wing_r")):
         m = meta_by_name[wname]
-        # When banking right (roll > 0), left wing stretches slightly and rises, right wing compresses
         if side_idx == 0:
-            w_xscale = int(round(64 + roll * 6))  # >64 shrinks width, <64 expands width
-            scaled_w = (m["w_bursts"] * 64 * 64) // w_xscale
-            # Keep inner wing root anchored to the hull!
-            wx = base_ox + m["x0"] + (m["w_bursts"] * 64 - scaled_w) - int(explode * 48)
+            w_xscale = int(round(64 + roll * 6))
+            scaled_w = ceil_scaled_span(m["orig_w_px"], w_xscale)
+            wx = base_ox + m["x0"] + (m["orig_w_px"] - scaled_w) - int(explode * 48)
             wy = base_oy + m["y0"] - int(round(roll * 7.0))
         else:
             w_xscale = int(round(64 - roll * 6))
             wx = base_ox + m["x0"] + int(explode * 48)
             wy = base_oy + m["y0"] + int(round(roll * 7.0))
 
+        fmt5 = m["fmt"]
         descriptors.append(
             SpriteDescriptor(
                 y_pos=wy,
@@ -355,20 +463,21 @@ def render_animated_frame(
                 x_width256=m["w_bursts"],
                 prio=m["prio"],
                 pal_offset=m["pal_offset"],
-                data_ptr=m["base_addr"] | ((m["h_lines"] >> 8) & 0x7),
-                fmt=2,
-                flags=0x4,  # SMOOTH_X = 1
+                data_ptr=m["base_addr"] | (((fmt5 >> 4) & 0x1) << 3) | ((m["h_lines"] >> 8) & 0x7),
+                fmt=fmt5 & 0xF,
+                flags=0x4,
                 x_scale=w_xscale,
                 y_scale=64,
                 step_ctrl=0,
             )
         )
 
-    # 3. Left & Right Thruster Pods (slight secondary motion lag + differential tilt)
+    # 3. Left & Right Thruster Pods
     for side_idx, pname in enumerate(("pod_l", "pod_r")):
         m = meta_by_name[pname]
         px = base_ox + m["x0"] + int(round(roll * 2.0)) + (int(-explode * 22) if side_idx == 0 else int(explode * 22))
         py = base_oy + m["y0"] + (int(round(-roll * 3.0)) if side_idx == 0 else int(round(roll * 3.0))) - int(explode * 18)
+        fmt5 = m["fmt"]
         descriptors.append(
             SpriteDescriptor(
                 y_pos=py,
@@ -377,8 +486,8 @@ def render_animated_frame(
                 x_width256=m["w_bursts"],
                 prio=m["prio"],
                 pal_offset=m["pal_offset"],
-                data_ptr=m["base_addr"] | ((m["h_lines"] >> 8) & 0x7),
-                fmt=2,
+                data_ptr=m["base_addr"] | (((fmt5 >> 4) & 0x1) << 3) | ((m["h_lines"] >> 8) & 0x7),
+                fmt=fmt5 & 0xF,
                 flags=0x4,
                 x_scale=64,
                 y_scale=64,
@@ -388,6 +497,7 @@ def render_animated_frame(
 
     # 4. Central Main Hull
     m_hull = meta_by_name["hull"]
+    fmt5_h = m_hull["fmt"]
     descriptors.append(
         SpriteDescriptor(
             y_pos=base_oy + m_hull["y0"],
@@ -396,8 +506,8 @@ def render_animated_frame(
             x_width256=m_hull["w_bursts"],
             prio=m_hull["prio"],
             pal_offset=m_hull["pal_offset"],
-            data_ptr=m_hull["base_addr"] | ((m_hull["h_lines"] >> 8) & 0x7),
-            fmt=2,
+            data_ptr=m_hull["base_addr"] | (((fmt5_h >> 4) & 0x1) << 3) | ((m_hull["h_lines"] >> 8) & 0x7),
+            fmt=fmt5_h & 0xF,
             flags=0x4,
             x_scale=64,
             y_scale=64,
@@ -405,8 +515,9 @@ def render_animated_frame(
         )
     )
 
-    # 5. Cockpit Canopy (2.5D Parallax: shifts +5px further in roll & pitch than the hull below it!)
+    # 5. Cockpit Canopy
     m_cp = meta_by_name["cockpit"]
+    fmt5_c = m_cp["fmt"]
     cp_x = base_ox + m_cp["x0"] + int(round(roll * 6.0))
     cp_y = base_oy + m_cp["y0"] + int(round(pitch * 4.0)) + int(explode * 28)
     descriptors.append(
@@ -417,8 +528,8 @@ def render_animated_frame(
             x_width256=m_cp["w_bursts"],
             prio=m_cp["prio"],
             pal_offset=m_cp["pal_offset"],
-            data_ptr=m_cp["base_addr"] | ((m_cp["h_lines"] >> 8) & 0x7),
-            fmt=2,
+            data_ptr=m_cp["base_addr"] | (((fmt5_c >> 4) & 0x1) << 3) | ((m_cp["h_lines"] >> 8) & 0x7),
+            fmt=fmt5_c & 0xF,
             flags=0x4,
             x_scale=64,
             y_scale=64,
@@ -426,11 +537,8 @@ def render_animated_frame(
         )
     )
 
-    # Hardware contract: Sort descriptor array ascending by Y_POS and append Sentinel (Y_HEIGHT=0)
     descriptors.sort(key=lambda d: d.y_pos)
-    descriptors.append(
-        SpriteDescriptor(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-    )
+    descriptors.append(SpriteDescriptor(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
 
     img_out = np.zeros((screen_h, screen_w, 3), dtype=np.uint8)
     for y in range(screen_h):
@@ -452,17 +560,19 @@ def render_animated_frame(
     return img_out
 
 
-def generate_html_demo(palette256: List[int], part_meta: List[Dict]) -> None:
+def generate_html_demo(palette256: List[int], formats_meta: Dict[int, List[Dict]], out_html: Path) -> None:
     """
     Writes `docs/spacecraft_sprite_test.html`: a 100% self-contained interactive 60-FPS testbench
-    that runs the exact bit-accurate HAM_32BIT_63436343 unpacker, 2-stage HAM accumulator,
-    u_fp X/Y scaler, SMOOTH_X 9-bit adder interpolator, Zero-Word-Skip, and 8-bit Priority Linebuffer
-    live on the decomposed `real-spacecraft.jpg` sprites!
+    supporting live switching between:
+      - FORMAT 13: HAM_32BIT_12_6_8_6       (12-6-8-6, 32 px/Burst)
+      - FORMAT 14: HAM_32BIT_12_5555        (12-5-5-5-5, 40 px/Burst)
+      - FORMAT 15: HAM_64BIT_16_12_12_12_12 (16-12-12-12-12, 20 px/Burst, 100% palette-free!)
+      - FORMAT 2 : HAM_32BIT_63436343       (6-3-4-3-6-3-4-3, 64 px/Burst)
     """
     payload_json = json.dumps({
         "palette": palette256,
         "steps": [6, 6, 6],
-        "parts": part_meta,
+        "formats": {str(k): v for k, v in formats_meta.items()},
     }, separators=(",", ":"))
 
     html = f"""<!DOCTYPE html>
@@ -470,7 +580,7 @@ def generate_html_demo(palette256: List[int], part_meta: List[Dict]) -> None:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>NanoMig HAM-Sprite-Engine Praxistest: real-spacecraft.jpg (8-Sprite 2.5D Rig)</title>
+<title>NanoMig HAM-Sprite-Engine Praxistest: real-spacecraft.jpg (HAM12 / HAM16 / Multi-Sprite Rig)</title>
 <style>
   :root{{
     --bg:#0b0e13; --panel:#141922; --line:#263040; --ink:#e6edf3; --dim:#8b97a6;
@@ -482,16 +592,16 @@ def generate_html_demo(palette256: List[int], part_meta: List[Dict]) -> None:
   h1{{margin:0 0 4px;font-size:22px;font-weight:600}}
   h1 span{{color:var(--acc)}}
   .sub{{color:var(--dim);font-size:13px}}
-  main{{max-width:1260px;margin:0 auto;padding:18px 22px}}
+  main{{max-width:1280px;margin:0 auto;padding:18px 22px}}
   .layout{{display:grid;grid-template-columns:480px 1fr;gap:18px;align-items:start}}
   .card{{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-bottom:16px}}
   h2{{margin:0 0 10px;font-size:16.5px;color:var(--acc)}}
   canvas{{display:block;width:100%;max-width:448px;height:auto;border:1px solid var(--line);border-radius:8px;background:#05070a;margin:0 auto}}
   .ctl{{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:10px 0;background:#0b0e13;padding:10px 12px;border-radius:8px;border:1px solid var(--line)}}
   .ctl label{{font-size:12.5px;color:var(--dim);display:flex;align-items:center;gap:6px}}
-  button{{background:#0b0e13;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:6px 12px;font-size:12.5px;cursor:pointer}}
+  button,select{{background:#0b0e13;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font-size:12.5px;cursor:pointer}}
   button.on{{background:var(--acc);color:#111;border-color:var(--acc);font-weight:600}}
-  input[type=range]{{width:120px;accent-color:var(--acc);cursor:pointer}}
+  input[type=range]{{width:115px;accent-color:var(--acc);cursor:pointer}}
   table{{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px}}
   th,td{{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);font-family:Consolas,monospace}}
   th{{color:var(--dim);font-family:"Segoe UI",sans-serif;font-size:11.5px;text-transform:uppercase}}
@@ -502,13 +612,13 @@ def generate_html_demo(palette256: List[int], part_meta: List[Dict]) -> None:
 </head>
 <body>
 <header>
-  <h1>NanoMig <span>HAM-Sprite-Engine Praxistest</span> &middot; <code>real-spacecraft.jpg</code> in 8 bewegten HAM-Sprites</h1>
+  <h1>NanoMig <span>HAM12/16-Sprite-Engine Praxistest</span> &middot; <code>real-spacecraft.jpg</code> in 8 bewegten Hardware-Sprites</h1>
   <div class="sub">
     Echtzeit-Ausführung des bitgenauen Hardware-Referenzmodells im Browser:
-    <span class="badge">FORMAT 2: HAM_32BIT_63436343 (64 px/Burst)</span>
-    <span class="badge">CLUT_MODE Sternenfeld</span>
-    <span class="badge">X_SCALE / Y_SCALE + SMOOTH_X</span>
-    <span class="badge">1-Takt Zero-Word-Skip</span>
+    <span class="badge">FORMAT 13: 12-6-8-6 (32 px/Burst)</span>
+    <span class="badge">FORMAT 14: 12-5-5-5-5 (40 px/Burst)</span>
+    <span class="badge">FORMAT 15: 16-12-12-12-12 (20 px/Burst, 100% palettenfrei)</span>
+    <span class="badge">4-Bit Steps (0..15)</span>
   </div>
 </header>
 <main>
@@ -517,8 +627,18 @@ def generate_html_demo(palette256: List[int], part_meta: List[Dict]) -> None:
       <h2>Live Zeilenbuffer-Ausgabe (448 &times; 440 px)</h2>
       <canvas id="screen" width="448" height="440"></canvas>
       <div class="ctl">
+        <label style="width:100%"><b>Packformat:</b>
+          <select id="selFmt" style="flex:1">
+            <option value="15" selected>FORMAT 15: 16-12-12-12-12 (64b, 20 px/Burst, 100% palettenfrei!)</option>
+            <option value="13">FORMAT 13: 12-6-8-6 (32b, 32 px/Burst, HAM12 + HAM06/08)</option>
+            <option value="14">FORMAT 14: 12-5-5-5-5 (32b, 40 px/Burst, HAM12 + 4&times;HAM05)</option>
+            <option value="2">FORMAT 2: 6-3-4-3-6-3-4-3 (32b, 64 px/Burst, 32-Slot Bank)</option>
+          </select>
+        </label>
+      </div>
+      <div class="ctl">
         <button id="btnPlay" class="on">Animation läuft</button>
-        <button id="btnExplode">Sprites auseinanderziehen (Explosions-Ansicht)</button>
+        <button id="btnExplode">Sprites auseinanderziehen</button>
         <button id="btnHeatmap">PRIO / Zero-Skip Heatmap</button>
       </div>
       <div class="ctl">
@@ -536,8 +656,9 @@ def generate_html_demo(palette256: List[int], part_meta: List[Dict]) -> None:
       <div class="card">
         <h2>Wie <code>real-spacecraft.jpg</code> in 8 unabhängige Hardware-Sprites zerlegt wurde</h2>
         <p style="margin:0 0 8px;color:var(--dim);font-size:13px">
-          Jedes Teil ist ein eigenes, auf <code>256-Bit-Bursts (64 Pixel)</code> ausgerichtetes <code>HAM_32BIT_63436343</code>-Sprite im DDR3-Fast-RAM.
-          Untergeordnete Teile (Flügel <code>PRIO 140</code>, Flammen <code>PRIO 130</code>) ragen unter den Rumpf (<code>PRIO 165</code>), und das Cockpit (<code>PRIO 185</code>) verschiebt sich per 2.5D-Parallax darüber &mdash; ohne dass jemals Lücken oder schwarze Trauerränder entstehen!
+          Schalte links live zwischen den neuen Modi <b><code>16-12-12-12-12</code> (Format 15, 100 % palettenfrei)</b>,
+          <b><code>12-6-8-6</code> (Format 13)</b>, <b><code>12-5-5-5-5</code> (Format 14)</b> und <b><code>6-3-4-3-6-3-4-3</code> (Format 2)</b> um!
+          Alle 8 Schiffsteile + 20 Hintergrund-Sterne (echte <code>CLUT_MODE=1</code>-Descriptoren in Format 0) laufen durch exakt dieselbe Y-sortierte Pipeline.
         </p>
         <table>
           <thead>
@@ -549,12 +670,12 @@ def generate_html_demo(palette256: List[int], part_meta: List[Dict]) -> None:
       </div>
 
       <div class="card">
-        <h2>Was dieser Test gleichzeitig in der Sprite-Engine beweist</h2>
+        <h2>Was dieser Test in der erweiterten Sprite-Engine (Rev. 3) beweist</h2>
         <ul style="margin:0;padding-left:18px;font-size:13.2px;color:var(--ink)">
-          <li><b>8-Bit Prioritäts-Staffelung über 6 Ebenen:</b> Sterne (<code>PRIO 20</code>) &lt; Feuerflammen (<code>130</code>) &lt; Außenflügel (<code>140</code>) &lt; Triebwerksgondeln (<code>152</code>) &lt; Haupt-Rumpf (<code>165</code>) &lt; Cockpit-Kanzel (<code>185</code>).</li>
-          <li><b>Dynamisches <code>X_SCALE</code> &amp; <code>Y_SCALE</code> pro Frame:</b> Beim Rollen nach links/rechts staucht die Engine den kurveninneren Flügel über <code>X_SCALE</code> und streckt den äußeren Flügel; die beiden Triebwerksflammen lodern über hochfrequentes <code>Y_SCALE</code>.</li>
-          <li><b>Transparenz-Kantenschutz (<code>opaque</code>-Bit + Edge-Guard):</b> Wo das Cockpit (<code>PRIO 185</code>) über dem Rumpf (<code>PRIO 165</code>) gleitet, entstehen trotz aktiver <code>SMOOTH_X</code>-Interpolation keinerlei dunkle Säume.</li>
-          <li><b>1-Takt <code>Zero-Word-Skip</code>:</b> Über 42 % aller 64-Bit-Worte in den rechteckigen Sprite-Boxen sind komplett <code>64'h0</code> und werden in 1 Takt übersprungen.</li>
+          <li><b>Palettenfreie <code>HAM12</code>- &amp; <code>HAM16</code>-Direktanker:</b> In Format 15 (<code>16-12-12-12-12</code>) startet jedes 64-Bit-Wort mit einem 15-Bit-<code>RGB555</code>-Anker (oder 4/5/5-Delta), gefolgt von vier 12-Bit-<code>HAM12</code>-Pixeln &mdash; ohne einen einzigen Paletten-Slot zu belegen!</li>
+          <li><b>Hybride 32-Bit-Mischmodi <code>12-6-8-6</code> &amp; <code>12-5-5-5-5</code>:</b> Jedes 32-Bit-Wort beginnt mit einem palettenfreien <code>HAM12</code>-Pixel (Reset/Direktanker) und nutzt danach kompakte <code>HAM06/08</code>- bzw. <code>HAM05</code>-Deltas für 32 bzw. 40 Pixel pro 256-Bit-Burst.</li>
+          <li><b>4-Bit <code>step_r/g/b</code> (<code>0..15</code>) &amp; 19-Bit <code>u_fp</code> (<code>13.6</code>):</b> Kompakte 5&times;5-Bit-Delta-Multiplikation in Stufe 1 (12-Bit signed Pre-Delta) und exakte <code>ceil(n*64/scale)</code>-Abtastung ohne Dividierer.</li>
+          <li><b>1-Takt <code>Zero-Word-Skip</code>:</b> Überspringt leere 64-Bit-Worte (<code>5, 8, 10</code> oder <code>16</code> transparente Pixel pro Takt) 100 % bit-identisch zu <code>Skip AUS</code>.</li>
         </ul>
       </div>
     </div>
@@ -562,40 +683,54 @@ def generate_html_demo(palette256: List[int], part_meta: List[Dict]) -> None:
 </main>
 <script>
 const DATA = {payload_json};
-const SEQ_FMT2 = [6,3,4,3,6,3,4,3];
+const SEQS_64 = {{
+  0:  [4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4],
+  2:  [6,3,4,3,6,3,4,3, 6,3,4,3,6,3,4,3],
+  13: [12,6,8,6, 12,6,8,6],
+  14: [12,5,5,5,5, 12,5,5,5,5],
+  15: [16,12,12,12,12]
+}};
 const W = 448, H = 440;
 const canvas = document.getElementById('screen');
 const ctx = canvas.getContext('2d');
 const imgData = ctx.createImageData(W, H);
 const pix32 = new Uint32Array(imgData.data.buffer);
 
-// Pre-decode HAM stage1 delta table for FORMAT 2 (steps = 6,6,6)
 function twoDelta(b2) {{ return [-2,-1,1,2][b2 & 3]; }}
-function decodeStep(code, bw, step) {{
-  const msb = (code >> (bw - 1)) & 1;
-  if (msb === 0) return null;
-  let turbo = false, dr = 0, dg = 0, db = 0;
-  if (bw === 3) {{ dr = (code & 2) ? 2 : -2; dg = (code & 1) ? 2 : -2; db = dr; }}
-  else if (bw === 4) {{ dr = (code & 4) ? 2 : -2; dg = (code & 2) ? 2 : -2; db = (code & 1) ? 2 : -2; }}
-  else if (bw === 6) {{
-    turbo = !!(code & 16);
-    dr = (code & 8) ? 1 : -1;
-    dg = twoDelta((code >> 1) & 3);
-    db = (code & 1) ? 1 : -1;
-  }}
-  const mag = turbo ? (step << 2) : step;
-  return [dr * mag, dg * mag, db * mag];
+function signExt(val, bits) {{
+  const m = (1 << bits) - 1;
+  const v = val & m;
+  return (v & (1 << (bits - 1))) ? (v - (1 << bits)) : v;
 }}
 function clamp8(v) {{ return v < 0 ? 0 : (v > 255 ? 255 : v); }}
+function ceilSpan(nSrc, scale) {{ return Math.floor((nSrc * 64 + scale - 1) / scale); }}
 
-// Starfield particles (rendered as CLUT_MODE=1 sprites in layer 00)
-const STARS = Array.from({{length: 55}}, (_, i) => ({{
-  x: (i * 73 + 19) % W,
-  y: (i * 41 + 7) % H,
-  speed: 1.2 + (i % 4) * 0.95,
-  col: DATA.palette[164 + (i % 6)],
-  prio: 15 + (i % 3) * 10
-}}));
+// Build 20 genuine CLUT_MODE=1 (FORMAT 0, 64 px/Burst) star sprites for the descriptor list
+const STAR_SPRITES = Array.from({{length: 20}}, (_, i) => {{
+  const cIdx = 4 + (i % 10);
+  // 2 pixels opaque at MSB of first 64-bit word in FORMAT 0 (4 bits per pixel)
+  const hi32 = ((cIdx & 0xF) << 28) | ((cIdx & 0xF) << 24);
+  const words64 = [
+    [hi32 >>> 0, 0], [0, 0], [0, 0], [0, 0],
+    [hi32 >>> 0, 0], [0, 0], [0, 0], [0, 0]
+  ];
+  return {{
+    name: 'star_' + i,
+    x: (i * 89 + 23) % W,
+    y: (i * 53 + 11) % H,
+    speed: 1.1 + (i % 4) * 0.85,
+    prio: 16 + (i % 3) * 8,
+    part: {{
+      name: 'star_' + i,
+      w_bursts: 1,
+      h_lines: 2,
+      pal_offset: 160,
+      fmt: 0,
+      clut_mode: true,
+      words64: words64
+    }}
+  }};
+}});
 
 let running = true;
 let explodeTarget = 0, explodeCur = 0;
@@ -620,10 +755,33 @@ const linePrio = new Uint8Array(W);
 const lineRgb  = new Uint32Array(W);
 const lineSkip = new Uint8Array(W);
 
+function unpack64(hi, lo, seq64) {{
+  const out = new Int32Array(seq64.length);
+  let bitPos = 64;
+  for (let i = 0; i < seq64.length; i++) {{
+    const bw = seq64[i];
+    bitPos -= bw;
+    let code = 0;
+    if (bitPos >= 32) {{
+      code = (hi >>> (bitPos - 32)) & ((1 << bw) - 1);
+    }} else if (bitPos + bw <= 32) {{
+      code = (lo >>> bitPos) & ((1 << bw) - 1);
+    }} else {{
+      const hiBits = (bitPos + bw) - 32;
+      const loBits = 32 - bitPos;
+      code = ((hi & ((1 << hiBits) - 1)) << loBits) | (lo >>> bitPos);
+    }}
+    out[i] = code;
+  }}
+  return out;
+}}
+
 function renderFrame() {{
   if (running) t += 0.032;
   explodeCur += (explodeTarget - explodeCur) * 0.12;
 
+  const fmtId = +document.getElementById('selFmt').value;
+  const partsList = DATA.formats[String(fmtId)];
   const smoothOn = document.getElementById('chkSmooth').checked;
   const skipOn   = document.getElementById('chkSkip').checked;
   const globalZoom = +document.getElementById('rngZoom').value;
@@ -640,16 +798,25 @@ function renderFrame() {{
   const ox = 32 + shipDx;
   const oy = 26 + shipDy;
 
-  // Build active descriptor list for this frame
   const byName = {{}};
-  DATA.parts.forEach(p => byName[p.name] = p);
+  partsList.forEach(p => byName[p.name] = p);
 
   const descs = [];
+  // 0. Genuine CLUT_MODE=1 Star Descriptors (Layer 00, PRIO 16..32)
+  STAR_SPRITES.forEach(st => {{
+    if (running) st.y = (st.y + st.speed) % H;
+    descs.push({{
+      name: st.name, part: st.part, isStar: true,
+      y_pos: st.y | 0, x_pos: st.x | 0,
+      prio: st.prio, x_scale: 64, y_scale: 64, smooth: false
+    }});
+  }});
+
   // 1. Flames
   ['flame_l', 'flame_r'].forEach((fn, idx) => {{
     const m = byName[fn];
     const yScale = Math.max(16, Math.min(255, Math.round(thrustBase + Math.sin(t * 22 + idx * 2.2) * 14)));
-    const sh = (m.h_lines * 64 / yScale) | 0;
+    const sh = ceilSpan(m.h_lines, yScale);
     descs.push({{
       name: fn, part: m,
       y_pos: oy + m.y0 + (m.h_lines - sh) - Math.round(explodeCur * 42),
@@ -658,13 +825,13 @@ function renderFrame() {{
     }});
   }});
 
-  // 2. Wings
+  // 2. Wings (with exact integer ceiling `ceilSpan(m.orig_w_px, wScale)`)
   ['wing_l', 'wing_r'].forEach((wn, idx) => {{
     const m = byName[wn];
     const wScale = Math.max(16, Math.min(255, Math.round(globalZoom + (idx === 0 ? roll * 7 : -roll * 7))));
-    const sw = ((m.w_bursts * 64 * 64) / wScale) | 0;
+    const sw = ceilSpan(m.orig_w_px, wScale);
     const wx = idx === 0
-      ? ox + m.x0 + (m.w_bursts * 64 - sw) - Math.round(explodeCur * 54)
+      ? ox + m.x0 + (m.orig_w_px - sw) - Math.round(explodeCur * 54)
       : ox + m.x0 + Math.round(explodeCur * 54);
     const wy = oy + m.y0 + (idx === 0 ? -Math.round(roll * 8) : Math.round(roll * 8));
     descs.push({{
@@ -692,7 +859,7 @@ function renderFrame() {{
     prio: mh.prio, x_scale: globalZoom, y_scale: globalZoom, smooth: smoothOn
   }});
 
-  // 5. Cockpit Canopy (2.5D Parallax offset!)
+  // 5. Cockpit Canopy
   const mc = byName['cockpit'];
   descs.push({{
     name: 'cockpit', part: mc,
@@ -704,33 +871,16 @@ function renderFrame() {{
   // Sort by Y_POS ascending (hardware descriptor contract)
   descs.sort((a, b) => a.y_pos - b.y_pos);
 
-  // Update stars
-  STARS.forEach(s => {{
-    if (running) s.y = (s.y + s.speed) % H;
-  }});
-
   let totalWords = 0, skippedWords = 0, totalCycles = 0;
+  let maxLineCycles = 0, peakLineY = 0;
+  const step = 6; // 4-bit global step (0..15)
 
-  // Render scanline by scanline using the bit-accurate Linebuffer architecture
   for (let y = 0; y < H; y++) {{
     linePrio.fill(0);
     lineRgb.fill(0x0A0D12);
     lineSkip.fill(0);
+    let lineCycles = 0;
 
-    // Background stars (Layer 00)
-    for (let si = 0; si < STARS.length; si++) {{
-      const st = STARS[si];
-      const sy = st.y | 0;
-      if (y >= sy && y <= sy + 2) {{
-        const sx = st.x | 0;
-        if (sx >= 0 && sx < W && st.prio > linePrio[sx]) {{
-          linePrio[sx] = st.prio;
-          lineRgb[sx]  = st.col;
-        }}
-      }}
-    }}
-
-    // Scan Y-sorted descriptors with Early-Exit
     for (let di = 0; di < descs.length; di++) {{
       const d = descs[di];
       if (d.y_pos > y) break; // Hardware Early-Exit!
@@ -738,11 +888,12 @@ function renderFrame() {{
       const scaledY = (dy * d.y_scale) >> 6;
       if (scaledY >= d.part.h_lines) continue;
 
+      const seq64 = SEQS_64[d.part.fmt];
+      const pxPer64 = seq64.length;
       const w64PerRow = d.part.w_bursts * 4;
       const rowOffset = scaledY * w64PerRow;
-      const srcWidthPx = d.part.w_bursts * 64;
+      const srcWidthPx = w64PerRow * pxPer64;
 
-      // Unpack & decode HAM_32BIT_63436343 source row
       let accR = 0, accG = 0, accB = 0;
       let prevOp = false;
       const decOp = new Uint8Array(srcWidthPx);
@@ -758,55 +909,92 @@ function renderFrame() {{
         const hi = pair[0] >>> 0, lo = pair[1] >>> 0;
         if (skipOn && hi === 0 && lo === 0 && d.x_scale === 64 && !prevOp) {{
           skippedWords++;
-          totalCycles += 1; // 1-cycle Zero-Word-Skip for 16 pixels!
+          totalCycles += 1;
+          lineCycles += 1;
           accR = accG = accB = 0;
-          for (let k = 0; k < 16; k++) decSk[pOut + k] = 1;
-          pOut += 16;
+          for (let k = 0; k < pxPer64; k++) decSk[pOut + k] = 1;
+          pOut += pxPer64;
           continue;
         }}
-        for (let half = 0; half < 2; half++) {{
-          const w32 = half === 0 ? hi : lo;
-          let shift = 32;
-          for (let pi = 0; pi < 8; pi++) {{
-            const bw = SEQ_FMT2[pi];
-            shift -= bw;
-            const code = (w32 >>> shift) & ((1 << bw) - 1);
-            totalCycles += 1;
-            if (code === 0) {{
-              accR = accG = accB = 0;
-              prevOp = false;
-              pOut++;
+        const codes = unpack64(hi, lo, seq64);
+        for (let pi = 0; pi < pxPer64; pi++) {{
+          const bw = seq64[pi];
+          const code = codes[pi];
+          totalCycles += 1;
+          lineCycles += 1;
+          if (code === 0) {{
+            accR = accG = accB = 0;
+            prevOp = false;
+            pOut++;
+          }} else if (d.part.clut_mode) {{
+            const palCol = DATA.palette[(d.part.pal_offset + code) & 0xFF];
+            accR = (palCol >> 16) & 0xFF;
+            accG = (palCol >> 8) & 0xFF;
+            accB = palCol & 0xFF;
+            decOp[pOut] = 1; decR[pOut] = accR; decG[pOut] = accG; decB[pOut] = accB;
+            prevOp = true; pOut++;
+          }} else if (bw === 12) {{
+            if (((code >> 11) & 1) === 0) {{
+              const b10 = (code >> 10) & 1;
+              const r3 = (code >> 7) & 7;
+              const g4 = (code >> 3) & 15;
+              const b3 = code & 7;
+              accR = ((r3 << 1) | b10) << 4;
+              accG = g4 << 4;
+              accB = ((b3 << 1) | b10) << 4;
             }} else {{
-              const msb = (code >> (bw - 1)) & 1;
-              if (msb === 0) {{
-                const palCol = DATA.palette[(d.part.pal_offset + code) & 0xFF];
-                accR = (palCol >> 16) & 0xFF;
-                accG = (palCol >> 8) & 0xFF;
-                accB = palCol & 0xFF;
-              }} else {{
-                const dl = decodeStep(code, bw, 6);
-                accR = clamp8(accR + dl[0]);
-                accG = clamp8(accG + dl[1]);
-                accB = clamp8(accB + dl[2]);
-              }}
-              decOp[pOut] = 1;
-              decR[pOut]  = accR;
-              decG[pOut]  = accG;
-              decB[pOut]  = accB;
-              prevOp = true;
-              pOut++;
+              const m = ((code >> 10) & 1) ? (step << 2) : step;
+              accR = clamp8(accR + signExt((code >> 7) & 7, 3) * m);
+              accG = clamp8(accG + signExt((code >> 3) & 15, 4) * m);
+              accB = clamp8(accB + signExt(code & 7, 3) * m);
             }}
+            decOp[pOut] = 1; decR[pOut] = accR; decG[pOut] = accG; decB[pOut] = accB;
+            prevOp = true; pOut++;
+          }} else if (bw === 16) {{
+            if (((code >> 15) & 1) === 0) {{
+              accR = ((code >> 10) & 31) << 3;
+              accG = ((code >> 5) & 31) << 3;
+              accB = (code & 31) << 3;
+            }} else {{
+              const m = ((code >> 14) & 1) ? (step << 2) : step;
+              accR = clamp8(accR + signExt((code >> 10) & 15, 4) * m);
+              accG = clamp8(accG + signExt((code >> 5) & 31, 5) * m);
+              accB = clamp8(accB + signExt(code & 31, 5) * m);
+            }}
+            decOp[pOut] = 1; decR[pOut] = accR; decG[pOut] = accG; decB[pOut] = accB;
+            prevOp = true; pOut++;
+          }} else {{
+            const msb = (code >> (bw - 1)) & 1;
+            if (msb === 0) {{
+              const palCol = DATA.palette[(d.part.pal_offset + code) & 0xFF];
+              accR = (palCol >> 16) & 0xFF;
+              accG = (palCol >> 8) & 0xFF;
+              accB = palCol & 0xFF;
+            }} else {{
+              let turbo = false, dr = 0, dg = 0, db = 0;
+              if (bw === 3) {{ dr = (code & 2) ? 2 : -2; dg = (code & 1) ? 2 : -2; db = dr; }}
+              else if (bw === 4) {{ dr = (code & 4) ? 2 : -2; dg = (code & 2) ? 2 : -2; db = (code & 1) ? 2 : -2; }}
+              else if (bw === 5) {{ turbo = !!(code & 8); dr = (code & 4) ? 1 : -1; dg = (code & 2) ? 1 : -1; db = (code & 1) ? 1 : -1; }}
+              else if (bw === 6) {{ turbo = !!(code & 16); dr = (code & 8) ? 1 : -1; dg = twoDelta((code >> 1) & 3); db = (code & 1) ? 1 : -1; }}
+              else if (bw === 8) {{ turbo = !!(code & 64); dr = twoDelta((code >> 4) & 3); dg = twoDelta((code >> 2) & 3); db = twoDelta(code & 3); }}
+              const mag = turbo ? (step << 2) : step;
+              accR = clamp8(accR + dr * mag);
+              accG = clamp8(accG + dg * mag);
+              accB = clamp8(accB + db * mag);
+            }}
+            decOp[pOut] = 1; decR[pOut] = accR; decG[pOut] = accG; decB[pOut] = accB;
+            prevOp = true; pOut++;
           }}
         }}
       }}
 
-      // Unified X-sampling phase accumulator u_fp (12.6 fixed point)
+      // Unified X-sampling phase accumulator u_fp (19-bit unsigned 13.6 fixed-point)
       let uFp = 0;
       let dstX = d.x_pos;
-      while ((uFp >> 6) < srcWidthPx) {{
+      while (((uFp >> 6) & 0x1FFF) < srcWidthPx) {{
         if (dstX >= W) break;
         if (dstX >= 0) {{
-          const idx0 = uFp >> 6;
+          const idx0 = (uFp >> 6) & 0x1FFF;
           const idx1 = idx0 + 1;
           const op0 = decOp[idx0] === 1;
           const op1 = (idx1 < srcWidthPx) && (decOp[idx1] === 1);
@@ -840,12 +1028,16 @@ function renderFrame() {{
             lineRgb[dstX]  = (r << 16) | (g << 8) | b;
           }}
         }}
-        uFp += d.x_scale;
+        uFp = (uFp + d.x_scale) & 0x7FFFF;
         dstX++;
       }}
     }}
 
-    // Flush scanline to canvas RGBA buffer
+    if (lineCycles > maxLineCycles) {{
+      maxLineCycles = lineCycles;
+      peakLineY = y;
+    }}
+
     const rowBase = y * W;
     for (let x = 0; x < W; x++) {{
       let col = lineRgb[x];
@@ -865,14 +1057,15 @@ function renderFrame() {{
 
   ctx.putImageData(imgData, 0, 0);
 
-  // Update live Descriptor Table & Hardware Stats
+  const shipDescs = descs.filter(d => !d.isStar);
+  const pxPerBurst = SEQS_64[fmtId].length * 4;
   const tbody = document.getElementById('descTable');
-  tbody.innerHTML = descs.map(d =>
+  tbody.innerHTML = shipDescs.map(d =>
     '<tr>' +
     '<td><b style="color:var(--acc)">' + d.name + '</b></td>' +
     '<td>' + d.y_pos + '</td>' +
     '<td>' + d.x_pos + '</td>' +
-    '<td>' + d.part.w_bursts + ' B (' + (d.part.w_bursts * 64) + '&times;' + d.part.h_lines + ' px)</td>' +
+    '<td>' + d.part.w_bursts + ' B (' + (d.part.w_bursts * pxPerBurst) + '&times;' + d.part.h_lines + ' px)</td>' +
     '<td>' + d.prio + '</td>' +
     '<td>$' + d.x_scale.toString(16).toUpperCase() + ' / $' + d.y_scale.toString(16).toUpperCase() + '</td>' +
     '<td style="color:var(--ok)">Aktiv</td>' +
@@ -881,10 +1074,11 @@ function renderFrame() {{
 
   const pct = totalWords > 0 ? (skippedWords * 100 / totalWords).toFixed(1) : '0.0';
   document.getElementById('hwStats').textContent =
-    'Gelesene 64-Bit-Worte/Frame: ' + totalWords + '  |  Davon per 1-Takt Zero-Word-Skip übersprungen: ' +
+    'Aktives Format: FORMAT ' + fmtId + ' (' + pxPerBurst + ' px/Burst) + 20 CLUT-Sterne (FORMAT 0)\n' +
+    'Gelesene 64-Bit-Worte/Frame: ' + totalWords + '  |  Per 1-Takt Zero-Word-Skip übersprungen: ' +
     skippedWords + ' (' + pct + '%)\n' +
-    'Decoder-Takte gesamt: ' + totalCycles + ' Takte/Frame (~' + Math.round(totalCycles / H) +
-    ' Takte/Zeile von 7.264 verfügbaren clk_114-Takten = ' + (totalCycles / H / 72.64).toFixed(1) + '% Zeilenlast!)';
+    'Decoder-Takte Mittel: ~' + Math.round(totalCycles / H) + ' Takte/Zeile (' + (totalCycles / H / 72.64).toFixed(1) + '%)' +
+    '  |  Peak-Zeile (Y=' + peakLineY + '): ' + maxLineCycles + ' von 7.264 clk_114-Takten (' + (maxLineCycles / 72.64).toFixed(1) + '% Peak-Last!)';
 
   requestAnimationFrame(renderFrame);
 }}
@@ -893,47 +1087,52 @@ requestAnimationFrame(renderFrame);
 </body>
 </html>
 """
-    with open(OUT_HTML, "w", encoding="utf-8") as f:
+    with open(out_html, "w", encoding="utf-8") as f:
         f.write(html)
-    print(f"Wrote interactive HTML testbench: {OUT_HTML}")
+    print(f"Wrote interactive HTML testbench: {out_html}")
 
 
 def main():
-    orig_arr, palette256, ram_words64, part_meta = decompose_spacecraft()
+    parser = argparse.ArgumentParser(description="Build NanoMig multi-sprite spacecraft testbench")
+    parser.add_argument("--src", type=Path, default=DEFAULT_SRC_JPG, help="Path to real-spacecraft.jpg")
+    parser.add_argument("--out-preview", type=Path, default=DEFAULT_OUT_PREVIEW, help="Output PNG preview path")
+    parser.add_argument("--out-html", type=Path, default=DEFAULT_OUT_HTML, help="Output HTML testbench path")
+    args = parser.parse_args()
 
-    # 1. Verify bit-exact Zero-Word-Skip equivalence on the full multi-sprite spacecraft!
-    f_skip_on = render_animated_frame(0.0, palette256, ram_words64, part_meta, explode=0.0, zero_skip=True)
-    f_skip_off = render_animated_frame(0.0, palette256, ram_words64, part_meta, explode=0.0, zero_skip=False)
-    assert np.array_equal(f_skip_on, f_skip_off), "Zero-Word-Skip ON vs OFF mismatch on spacecraft!"
-    print("VERIFIED: Spacecraft multi-sprite render with Zero-Word-Skip ON vs OFF is 100% bit-identical!")
+    orig_arr, palette256, ram_words64, formats_meta = decompose_spacecraft(args.src)
 
-    # 2. Render 4-panel visual verification sheet:
-    #    Panel 1: Exploded 8 HAM sprites view
-    #    Panel 2: Banking Left (roll = -1) + Flame flicker
-    #    Panel 3: Center Hover (1:1)
-    #    Panel 4: Banking Right (roll = +1) + Flame flicker
-    p_exploded = render_animated_frame(0.2, palette256, ram_words64, part_meta, explode=1.0)
-    p_left     = render_animated_frame(2.15, palette256, ram_words64, part_meta, explode=0.0)
-    p_center   = f_skip_on
-    p_right    = render_animated_frame(0.72, palette256, ram_words64, part_meta, explode=0.0)
+    # 1. Verify bit-exact Zero-Word-Skip equivalence across ALL 4 showcase formats (13, 14, 15, 2)!
+    rendered_by_fmt: Dict[int, np.ndarray] = {}
+    for fmt5 in SHOWCASE_FORMATS:
+        f_on = render_animated_frame(0.0, palette256, ram_words64, formats_meta[fmt5], explode=0.0, zero_skip=True)
+        f_off = render_animated_frame(0.0, palette256, ram_words64, formats_meta[fmt5], explode=0.0, zero_skip=False)
+        assert np.array_equal(f_on, f_off), f"Zero-Word-Skip ON vs OFF mismatch on FORMAT {fmt5}!"
+        rendered_by_fmt[fmt5] = f_on
+        print(f"VERIFIED Format {fmt5:2d}: Zero-Word-Skip ON vs OFF is 100% bit-identical!")
+
+    # 2. Render 4-panel visual verification sheet comparing the new modes & animations:
+    p_exploded = render_animated_frame(0.2, palette256, ram_words64, formats_meta[15], explode=1.0)
+    p_fmt15    = rendered_by_fmt[15]
+    p_fmt13    = render_animated_frame(2.15, palette256, ram_words64, formats_meta[13], explode=0.0)
+    p_fmt14    = render_animated_frame(0.72, palette256, ram_words64, formats_meta[14], explode=0.0)
 
     sheet = Image.new("RGB", (448 * 2 + 24, 440 * 2 + 64), (11, 14, 19))
     draw = ImageDraw.Draw(sheet)
     panels = [
-        (p_exploded, 8,   28,  "1. Zerlegung in 8 HAM-Sprites (Explosions-Ansicht, PRIO 130..185)"),
-        (p_center,   464, 28,  "2. Zusammengesetzt durch Sprite-Engine (PRIO + opaque Edge-Guard)"),
-        (p_left,     8,   496, "3. Kurvenflug Links (Fluegel X_SCALE gestaucht/gestreckt + Cockpit-Parallax)"),
-        (p_right,    464, 496, "4. Kurvenflug Rechts + Triebwerks-Flackern (Y_SCALE + SMOOTH_X)"),
+        (p_exploded, 8,   28,  "1. FORMAT 15 (16-12-12-12-12, 100% palettenfrei): 8 Sprites Explosions-Ansicht"),
+        (p_fmt15,    464, 28,  "2. FORMAT 15 (16-12-12-12-12, 20 px/Burst): Zusammengesetzt durch Sprite-Engine"),
+        (p_fmt13,    8,   496, "3. FORMAT 13 (12-6-8-6, 32 px/Burst): Kurvenflug Links (X_SCALE + Parallax)"),
+        (p_fmt14,    464, 496, "4. FORMAT 14 (12-5-5-5-5, 40 px/Burst): Kurvenflug Rechts + Flammen-Y_SCALE"),
     ]
     for arr_p, px, py, title in panels:
         sheet.paste(Image.fromarray(arr_p, mode="RGB"), (px, py))
         draw.text((px + 6, py - 20), title, fill=(240, 160, 75))
 
-    sheet.save(OUT_PREVIEW)
-    print(f"Saved preview sheet: {OUT_PREVIEW}")
+    sheet.save(args.out_preview)
+    print(f"Saved preview sheet: {args.out_preview}")
 
-    # 3. Generate interactive 60-FPS HTML testbench
-    generate_html_demo(palette256, part_meta)
+    # 3. Generate interactive 60-FPS HTML testbench with live format switcher
+    generate_html_demo(palette256, formats_meta, args.out_html)
 
 
 if __name__ == "__main__":

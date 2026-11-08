@@ -152,11 +152,11 @@
     <text x="439" y="105" fill="#8b97a6" font-size="10.5" text-anchor="middle">clk_114 &rarr; Decoder</text>
     <text x="439" y="122" fill="#5ac77e" font-size="10.5" text-anchor="middle">Zero-Stall Puffer</text>
 
-    <!-- Block 4: 32-Bit Unpacker + Zero-Word-Skip -->
+    <!-- Block 4: 32/64-Bit Unpacker + Zero-Word-Skip -->
     <rect id="ov-3" x="534" y="48" width="148" height="92" rx="8" fill="#0b0e12" stroke="#2a3340" stroke-width="1.5"/>
-    <text x="608" y="70" fill="#f0a04b" font-size="12.5" font-weight="600" text-anchor="middle">4. 32-Bit Entpacker</text>
-    <text x="608" y="88" fill="#e6edf3" font-size="11" font-family="Consolas,monospace" text-anchor="middle">13 Formate (4..8 px)</text>
-    <text x="608" y="105" fill="#8b97a6" font-size="10.5" text-anchor="middle">HAM03..08 / CLUT</text>
+    <text x="608" y="70" fill="#f0a04b" font-size="12.5" font-weight="600" text-anchor="middle">4. 32/64b Entpacker</text>
+    <text x="608" y="88" fill="#e6edf3" font-size="11" font-family="Consolas,monospace" text-anchor="middle">18 Formate (0..17)</text>
+    <text x="608" y="105" fill="#8b97a6" font-size="10.5" text-anchor="middle">HAM03..16 / RGB16 / CLUT</text>
     <text x="608" y="122" fill="#5ac77e" font-size="10.5" text-anchor="middle">64'h0 &rarr; 1-Takt Skip!</text>
 
     <!-- Block 5: 2-Stage High-Speed HAM/CLUT Decoder + Palette M10K -->
@@ -269,22 +269,22 @@
 </section>
 
 <!-- ====================================================================== -->
-<!-- SECTION 3: INTERAKTIVER BITSTREAM-ENTPACKER (13 FORMATE & CLUT_MODE)    -->
+<!-- SECTION 3: INTERAKTIVER BITSTREAM-ENTPACKER (18 FORMATE & CLUT_MODE)    -->
 <!-- ====================================================================== -->
 <section>
-  <h2>3. Die 13 festgelegten 32-Bit-Mischmodi (<code>HAM_32BIT_*</code>) &amp; <code>CLUT_MODE</code></h2>
+  <h2>3. Die 18 festgelegten 32/64-Bit-Formate (<code>HAM03..08</code>, <code>HAM12</code>, <code>HAM16</code>, <code>RGB16</code>) &amp; <code>CLUT_MODE</code></h2>
   <p>
-    Jedes 32-Bit-Wort enthält exakt 32 Bit für <b>4 bis 8 Pixel</b>. Ein 256-Bit-DDR3-Burst (<code>4 &times; 64 Bit = 8 &times; 32 Bit</code>) liefert damit <b>32 bis 64 Pixel auf einen Schlag</b>.
-    Wähle unten ein Format aus oder schalte <code>CLUT_MODE = 1</code> (normaler Palettenmodus statt HAM) ein:
+    Ein 256-Bit-DDR3-Burst (<code>4 &times; 64 Bit = 8 &times; 32 Bit</code>) liefert je nach Format <b>16 bis 64 Pixel auf einen Schlag</b>.
+    Neu integriert sind die Mischmodi <b><code>12-6-8-6</code> (Format 13)</b>, <b><code>12-5-5-5-5</code> (Format 14)</b>, das 100 % palettenfreie 64-Bit-Format <b><code>16-12-12-12-12</code> (Format 15)</b> sowie reines <b><code>HAM16</code> (Format 16)</b> und direktes 15/16-Bit HighColor <b><code>RGB16</code> (Format 17)</b>:
   </p>
 
   <div class="ctl">
-    <label>Format (<code>FORMAT[3:0]</code>):
+    <label>Format (<code>FORMAT[4:0] = {DATA_PTR[3], FORMAT_LO[3:0]}</code>):
       <select id="fmtSelect"></select>
     </label>
     <label>
       <input type="checkbox" id="fmtClutChk">
-      <b><code>CLUT_MODE = 1</code> (Normaler Palettenmodus statt HAM &mdash; nutzt alle Bits inkl. MSB direkt als Farbindex!)</b>
+      <b><code>CLUT_MODE = 1</code> (Paletten-/Direktfarbmodus statt HAM &mdash; bzw. <code>RGB555</code> statt <code>RGB565</code> bei Format 17)</b>
     </label>
   </div>
 
@@ -292,7 +292,7 @@
   <div class="out" id="fmtSummary"></div>
 
   <table>
-    <tr><th>Pixel im 32-Bit-Wort</th><th>Bit-Position</th><th>Bit-Breite</th><th>Modus / Bedeutung</th><th>Farben / Deltas</th></tr>
+    <tr><th>Pixel im Wort</th><th>Bit-Position</th><th>Bit-Breite</th><th>Modus / Bedeutung</th><th>Farben / Deltas</th></tr>
     <tbody id="fmtTableBody"></tbody>
   </table>
 </section>
@@ -381,11 +381,11 @@
     <tr><td><code>$DFF582</code></td><td><code>SPR_LIST_PTR_L</code></td><td>15:0</td><td>Untere 16 Bit <code>[15:0]</code> der Startadresse (32-Byte / 256-Bit Burst-aligned, <code>[4:0] = 00000</code>)</td></tr>
     <tr><td><code>$DFF584</code></td><td><code>SPR_CTRL</code></td><td>15:0</td><td><code>Bit 0</code>: Engine Enable &middot; <code>Bit 2:1</code>: Zielraster (<code>00</code>=SHres, <code>01</code>=Hires, <code>10</code>=Lores) &middot; <code>Bit 3</code>: Zero-Word-Skip Enable &middot; <code>Bit 4</code>: Turbo-Takt Enable &middot; <code>Bit 15:8</code>: Max-Sprites/Zeile</td></tr>
     <tr><td><code>$DFF586</code></td><td><code>SPR_STATUS</code></td><td>15:0</td><td>Lese-Status: <code>Bit 0</code>: Busy &middot; <code>Bit 1</code>: Zeilenzeit-Overflow &middot; <code>Bit 2</code>: Sprite-Kollision &middot; <code>Bit 15:8</code>: aktueller <code>first_active_idx</code></td></tr>
-    <tr><td><code>$DFF588</code></td><td><code>SPR_STEP_RGB</code></td><td>15:0</td><td>Globale HAM-Basis-Schrittweiten: <code>[14:10] STEP_R</code> (1..31) &middot; <code>[9:5] STEP_G</code> (1..31) &middot; <code>[4:0] STEP_B</code> (1..31)</td></tr>
+    <tr><td><code>$DFF588</code></td><td><code>SPR_STEP_RGB</code></td><td>15:0</td><td>Globale 4-Bit HAM-Basis-Schrittweiten (<code>[15:12]=0</code>): <code>[11:8] STEP_R</code> (0..15) &middot; <code>[7:4] STEP_G</code> (0..15) &middot; <code>[3:0] STEP_B</code> (0..15)</td></tr>
     <tr><td><code>$DFF58A</code></td><td><code>SPR_PAL_ADDR</code></td><td>7:0</td><td>Index (<code>0..255</code>) in die eigene 256&times;24-Bit-Sprite-Palette (M10K), inkrementiert automatisch nach Schreiben von <code>SPR_PAL_DATA_L</code></td></tr>
-    <tr><td><code>$DFF58C</code></td><td><code>SPR_PAL_DATA_H</code></td><td>7:0</td><td>Sprite-Palette Rot-Anteil <code>[7:0] = R[7:0]</code> (Slot 0 jeder Bank ist immer <code>$000000</code> = Transparent)</td></tr>
+    <tr><td><code>$DFF58C</code></td><td><code>SPR_PAL_DATA_H</code></td><td>7:0</td><td>Sprite-Palette Rot-Anteil <code>[7:0] = R[7:0]</code> (Transparenz wird über <code>raw_code == 0</code> gesteuert; echte opake Schwarztöne sind möglich)</td></tr>
     <tr><td><code>$DFF58E</code></td><td><code>SPR_PAL_DATA_L</code></td><td>15:0</td><td>Sprite-Palette Grün/Blau <code>[15:8] = G[7:0]</code>, <code>[7:0] = B[7:0]</code> (löst M10K-Schreibzugriff + Auto-Increment aus)</td></tr>
-    <tr><td><code>$DFF590</code></td><td><code>SPR_CLIP_XMAX</code></td><td>11:0</td><td>Rechte horizontale Clipping-Grenze in SuperHiRes-Pixeln (Standard <code>1280</code>, bis <code>1432</code> Overscan)</td></tr>
+    <tr><td><code>$DFF590</code></td><td><code>SPR_CLIP_XMAX</code></td><td>11:0</td><td>Rechte horizontale Clipping-Grenze in Zielpixeln (Standard <code>1280</code>, SuperHiRes-Overscan <code>1432</code>, FullHD <code>1920..2048</code>)</td></tr>
   </table>
 
   <h3>6.2 Interaktives 16-Byte Sprite-Descriptor-Labor (<code>2 &times; 64 Bit</code> im Fast-RAM)</h3>
@@ -408,7 +408,7 @@
     <label><input type="checkbox" id="dHFlip"> H_FLIP</label>
     <label><input type="checkbox" id="dVFlip"> V_FLIP</label>
     <label><input type="checkbox" id="dSmooth" checked> SMOOTH_X (24-Bit Lerp)</label>
-    <label><input type="checkbox" id="dClut"> CLUT_MODE (Palette statt HAM)</label>
+    <label><input type="checkbox" id="dClut"> CLUT_MODE (Palette/RGB555 statt HAM)</label>
   </div>
 
   <h3>64-Bit Wort 0 (Offset <code>+$00..+$07</code>)</h3>
@@ -423,8 +423,8 @@
 
   <h3>64-Bit Wort 1 (Offset <code>+$08..+$0F</code>)</h3>
   <div class="word64">
-    <div class="wbox" style="grid-column:span 2"><small>[63:32] uint32 DATA_PTR (32-Byte aligned)</small><b id="w1_ptr">$02080000</b></div>
-    <div class="wbox"><small>[31:24] FORMAT | FLAGS</small><b id="w1_ff">$24</b></div>
+    <div class="wbox" style="grid-column:span 2"><small>[63:32] DATA_PTR | FORMAT[4] | Y_HEIGHT[10:8]</small><b id="w1_ptr">$02080000</b></div>
+    <div class="wbox"><small>[31:24] FORMAT_LO | FLAGS</small><b id="w1_ff">$24</b></div>
     <div class="wbox"><small>[23:16] uint8 X_SCALE</small><b id="w1_xs">$40</b></div>
     <div class="wbox"><small>[15:8] uint8 Y_SCALE</small><b id="w1_ys">$40</b></div>
     <div class="wbox"><small>[7:0] uint8 STEP_CTRL</small><b id="w1_sc">$00 (HAM)</b></div>
@@ -444,12 +444,12 @@
     <tr><td><b>Ping-Pong Zeilenbuffer A &amp; B</b> (2 &times; 2048 &times; 32 Bit + Forwarding)</td><td class="num">~50</td><td class="num">16</td><td class="num">0</td><td>FullHD-fähig (2048 px) + 1-Takt Write-Forwarding + Clear</td></tr>
     <tr><td><b>Dedizierte Sprite-Palette</b> (256 &times; 24 Bit Dual-Port)</td><td class="num">~20</td><td class="num">1</td><td class="num">0</td><td>100 % unabhängig von Playfield-CLUT</td></tr>
     <tr><td><b>64-Bit Prefetch-FIFO</b> (64 &times; 64 Bit, DDR3 &rarr; Entpacker)</td><td class="num">~25</td><td class="num">1</td><td class="num">0</td><td>Puffert <code>4&times;64 Bit</code> (256-Bit) DDR3-BL8-Bursts</td></tr>
-    <tr><td><b>32-Bit Multi-Mode Entpacker</b> (13 Formate + Zero-Word-Skip)</td><td class="num">~110</td><td class="num">0</td><td class="num">0</td><td>Erzeugt <code>opaque = (raw_code != 0)</code> + 1-Takt Skip bei 1:1</td></tr>
-    <tr><td><b>Eigener 2-Stufen High-Speed HAM/CLUT-Decoder</b></td><td class="num">~95</td><td class="num">0</td><td class="num">0</td><td>5-Bit Steps (max &plusmn;248/&plusmn;496) &rarr; 10-Bit Pre-Deltas, &lt; 3,5 ns Loop</td></tr>
-    <tr><td><b>X/Y-Skalierer, H/V-Flip &amp; 24-Bit RGB X-Interpolator</b></td><td class="num">~105</td><td class="num">0</td><td class="num">0</td><td>2&times; 8-Bit-Addierer je Kanal + <code>opaque</code>-Bit + Edge-Guard</td></tr>
-    <tr><td><b>Y-Scanner (4096), Clipping, 12&times;8 TDM-Mult &amp; DMA-FSM</b></td><td class="num">~205</td><td class="num">0</td><td class="num">0&ndash;1</td><td>12&times;8 Multiplizierer für <code>Y_SCALE</code> und Zeilenadresse im TDM</td></tr>
+    <tr><td><b>32/64-Bit Multi-Mode Entpacker</b> (18 Formate 0..17 + Zero-Word-Skip)</td><td class="num">~130</td><td class="num">0</td><td class="num">0</td><td>Inkl. <code>12-6-8-6</code>, <code>12-5-5-5-5</code>, <code>16-12-12-12-12</code>, <code>HAM16</code>, <code>RGB16</code></td></tr>
+    <tr><td><b>Eigener 2-Stufen High-Speed HAM/HighColor/CLUT-Decoder</b></td><td class="num">~115</td><td class="num">0</td><td class="num">0</td><td>4-Bit Steps (<code>0..15</code>, 5-Bit <code>eff_step</code>) &rarr; 12-Bit Pre-Deltas, &lt; 3,5 ns Loop</td></tr>
+    <tr><td><b>X/Y-Skalierer, H/V-Flip &amp; 24-Bit RGB X-Interpolator</b></td><td class="num">~105</td><td class="num">0</td><td class="num">0</td><td>19-Bit <code>u_fp</code> (<code>13.6</code>) + 2&times; 8-Bit-Addierer je Kanal + Edge-Guard</td></tr>
+    <tr><td><b>Y-Scanner (4096), Clipping, 13&times;8 TDM-Mult &amp; DMA-FSM</b></td><td class="num">~205</td><td class="num">0</td><td class="num">0&ndash;1</td><td>13&times;8 Multiplizierer für <code>Y_SCALE</code> und Zeilenadresse im TDM</td></tr>
     <tr><td><b>Denise 24-Bit Ausgangs-Prioritätsmischer</b> (4 Ebenen)</td><td class="num">~35</td><td class="num">0</td><td class="num">0</td><td>Mischung nach <code>amiga_rgb</code> + Blank-Gate für alle Ebenen</td></tr>
-    <tr><td><b>Gesamtsumme Sprite-Engine</b></td><td class="num ok"><b>~650 ALMs</b></td><td class="num ok"><b>18 M10K</b></td><td class="num ok"><b>0&ndash;1 DSP</b></td><td class="ok"><b>~11,3 % der freien ALMs &middot; ~8,1 % der freien M10K</b></td></tr>
+    <tr><td><b>Gesamtsumme Sprite-Engine</b></td><td class="num ok"><b>~685 ALMs</b></td><td class="num ok"><b>18 M10K</b></td><td class="num ok"><b>0&ndash;1 DSP</b></td><td class="ok"><b>~11,9 % der freien ALMs &middot; ~8,1 % der freien M10K</b></td></tr>
   </table>
 </section>
 
@@ -624,22 +624,27 @@ renderPipe();
 startPipeTimer();
 
 // =========================================================================
-// 3. 13 HAM_32BIT FORMATS & CLUT_MODE VISUALIZER
+// 3. 18 HAM / HighColor / CLUT FORMATS VISUALIZER
 // =========================================================================
 const FORMATS = [
-  { id:0,  name:'HAM_32BIT_44444444', seq:[4,4,4,4,4,4,4,4], slots:8,   clut:16 },
-  { id:1,  name:'HAM_32BIT_53535353', seq:[5,3,5,3,5,3,5,3], slots:16,  clut:32 },
-  { id:2,  name:'HAM_32BIT_63436343', seq:[6,3,4,3,6,3,4,3], slots:32,  clut:64 },
-  { id:3,  name:'HAM_32BIT_6446444',  seq:[6,4,4,6,4,4,4],   slots:32,  clut:64 },
-  { id:4,  name:'HAM_32BIT_5454545',  seq:[5,4,5,4,5,4,5],   slots:16,  clut:32 },
-  { id:5,  name:'HAM_32BIT_6454544',  seq:[6,4,5,4,5,4,4],   slots:32,  clut:64 },
-  { id:6,  name:'HAM_32BIT_655655',   seq:[6,5,5,6,5,5],     slots:32,  clut:64 },
-  { id:7,  name:'HAM_32BIT_844844',   seq:[8,4,4,8,4,4],     slots:128, clut:256 },
-  { id:8,  name:'HAM_32BIT_846554',   seq:[8,4,6,5,5,4],     slots:128, clut:256 },
-  { id:9,  name:'HAM_32BIT_646565',   seq:[6,4,6,5,6,5],     slots:32,  clut:64 },
-  { id:10, name:'HAM_32BIT_86666',    seq:[8,6,6,6,6],       slots:128, clut:256 },
-  { id:11, name:'HAM_32BIT_85865',    seq:[8,5,8,6,5],       slots:128, clut:256 },
-  { id:12, name:'HAM_32BIT_8888',     seq:[8,8,8,8],         slots:128, clut:256 }
+  { id:0,  name:'HAM_32BIT_44444444',      wordBits:32, pxBurst:64, seq:[4,4,4,4,4,4,4,4], slots:'8 Pal.-Slots',            clut:'16 CLUT-Farben' },
+  { id:1,  name:'HAM_32BIT_53535353',      wordBits:32, pxBurst:64, seq:[5,3,5,3,5,3,5,3], slots:'16/4 Pal.-Slots',         clut:'32/8 CLUT-Farben' },
+  { id:2,  name:'HAM_32BIT_63436343',      wordBits:32, pxBurst:64, seq:[6,3,4,3,6,3,4,3], slots:'32/8/4 Pal.-Slots',       clut:'64/16/8 CLUT-Farben' },
+  { id:3,  name:'HAM_32BIT_6446444',       wordBits:32, pxBurst:56, seq:[6,4,4,6,4,4,4],   slots:'32/8 Pal.-Slots',         clut:'64/16 CLUT-Farben' },
+  { id:4,  name:'HAM_32BIT_5454545',       wordBits:32, pxBurst:56, seq:[5,4,5,4,5,4,5],   slots:'16/8 Pal.-Slots',         clut:'32/16 CLUT-Farben' },
+  { id:5,  name:'HAM_32BIT_6454544',       wordBits:32, pxBurst:56, seq:[6,4,5,4,5,4,4],   slots:'32/16/8 Pal.-Slots',      clut:'64/32/16 CLUT-Farben' },
+  { id:6,  name:'HAM_32BIT_655655',        wordBits:32, pxBurst:48, seq:[6,5,5,6,5,5],     slots:'32/16 Pal.-Slots',        clut:'64/32 CLUT-Farben' },
+  { id:7,  name:'HAM_32BIT_844844',        wordBits:32, pxBurst:48, seq:[8,4,4,8,4,4],     slots:'128/8 Pal.-Slots',        clut:'256/16 CLUT-Farben' },
+  { id:8,  name:'HAM_32BIT_846554',        wordBits:32, pxBurst:48, seq:[8,4,6,5,5,4],     slots:'128..8 Pal.-Slots',       clut:'256..16 CLUT-Farben' },
+  { id:9,  name:'HAM_32BIT_646565',        wordBits:32, pxBurst:48, seq:[6,4,6,5,6,5],     slots:'32/16/8 Pal.-Slots',      clut:'64/32/16 CLUT-Farben' },
+  { id:10, name:'HAM_32BIT_86666',         wordBits:32, pxBurst:40, seq:[8,6,6,6,6],       slots:'128/32 Pal.-Slots',       clut:'256/64 CLUT-Farben' },
+  { id:11, name:'HAM_32BIT_85865',         wordBits:32, pxBurst:40, seq:[8,5,8,6,5],       slots:'128/32/16 Pal.-Slots',    clut:'256/64/32 CLUT-Farben' },
+  { id:12, name:'HAM_32BIT_8888',          wordBits:32, pxBurst:32, seq:[8,8,8,8],         slots:'128 Pal.-Slots',          clut:'256 CLUT-Farben' },
+  { id:13, name:'HAM_32BIT_12_6_8_6',      wordBits:32, pxBurst:32, seq:[12,6,8,6],        slots:'HAM12 (Direkt) + 32/128', clut:'RGB444 + 64/256 CLUT' },
+  { id:14, name:'HAM_32BIT_12_5555',       wordBits:32, pxBurst:40, seq:[12,5,5,5,5],      slots:'HAM12 (Direkt) + 16 Pal.',clut:'RGB444 + 32 CLUT' },
+  { id:15, name:'HAM_64BIT_16_12_12_12_12',wordBits:64, pxBurst:20, seq:[16,12,12,12,12],  slots:'100% palettenfrei (HAM16 + 4×HAM12)', clut:'RGB565 + 4×RGB444' },
+  { id:16, name:'HAM_32BIT_16_16',         wordBits:32, pxBurst:16, seq:[16,16],           slots:'100% palettenfrei (HAM16 RGB555 + 4/5/5 Delta)', clut:'Direktes RGB565' },
+  { id:17, name:'RGB_32BIT_16_16',         wordBits:32, pxBurst:16, seq:[16,16],           slots:'Direktes 16-Bit RGB565 (kein HAM)', clut:'Direktes 15-Bit RGB555' }
 ];
 
 const fmtSelect = document.getElementById('fmtSelect');
@@ -647,17 +652,17 @@ const dFmt = document.getElementById('dFmt');
 FORMATS.forEach(f => {
   const o1 = document.createElement('option');
   o1.value = f.id;
-  o1.textContent = 'FORMAT ' + f.id + ': ' + f.name + ' (' + f.seq.length + ' px/32b, ' + (f.seq.length * 8) + ' px/Burst)';
-  if (f.id === 2) o1.selected = true;
+  o1.textContent = 'FORMAT ' + f.id + ': ' + f.name + ' (' + f.seq.length + ' px/' + f.wordBits + 'b, ' + f.pxBurst + ' px/Burst)';
+  if (f.id === 13) o1.selected = true;
   fmtSelect.appendChild(o1);
 
   const o2 = o1.cloneNode(true);
-  if (f.id === 2) o2.selected = true;
+  if (f.id === 13) o2.selected = true;
   dFmt.appendChild(o2);
 });
 
-const SEG_BG = { 3:'#3b2614', 4:'#133020', 5:'#122b38', 6:'#1c2540', 8:'#311b38' };
-const SEG_COL = { 3:'#f0a04b', 4:'#5ac77e', 5:'#5fb3f0', 6:'#93c5fd', 8:'#e9d5ff' };
+const SEG_BG = { 3:'#3b2614', 4:'#133020', 5:'#122b38', 6:'#1c2540', 8:'#311b38', 12:'#3f1d28', 16:'#2d230f' };
+const SEG_COL = { 3:'#f0a04b', 4:'#5ac77e', 5:'#5fb3f0', 6:'#93c5fd', 8:'#e9d5ff', 12:'#fda4af', 16:'#fde047' };
 
 function renderFormat() {
   const id = +fmtSelect.value;
@@ -668,38 +673,57 @@ function renderFormat() {
   bar.innerHTML = '';
   tbody.innerHTML = '';
 
-  let hi = 31;
+  let hi = f.wordBits - 1;
   f.seq.forEach((bits, i) => {
     const lo = hi - bits + 1;
     const seg = document.createElement('div');
     seg.className = 'bitseg';
-    seg.style.width = (bits / 32 * 100) + '%';
+    seg.style.width = (bits / f.wordBits * 100) + '%';
     seg.style.background = SEG_BG[bits] || '#1c2540';
     seg.style.color = SEG_COL[bits] || '#e6edf3';
-    seg.innerHTML = '<b>P' + (i + 1) + ': ' + (clut ? 'CLUT' + bits : 'HAM0' + bits) + '</b><br>[' + hi + ':' + lo + ']';
+    const pName = (id === 17)
+      ? (clut ? 'RGB555' : 'RGB565')
+      : (bits === 16 ? (clut ? 'RGB565' : 'HAM16') : (bits === 12 ? (clut ? 'RGB444' : 'HAM12') : (clut ? 'CLUT' + bits : 'HAM0' + bits)));
+    seg.innerHTML = '<b>P' + (i + 1) + ': ' + pName + '</b><br>[' + hi + ':' + lo + ']';
     bar.appendChild(seg);
 
     const tr = document.createElement('tr');
     const nCol = 1 << bits;
     const nAnc = 1 << (bits - 1);
+    let modeDesc = '';
+    let colDesc = '';
+    if (id === 17) {
+      modeDesc = clut ? 'Direktes 15-Bit <code>RGB555</code> (<code>anchor_reg = 1</code>)' : 'Direktes 16-Bit <code>RGB565</code> (<code>anchor_reg = 1</code>)';
+      colDesc = clut ? '<b>32.767 opake Farben</b> (<code>$0000</code> = Transparent, <code>$8000</code> = Opak Schwarz)' : '<b>65.535 opake Farben</b> (<code>$0000</code> = Transparent, 100% palettenfrei)';
+    } else if (bits === 16) {
+      modeDesc = clut ? 'Direktes 16-Bit <code>RGB565</code>' : '<code>HAM16</code> (Bit 15=0: 15-Bit <code>RGB555</code>-Anker, Bit 15=1: 4/5/5 Delta)';
+      colDesc = clut ? '<b>65.535 direkte Farben</b> (palettenfrei)' : '<b>32.767 direkte RGB555-Anker</b> + <b>32.768 RGB-Deltas</b> (<code>dr:4b, dg:5b, db:5b</code>)';
+    } else if (bits === 12) {
+      modeDesc = clut ? 'Direktes 12-Bit <code>RGB444</code>' : '<code>HAM12</code> (Bit 11=0: 11-Bit Direkt-RGB-Anker, Bit 11=1: 3/4/3 Delta)';
+      colDesc = clut ? '<b>4.095 direkte Farben</b> (palettenfrei)' : '<b>2.047 direkte 11-Bit-RGB-Anker</b> + <b>2.048 RGB-Deltas</b> (<code>dr:3b, dg:4b, db:3b</code>)';
+    } else {
+      modeDesc = clut ? 'Direkter Palettenindex (<code>anchor_reg = 1</code>)' : '<code>HAM0' + bits + '</code> (MSB=0 Anker, MSB=1 Delta)';
+      colDesc = clut
+        ? '<b>' + nCol + ' Farben</b> (Index 0..' + (nCol - 1) + ' ab <code>PAL_OFFSET</code>, 0 = Transparent)'
+        : '<b>' + nAnc + ' Anker</b> + <b>' + nAnc + ' RGB-Deltas</b> (Code 0 = Transparent &amp; Reset)';
+    }
     tr.innerHTML =
       '<td><b>Pixel ' + (i + 1) + '</b></td>' +
       '<td class="num"><code>[' + hi + ':' + lo + ']</code></td>' +
       '<td class="num">' + bits + ' Bit</td>' +
-      '<td>' + (clut ? 'Direkter Palettenindex (<code>anchor_reg = 1</code>)' : '<code>HAM0' + bits + '</code> (MSB=0 Anker, MSB=1 Delta)') + '</td>' +
-      '<td>' + (clut
-        ? '<b>' + nCol + ' Farben</b> (Index 0..' + (nCol - 1) + ' ab <code>PAL_OFFSET</code>, 0 = Transparent)'
-        : '<b>' + nAnc + ' Anker</b> + <b>' + nAnc + ' RGB-Deltas</b> (Code 0 = Transparent &amp; Reset)') + '</td>';
+      '<td>' + modeDesc + '</td>' +
+      '<td>' + colDesc + '</td>';
     tbody.appendChild(tr);
     hi = lo - 1;
   });
 
+  const px64 = f.wordBits === 64 ? f.seq.length : (f.seq.length * 2);
   document.getElementById('fmtSummary').textContent =
     'Format ' + f.id + ' (' + f.name + ') · ' +
-    f.seq.length + ' Pixel pro 32-Bit-Wort · ' +
-    (f.seq.length * 2) + ' Pixel pro 64-Bit-Wort · ' +
-    (f.seq.length * 8) + ' Pixel pro 256-Bit DDR3-Burst (4×64 Bit) · ' +
-    (clut ? 'CLUT_MODE = 1 (bis ' + f.clut + ' direkte Farben/Bank)' : 'CLUT_MODE = 0 (HAM mit ' + f.slots + ' Anker-Slots/Bank)');
+    f.seq.length + ' Pixel pro ' + f.wordBits + '-Bit-Wort · ' +
+    px64 + ' Pixel pro 64-Bit-Wort · ' +
+    f.pxBurst + ' Pixel pro 256-Bit DDR3-Burst (4×64 Bit) · ' +
+    (clut ? 'CLUT_MODE = 1 (' + f.clut + ')' : 'CLUT_MODE = 0 (' + f.slots + ')');
 }
 fmtSelect.onchange = renderFormat;
 document.getElementById('fmtClutChk').onchange = renderFormat;
@@ -865,9 +889,10 @@ function renderDescriptor() {
 
   const flags = hFlip | (vFlip << 1) | (smooth << 2);
   const fmtFlags = ((fmt & 0xF) << 4) | (flags & 0xF);
+  const fmtBit4 = ((fmt >> 4) & 0x1) << 3;
   const stepCtrl = (clut << 6);
 
-  const pxPerBurst = FORMATS[fmt].seq.length * 8;
+  const pxPerBurst = FORMATS[fmt].pxBurst;
   document.getElementById('dYPosV').textContent = yPos;
   document.getElementById('dXPosV').textContent = xPos;
   document.getElementById('dYHeightV').textContent = yHeight === 0 ? '0 (SENTINEL)' : yHeight;
@@ -879,7 +904,7 @@ function renderDescriptor() {
 
   const yHeightLo = yHeight & 0xFF;
   const yHeightHi = (yHeight >> 8) & 0x7;
-  const dataPtr = (0x02080000 | yHeightHi) >>> 0;
+  const dataPtr = (0x02080000 | fmtBit4 | yHeightHi) >>> 0;
 
   document.getElementById('w0_y').textContent = hexPad(yPos, 4);
   document.getElementById('w0_x').textContent = hexPad(xPos, 4);
@@ -892,7 +917,7 @@ function renderDescriptor() {
   document.getElementById('w1_ff').textContent = hexPad(fmtFlags, 2);
   document.getElementById('w1_xs').textContent = hexPad(xScale, 2);
   document.getElementById('w1_ys').textContent = hexPad(yScale, 2);
-  document.getElementById('w1_sc').textContent = hexPad(stepCtrl, 2) + (clut ? ' (CLUT)' : ' (HAM)');
+  document.getElementById('w1_sc').textContent = hexPad(stepCtrl, 2) + (clut ? ' (CLUT/RGB555)' : ' (HAM/RGB565)');
 
   document.getElementById('dAsmOut').textContent =
     '; 16-Byte Sprite-Descriptor im DDR3-Fast-RAM (32-Byte Burst-aligned, FullHD 2048px ready):\n' +
@@ -901,9 +926,9 @@ function renderDescriptor() {
     '          ; +$00: Y_POS = ' + yPos + ', X_POS = ' + xPos + '\n' +
     '    DC.B ' + hexPad(yHeightLo, 2) + ', ' + hexPad(xWidth, 2) + ', ' + hexPad(prio, 2) + ', ' + hexPad(pal, 2) +
     '      ; +$04: Y_HEIGHT_LO = ' + yHeightLo + ' (Total=' + yHeight + '), X_WIDTH256 = ' + xWidth + ' (' + (xWidth * pxPerBurst) + ' px), PRIO = ' + prio + ', PAL_OFFSET = ' + pal + '\n' +
-    '    DC.L ' + hexPad(dataPtr, 8) + '               ; +$08: DATA_PTR ($02080000) | Y_HEIGHT[10:8] (' + yHeightHi + ')\n' +
+    '    DC.L ' + hexPad(dataPtr, 8) + '               ; +$08: DATA_PTR ($02080000) | FORMAT[4] (' + ((fmt >> 4) & 1) + ') | Y_HEIGHT[10:8] (' + yHeightHi + ')\n' +
     '    DC.B ' + hexPad(fmtFlags, 2) + ', ' + hexPad(xScale, 2) + ', ' + hexPad(yScale, 2) + ', ' + hexPad(stepCtrl, 2) +
-    '      ; +$0C: FORMAT=' + fmt + '/FLAGS=' + hexPad(flags, 1) + ', X_SCALE=' + hexPad(xScale, 2) + ', Y_SCALE=' + hexPad(yScale, 2) + ', STEP_CTRL=' + (clut ? 'CLUT_MODE' : 'HAM_MODE');
+    '      ; +$0C: FORMAT=' + fmt + ' (' + FORMATS[fmt].name + ')/FLAGS=' + hexPad(flags, 1) + ', X_SCALE=' + hexPad(xScale, 2) + ', Y_SCALE=' + hexPad(yScale, 2);
 }
 
 ['dYPos','dXPos','dYHeight','dXWidth','dPrio','dPal','dXScale','dYScale','dFmt','dHFlip','dVFlip','dSmooth','dClut'].forEach(id => {
