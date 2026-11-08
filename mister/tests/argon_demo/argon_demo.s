@@ -977,8 +977,15 @@ Init_Act3_Vocoder:
         LEA     VOICE_STRIDE(A0),A0
         DBRA    D0,.init_voc_chain
 
-        ; Invalidate vocoder cluster cache
+        ; Invalidate vocoder cluster cache and initialize volume ramps
         MOVE.W  #-1,LastVocoderCenter
+        LEA     VocoderCurVol,A1
+        LEA     VocoderTargetVol,A2
+        MOVEQ   #31,D0
+.clr_voc_vols:
+        CLR.W   (A1)+
+        CLR.W   (A2)+
+        DBRA    D0,.clr_voc_vols
 
         ; Start all 32 voices synchronously
         LEA     AUDIO_EXT_BASE,A0
@@ -1002,10 +1009,10 @@ Mute_Vocoder_Bands:
 ; Act III: 30-Second Vocoder Engine (D5 = 0..1537)
 ; 1.0s Fade-In (D5=0..49), 28.76s Bi-directional Sweep, 1.0s Fade-Out (D5=1488..1537)
 ; Sweep starts centered around Band 14 (~676 Hz vowel formant) for instant vocal warmth!
-; 5-Band Resonant Cluster + Warm Bed + Smooth Crossfades (ZERO Zipper-Noise, NO Zero-Muting!)
+; Smooth Frame-by-Frame Micro-Crossfade (Max delta = 6 per frame -> ZERO Clicks!)
 ; ------------------------------------------------------------------------------
 Update_Vocoder_30s:
-        MOVEM.L D2-D5/A0-A1,-(SP)
+        MOVEM.L D2-D7/A0-A3,-(SP)
 
         ; 1. Calculate Linear Fade Multiplier in D4 (0..100)
         CMPI.W  #50,D5
@@ -1038,114 +1045,116 @@ Update_Vocoder_30s:
         MOVE.W  D1,D0                   ; 31..0
 .sw_fwd:
 
-        ; During sustain (D4=100), only write to hardware if band changed
-        CMPI.W  #100,D4
-        BNE.S   .do_update
-        CMP.W   LastVocoderCenter(PC),D0
-        BEQ     .voc_exit
-
-.do_update:
-        MOVE.W  D0,LastVocoderCenter
-        LEA     AUDIO_EXT_BASE,A0
-
-        ; 1. Voice 0 Warm Root Carrier Bed: base $40 (64) scaled by D4
+        ; 3. Build Target Volumes in VocoderTargetVol
+        ; Voice 0 Carrier Bed: 64 * D4 / 100
         MOVE.W  #64,D2
         MULU.W  D4,D2
-        DIVU.W  #100,D2                 ; 0..64
-        MOVE.W  D2,D3
-        LSL.W   #8,D2
-        OR.B    D3,D2
-        MOVE.W  D2,AUD_VOL(A0)          ; Set Voice 0 warm carrier bed
+        DIVU.W  #100,D2
+        LEA     VocoderTargetVol,A1
+        MOVE.W  D2,(A1)+                ; Target for Voice 0
 
-        ; 2. Gentle background bed on all filter bands (16 * D4 / 100)
-        ; Prevents harsh mute drops and keeps all 32 bands alive!
+        ; Bed volume on voices 1..31: 16 * D4 / 100
         MOVE.W  #16,D2
         MULU.W  D4,D2
-        DIVU.W  #100,D2                 ; 0..16
-        MOVE.W  D2,D3
-        LSL.W   #8,D2
-        OR.B    D3,D2                   ; D2 = bed volume word
-
-        LEA     VOICE_STRIDE(A0),A1
+        DIVU.W  #100,D2
         MOVEQ   #30,D1
-.fill_bed:
-        MOVE.W  D2,AUD_VOL(A1)
-        LEA     VOICE_STRIDE(A1),A1
-        DBRA    D1,.fill_bed
+.init_targets:
+        MOVE.W  D2,(A1)+
+        DBRA    D1,.init_targets
 
-        ; 3. Formant Cluster around Center Band D0 (5-Band Resonant Peak)
-        ; Center Band D0: base $A0 (160) scaled by D4
+        ; Formant Cluster around Center Band D0
+        LEA     VocoderTargetVol,A1
+
+        ; Center Band D0: 160 * D4 / 100
         MOVE.W  #160,D2
         MULU.W  D4,D2
-        DIVU.W  #100,D2                 ; 0..160
-        MOVE.W  D2,D3
-        LSL.W   #8,D2
-        OR.B    D3,D2
+        DIVU.W  #100,D2
         MOVE.W  D0,D1
-        LSL.W   #5,D1
-        MOVE.W  D2,AUD_VOL(A0,D1.W)     ; Center band volume
+        ADD.W   D1,D1
+        MOVE.W  D2,(A1,D1.W)
 
-        ; Left Neighbor (D0-1): base $70 (112) scaled by D4
+        ; Left Neighbor (D0-1): 112 * D4 / 100
         TST.W   D0
         BEQ.S   .no_left1
         MOVE.W  #112,D2
         MULU.W  D4,D2
         DIVU.W  #100,D2
-        MOVE.W  D2,D3
-        LSL.W   #8,D2
-        OR.B    D3,D2
         MOVE.W  D0,D1
         SUBQ.W  #1,D1
-        LSL.W   #5,D1
-        MOVE.W  D2,AUD_VOL(A0,D1.W)
+        ADD.W   D1,D1
+        MOVE.W  D2,(A1,D1.W)
 .no_left1:
 
-        ; Right Neighbor (D0+1): base $70 (112) scaled by D4
+        ; Right Neighbor (D0+1): 112 * D4 / 100
         CMPI.W  #31,D0
         BGE.S   .no_right1
         MOVE.W  #112,D2
         MULU.W  D4,D2
         DIVU.W  #100,D2
-        MOVE.W  D2,D3
-        LSL.W   #8,D2
-        OR.B    D3,D2
         MOVE.W  D0,D1
         ADDQ.W  #1,D1
-        LSL.W   #5,D1
-        MOVE.W  D2,AUD_VOL(A0,D1.W)
+        ADD.W   D1,D1
+        MOVE.W  D2,(A1,D1.W)
 .no_right1:
 
-        ; Outer Left (D0-2): base $40 (64) scaled by D4
+        ; Outer Left (D0-2): 64 * D4 / 100
         CMPI.W  #2,D0
         BLT.S   .no_left2
         MOVE.W  #64,D2
         MULU.W  D4,D2
         DIVU.W  #100,D2
-        MOVE.W  D2,D3
-        LSL.W   #8,D2
-        OR.B    D3,D2
         MOVE.W  D0,D1
         SUBQ.W  #2,D1
-        LSL.W   #5,D1
-        MOVE.W  D2,AUD_VOL(A0,D1.W)
+        ADD.W   D1,D1
+        MOVE.W  D2,(A1,D1.W)
 .no_left2:
 
-        ; Outer Right (D0+2): base $40 (64) scaled by D4
-        CMPI.W  #30,D0
-        BGE.S   .voc_exit
+        ; Outer Right (D0+2): 64 * D4 / 100
+        CMPI.W  #29,D0
+        BGT.S   .no_right2
         MOVE.W  #64,D2
         MULU.W  D4,D2
         DIVU.W  #100,D2
-        MOVE.W  D2,D3
-        LSL.W   #8,D2
-        OR.B    D3,D2
         MOVE.W  D0,D1
         ADDQ.W  #2,D1
-        LSL.W   #5,D1
-        MOVE.W  D2,AUD_VOL(A0,D1.W)
+        ADD.W   D1,D1
+        MOVE.W  D2,(A1,D1.W)
+.no_right2:
+
+        ; 4. Slew-Rate Limiter (Max delta = 6 per frame) & Hardware Register Write
+        LEA     AUDIO_EXT_BASE,A0
+        LEA     VocoderCurVol,A2
+        LEA     VocoderTargetVol,A1
+        MOVEQ   #31,D7                  ; 32 voices
+.ramp_loop:
+        MOVE.W  (A2),D2                 ; Current volume (0..255)
+        MOVE.W  (A1)+,D3                ; Target volume (0..255)
+        CMP.W   D3,D2
+        BEQ.S   .write_hw
+        BLT.S   .ramp_up
+        ; Ramp down: cur -= 6
+        SUBQ.W  #6,D2
+        CMP.W   D3,D2
+        BGE.S   .write_hw
+        MOVE.W  D3,D2                   ; Clamp to target
+        BRA.S   .write_hw
+.ramp_up:
+        ; Ramp up: cur += 6
+        ADDQ.W  #6,D2
+        CMP.W   D3,D2
+        BLE.S   .write_hw
+        MOVE.W  D3,D2                   ; Clamp to target
+.write_hw:
+        MOVE.W  D2,(A2)+                ; Store updated CurVol
+        MOVE.W  D2,D3
+        LSL.W   #8,D2
+        OR.B    D3,D2                   ; (vol << 8) | vol
+        MOVE.W  D2,AUD_VOL(A0)          ; Write to hardware
+        LEA     VOICE_STRIDE(A0),A0     ; Next voice hardware offset (+32)
+        DBRA    D7,.ramp_loop
 
 .voc_exit:
-        MOVEM.L (SP)+,D2-D5/A0-A1
+        MOVEM.L (SP)+,D2-D7/A0-A3
         RTS
 
 ; ------------------------------------------------------------------------------
@@ -1740,6 +1749,8 @@ LFO_Phase:          DC.B    0
 
 SA_CurPerFP:    DS.L    31
 ScopeOldY:      DS.W    40
+VocoderCurVol:  DS.W    32
+VocoderTargetVol: DS.W  32
 
 ; Generated Musical, Filter, Font, Waveform & Copper Data
         INCLUDE "argon_data.i"

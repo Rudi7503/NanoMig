@@ -1,5 +1,5 @@
 @echo off
-set PATH=C:\Users\Papa\AppData\Local\Temp\vbcc\vbcc\bin;%PATH%
+set PATH=C:\Users\Papa\.vscode\extensions\prb28.amiga-assembly-1.8.13\resources\bin\win32;C:\Users\Papa\AppData\Local\Temp\vbcc\vbcc\bin;%PATH%
 if exist argon_demo.o del argon_demo.o
 if exist argon_demo del argon_demo
 python gen_argon_data.py || goto :err
