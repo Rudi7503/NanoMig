@@ -21,7 +21,7 @@ module audio_ext #(
     input wire dma_ack,
     input wire [15:0] dma_data,
     input wire dma_error,
-    output reg signed [15:0] sample_l, sample_r
+    output wire signed [15:0] sample_l, sample_r
 );
 
     wire [9:0] address = {reg_addr, 1'b0};
@@ -480,16 +480,36 @@ module audio_ext #(
     reg signed [20:0] acc_l, acc_r;
 
     always @(posedge clk) begin
-        if (cur_voice == 0) begin
+        if (reset) begin
+            acc_l <= 21'sd0;
+            acc_r <= 21'sd0;
+        end else if (cur_voice == 0) begin
             acc_l <= $signed(mul_l[23:8]);
             acc_r <= $signed(mul_r[23:8]);
-            sample_l <= (!acc_l[20] && |acc_l[19:15]) ? 16'sh7FFF : (acc_l[20] && !(&acc_l[19:15])) ? 16'sh8000 : acc_l[15:0];
-            sample_r <= (!acc_r[20] && |acc_r[19:15]) ? 16'sh7FFF : (acc_r[20] && !(&acc_r[19:15])) ? 16'sh8000 : acc_r[15:0];
         end else begin
             acc_l <= acc_l + $signed(mul_l[23:8]);
             acc_r <= acc_r + $signed(mul_r[23:8]);
         end
     end
+
+    // Master Audio AGC & True-Peak Limiter
+    // Prevents clipping on multi-voice sums & resonant filter peaks with zero pumping
+    wire agc_active;
+    wire [15:0] agc_peak_hold;
+
+    audio_agc_limiter #(
+        .CEILING(21'sd30720)   // -0.5 dBFS margin
+    ) agc_limiter_inst (
+        .clk(clk),
+        .reset(reset),
+        .sample_strobe(cur_voice == 0),
+        .in_l(acc_l),
+        .in_r(acc_r),
+        .out_l(sample_l),
+        .out_r(sample_r),
+        .agc_active(agc_active),
+        .peak_hold(agc_peak_hold)
+    );
 
     // DMA FSM (32 voices round-robin)
     wire [5:0] dma_fifo_fill = dma_wrptr - ram_rdptr[dma_voice];
@@ -621,7 +641,8 @@ module audio_ext #(
             case (off)
                 4'd8, 4'd9, 4'd10, 4'd11, 4'd12: reg_rdata = biquad_rdata;
                 4'd13: reg_rdata = {13'd0, (voice_state[ch] == 2'b01), (voice_state[ch] == 2'b10), voice_state[ch][1]};
-                4'd14, 4'd15: reg_rdata = {15'd0, (voice_state[ch] == 2'b01)};
+                4'd14: reg_rdata = {15'd0, (voice_state[ch] == 2'b01)};
+                4'd15: reg_rdata = (ch == 5'd31) ? {agc_active, agc_peak_hold[14:0]} : {15'd0, (voice_state[ch] == 2'b01)};
                 default: reg_rdata = 16'd0;
             endcase
         end
