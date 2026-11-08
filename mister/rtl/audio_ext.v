@@ -473,8 +473,8 @@ module audio_ext #(
     wire signed [8:0] vol_factor_l = v_silent ? 9'sd0 : (is_mod ? mod_factor_l : $signed({1'b0, raw_vol_l}));
     wire signed [8:0] vol_factor_r = v_silent ? 9'sd0 : (is_mod ? mod_factor_r : $signed({1'b0, raw_vol_r}));
 
-    wire signed [24:0] mul_l = mix_out_l * vol_factor_l;
-    wire signed [24:0] mul_r = mix_out_r * vol_factor_r;
+    wire signed [24:0] mul_l = (|vol_factor_l) ? (mix_out_l * vol_factor_l) : 25'sd0;
+    wire signed [24:0] mul_r = (|vol_factor_r) ? (mix_out_r * vol_factor_r) : 25'sd0;
 
     // 21-Bit Master Accumulator for 32 Voices (5 bits headroom)
     reg signed [20:0] acc_l, acc_r;
