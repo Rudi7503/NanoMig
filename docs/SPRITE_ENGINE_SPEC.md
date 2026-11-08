@@ -34,18 +34,19 @@ Die neue Sprite-Engine kombiniert die **variablen HAM-Modi (`HAM03`, `HAM04`, `H
 * Würde sich die Sprite-Engine den Decoder mit dem Playfield (`ext_ham`) teilen, wäre der Decoder bei aktivem SuperHiRes-HAM-Playfield (1280 px) oder FullHD für den Großteil der Zeile durch das Playfield blockiert.
 * Mit einem **eigenen dedizierten Decoder** (~100 ALMs) + eigener Paletten-RAM-Instanz (1 M10K) stehen der Sprite-Engine **100 % der Zeilenzeit (volle 64 µs)** ungeteilt zur Verfügung.
 
-### 2.2 Pipeline-Optimierung & Verbreiterung der Delta-Vorberechnung (13-Bit signed)
+### 2.2 Pipeline-Optimierung & Exakte Bitbreiten der Delta-Vorberechnung (10-Bit signed)
 In `c0_ham_from_setup.rpt` (Slow 1100mV 100C) hatte der bisherige Playfield-Decoder (`ham_pixel_decoder.v`) eine kombinatorische Laufzeit von **`14,774 ns`**, weil Bit-Decode, `turbo`-Shift, Delta-Mux und die Addition `accumulator + delta` im selben Takt stattfanden.
 
 * **Entscheidende Beobachtung:** Die Vorzeichen-Deltas `delta_r`, `delta_g`, `delta_b` hängen **nur von `code`, `mode` und `step_r/g/b` ab – nicht vom `accumulator`!**
-* **Verbindliche Bitbreiten (kein Überlauf bei großen Steps/Skalierungen):**
-  * Da im Referenzdecoder `255 × step(4) × scale(2) = ±2040` erreichen kann, werden die vorberechneten Deltas mit **13 Bit signed (`-4096 .. +4095`)** geführt.
-  * Die Addition im Rekursions-Zyklus erfolgt mit **14 Bit signed (`-8192 .. +8191`)** vor der Sättigung auf `0..255` (`uint8`).
+* **Verbindliche Bitbreiten (`step_r/g/b` sind 5 Bit `0..31`, daher reichen 10 Bit signed exakt):**
+  * Wie in [`mister/rtl/ham_video_pipeline.v`](../mister/rtl/ham_video_pipeline.v#L50-L51) stammen `step_r`, `step_g`, `step_b` aus dem 16-Bit-Steuerwort (`[14:10]`, `[9:5]`, `[4:0]`) und sind jeweils **5 Bit breit (`0 .. 31`)** (der Port im Sprite-Decoder wird entsprechend sauber als `input wire [4:0] step_r, step_g, step_b` deklariert).
+  * Damit beträgt das maximale Standard-Delta `31 × 4 (Turbo) × 2 (Level ±2) = ±248`, und selbst mit maximaler Sprite-eigener `CUSTOM_STEP`-Skalierung (`× 2`) maximal **`±496`**.
+  * Die vorberechneten Deltas passen damit überlauffrei in **10 Bit signed (`-512 .. +511`)**, und die Addition `acc + delta` im Rekursions-Zyklus benötigt nur **11 Bit signed** vor der Sättigung auf `0..255` (`uint8`).
 * **2-Stufen-Aufteilung (ohne Zusatzlatenz, parallel zum Paletten-BRAM-Read):**
   1. **Stufe 1 (Entpacker & Paletten-Read-Takt):**  
-     Parallel zum synchronen Lesezugriff auf das M10K-Paletten-RAM (`palette_index = (PAL_OFFSET + raw_code) & 8'hFF`) berechnet die Logik bereits `anchor_reg`, `opaque_reg = (raw_code != 0)` sowie die fertigen **13-Bit-signed** Summanden `delta_r`, `delta_g`, `delta_b` und speichert sie in Registern.
+     Parallel zum synchronen Lesezugriff auf das M10K-Paletten-RAM (`palette_index = (PAL_OFFSET + raw_code) & 8'hFF`) berechnet die Logik bereits `anchor_reg`, `opaque_reg = (raw_code != 0)` sowie die fertigen **10-Bit-signed** Summanden `delta_r`, `delta_g`, `delta_b` und speichert sie in Registern.
   2. **Stufe 2 (Akkumulator-Takt):**  
-     Im eigentlichen Rekursions-Zyklus führt der Decoder **nur noch eine einzige 14-Bit-Addition mit Sättigung auf `0..255`** und den 2:1-Anker-Mux aus:
+     Im eigentlichen Rekursions-Zyklus führt der Decoder **nur noch eine einzige 11-Bit-Addition mit Sättigung auf `0..255`** und den 2:1-Anker-Mux aus:
      $$\text{acc\_next} = (\neg\text{opaque\_reg}) \;?\; \text{24'h000000} : \big(\text{anchor\_reg} \;?\; \text{palette\_data} : \text{sat}_{0..255}(\text{acc} + \text{delta\_reg})\big)$$
 * **Pipeline-Steuerung (`valid`, `decoder_hold`, `line_reset`):**
   * Zu Beginn jeder neuen Sprite-Quellzeile (`line_reset = 1`) werden `acc_r/g/b <= 0`, `prev_rgb <= 0`, `prev_opaque <= 0` sowie die Pipeline-Valid-Stufen synchron zurückgesetzt.
@@ -229,7 +230,7 @@ Aktuell frei im Core (Stand Seed 11): **5.758 ALMs**, **223 M10K-Blöcke**, **37
 | **Dedizierte Sprite-Palette** (`256 × 24 Bit` Dual-Port) | ~20 | **1** | 0 |
 | **64-Bit Prefetch-FIFO** (`64 × 64 Bit` zwischen DDR3 & Unpacker) | ~25 | **1** | 0 |
 | **32-Bit Multi-Mode Unpacker** (13 Formate `HAM_32BIT_*`, `CLUT_MODE` & Zero-Word-Skip) | ~110 | 0 | 0 |
-| **Dedizierter High-Speed HAM-Decoder** (mit 13-Bit Pre-Delta-Stufe) | ~100 | 0 | 0 |
+| **Dedizierter High-Speed HAM-Decoder** (mit 10-Bit Pre-Delta-Stufe, `5-Bit step_r/g/b`) | ~95 | 0 | 0 |
 | **X/Y-Skalierer, `H_FLIP`/`V_FLIP` & 24-Bit RGB X-Interpolator (`SMOOTH_X`)** | **~105** | **0** | **0** |
 | **Y-Listen-Scanner (`4096`), Clipping, 12×8-Multiplizierer (TDM) & DMA-FSM** | ~205 | 0 | 0–1 |
 | **Denise-Ausgangs-Prioritätsmischer** (4 Ebenen + Blank-Gate) | ~35 | 0 | 0 |
