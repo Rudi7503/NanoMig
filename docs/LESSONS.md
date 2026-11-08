@@ -158,3 +158,41 @@ Kaskade wird das 12-dB-Zwischensignal im Master-Mix zum 24-dB-Endsignal addiert.
 erhält `CTRL_MUTE_MIX` (`$2000`). Kaskadierte Folgestufen (`CTRL_SRC_PRE` =
 `$0200` oder `CTRL_SRC_POST` = `$0400`) erhalten `AUDxLEN = 0`, damit sie sofort
 in `PLAYING` wechseln und 0 % DMA-Bandbreite verbrauchen.
+
+## 16. Sprunghafte Lautstärkewechsel auf resonanten Filtern erzeugen Stufendiskontinuitäten (Klicken)
+
+**Passiert:** In Akt 3 der Argon-Musikdemo schaltete `Update_Vocoder_30s` alle
+4 Frames (80 ms / 12,5 Hz) das Resonanzband um. Dabei wurden die Bandpegel
+schlagartig von 16 auf 160 und zurückgeschrieben. Dieser Phasensprung mitten in
+der Resonanzschwingung erzeugte messbare Spannungssprünge und ein periodisches
+Mikroknacken bei 12,5 Hz.
+
+**Regel:** Filterbänder, Formanten und Lautstärken schmalbandiger Resonatoren
+dürfen niemals schlagartig umgeschaltet werden. In Software muss ein Slew-Rate-
+Limiter / Micro-Crossfade (z. B. max. 4 bis 6 Lautstärkeeinheiten pro 50-Hz-Frame)
+verwendet werden.
+
+## 17. Dynamik im Master-Mixer: Headroom vor Begrenzung, keine Einzellimiter pro Stimme
+
+**Passiert:** Wenn jede Stimme einzeln hart begrenzt oder geclippt wird, treten
+starke Intermodulationsverzerrungen und Ducking/Pumping auf. Summiert man
+32 Stimmen in 16 Bit ohne Headroom, clippt die Summe bereits bei moderaten Pegeln.
+
+**Regel:** Die Audioerweiterung akkumuliert unbeschnittene 21-Bit-Summen
+(`audio_ext.v`) und übergibt sie an den Master-Mixer in `Minimig.sv`. Dort
+werden alle internen und externen Audioquellen (Paula, 32 Stimmen, CDDA,
+Toccata, Drive-Sounds) in einem vorzeichenbehafteten 22-Bit-Akkumulator (+36 dB
+Headroom) summiert. Erst die finale Summe wird vor der DAC-Ausgabe durch einen
+zentralen 48-kHz True-Peak AGC Limiter (`audio_agc_limiter.v`) mit -0,5 dBFS Decke
+und ca. 85 ms Release-Decay transparent auf 16 Bit skaliert.
+
+## 18. Kohärente Clock-Domain-Crossing (CDC) für Stereokanäle
+
+**Passiert:** Werden linker und rechter Kanal bei Taktgrenzen (`clk_sys` 28 MHz ->
+`CLK_AUDIO` 24,576 MHz) in getrennten Registern übertragen, können Strobeflanken
+den linken Kanal vom neuen und den rechten vom vorherigen Frame erfassen.
+
+**Regel:** Mehrkanal-Audiodaten bei Clock-Domain-Übergängen immer in einem
+gemeinsamen atomaren Mailbox-Register (z. B. 42-Bit `ext_mailbox` für `[41:21]` L
+und `[20:0]` R) bündeln.
+

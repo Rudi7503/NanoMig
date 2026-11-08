@@ -53,17 +53,31 @@
        |                                         |                               |
        |                                         v                               |
        |  +-------------------------------------------------------------------+  |
-       |  | 21-Bit Master-Akkumulator & Soft-Clipper (sample_l, sample_r)     |  |
+       |  | 21-Bit Akkumulator (sample_l, sample_r unbeschnitten, +30 dB)     |  |
        |  +-------------------------------------------------------------------+  |
        |            |                                              |             |
        |            v                                              v             |
-       |    audio_capture.v                               Dual-Clock Mailbox     |
+       |    audio_capture.v                              42-Bit Mailbox CDC      |
        |  (2x 4 KB Ringpuffer)                         (clk_sys -> CLK_AUDIO)    |
        |                                                           |             |
        +-----------------------------------------------------------|-------------+
                                                                    v
-                                                        MiSTer Audio-Mixer
-                                                        (48 kHz / 96 kHz I2S)
+                                                  +-------------------------------+
+                                                  | Master-Mixer (Minimig.sv)     |
+                                                  | 22-Bit Akkumulator (+36 dB)   |
+                                                  | Paula + 32ch + CDDA + Toccata |
+                                                  +-------------------------------+
+                                                                   |
+                                                                   v
+                                                  +-------------------------------+
+                                                  | True-Peak AGC Limiter         |
+                                                  | (audio_agc_limiter.v @ 48kHz) |
+                                                  | -0.5 dBFS Decke, 85ms Release |
+                                                  +-------------------------------+
+                                                                   |
+                                                                   v
+                                                        MiSTer Audio I2S / DAC
+                                                        (48 kHz / 96 kHz)
 ```
 
 ---
@@ -111,10 +125,10 @@ Jede der 32 Stimmen belegt 16 Wörter (32 Bytes):
 | :---: | :---: | :--- | :--- |
 | `+0` | `$00` | `AUDxPTRH` | Sample-Startzeiger High-Word (Bits 31..16) |
 | `+2` | `$01` | `AUDxPTRL` | Sample-Startzeiger Low-Word (Bits 15..1, Byte 0 = 0) |
-| `+4` | `$02` | `AUDxLENH` | Sample-Länge High-Word (in 16-Bit-Wörtern) |
-| `+6` | `$03` | `AUDxLENL` | Sample-Länge Low-Word (in 16-Bit-Wörtern) |
+| `+4` | `$02` | `AUDxLENH` | Sample-Länge High-Word (in Bytes, muss gerade sein) |
+| `+6` | `$03` | `AUDxLENL` | Sample-Länge Low-Word (in Bytes, muss gerade sein; `0` bei Kaskaden) |
 | `+8` | `$04` | `AUDxVOL`  | Lautstärke: Bit 15..8 = Links (0..255), Bit 7..0 = Rechts (0..255) |
-| `+10`| `$05` | `AUDxPER`  | Paula-kompatible Abtastperiode (Farbtakt-Teiler, z. B. 744 für 48 kHz) |
+| `+10`| `$05` | `AUDxPER`  | Zeitbasis-Teiler ($f_s = 25\,\text{MHz} / \text{PER}$, z. B. **521 für 48 kHz**) |
 | `+12`| `$06` | `AUDxCTRL` | Steuerregister: Format, Filter, Kaskadierung, Modulation, Mute (s. u.) |
 | `+14`| `$07` | `AUDxPRED` | ADPCM Prädiktor Initialwert & Index |
 | `+16`| `$08` | `AUDxB0`   | Biquad Koeffizient $b_0$ (Q2.14, vorzeichenbehaftet, `$4000` = 1.0) |
