@@ -87,11 +87,11 @@
 <header>
   <h1>NanoMig <span>32/64-Bit HAM- &amp; CLUT-Sprite-Engine</span></h1>
   <div class="sub">
-    Hardware-Architektur, animierter Datenpfad &amp; Register-Referenz &middot;
+    Hardware-Architektur, animierter Datenpfad &amp; Register-Referenz (Rev. 2 &middot; FullHD 2048px) &middot;
     <span class="badge">4&times;64 Bit (256-Bit) DDR3-Burst</span>
-    <span class="badge">Eigener &lt;3,5 ns HAM/CLUT-Decoder</span>
-    <span class="badge">X/Y-Zoom + 24-Bit Interpolation</span>
-    <span class="badge">~600 ALMs &middot; 18&ndash;19 M10K</span>
+    <span class="badge">2&times;2048&times;32 Bit FullHD-Zeilenbuffer</span>
+    <span class="badge">X/Y-Zoom + 24-Bit Interpolation + opaque-Bit</span>
+    <span class="badge">~650 ALMs &middot; 18 M10K</span>
   </div>
 </header>
 
@@ -183,7 +183,7 @@
     <!-- Write Path into Linebuffer B -->
     <path d="M 1003 140 L 1003 182 L 560 182 L 560 262" fill="none" stroke="#f0a04b" stroke-width="2" marker-end="url(#arrAcc)"/>
     <text x="780" y="175" fill="#f0a04b" font-size="11.5" font-family="Consolas,monospace" text-anchor="middle">
-      Schreibt in Zeilenbuffer B, wenn: (NEW_RGB &ne; 0) &amp;&amp; (SPR_PRIO &gt; BUF_PRIO)
+      Schreibt in Zeilenbuffer B (2048 px), wenn: out_opaque &amp;&amp; (SPR_PRIO &gt; eff_old_prio) [inkl. 1-Takt Forwarding]
     </text>
 
     <!-- Bottom Row: Ping-Pong Linebuffers A/B & Denise Output Mixer -->
@@ -390,16 +390,16 @@
   <p>Stelle die Sprite-Parameter mit den Reglern ein &mdash; die beiden 64-Bit-Worte und der 68000-Assembler-Code aktualisieren sich sofort:</p>
 
   <div class="ctl">
-    <label>Y_POS <input type="range" id="dYPos" min="-64" max="512" value="100"> <span id="dYPosV" class="acc">100</span></label>
-    <label>X_POS <input type="range" id="dXPos" min="-256" max="1280" value="320"> <span id="dXPosV" class="acc">320</span></label>
-    <label>Y_HEIGHT <input type="range" id="dYHeight" min="0" max="255" value="64"> <span id="dYHeightV" class="acc">64</span></label>
-    <label>X_WIDTH256 <input type="range" id="dXWidth" min="1" max="32" value="2"> <span id="dXWidthV" class="acc">2</span></label>
+    <label>Y_POS <input type="range" id="dYPos" min="-256" max="1080" value="100"> <span id="dYPosV" class="acc">100</span></label>
+    <label>X_POS <input type="range" id="dXPos" min="-512" max="1920" value="320"> <span id="dXPosV" class="acc">320</span></label>
+    <label>Y_HEIGHT (11 Bit) <input type="range" id="dYHeight" min="0" max="1080" value="64"> <span id="dYHeightV" class="acc">64</span></label>
+    <label>X_WIDTH256 <input type="range" id="dXWidth" min="1" max="64" value="2"> <span id="dXWidthV" class="acc">2</span></label>
   </div>
   <div class="ctl">
     <label>PRIO <input type="range" id="dPrio" min="0" max="255" value="160"> <span id="dPrioV" class="acc">160</span></label>
     <label>PAL_OFFSET <input type="range" id="dPal" min="0" max="248" step="8" value="32"> <span id="dPalV" class="acc">32</span></label>
-    <label>X_SCALE <input type="range" id="dXScale" min="16" max="128" value="64"> <span id="dXScaleV" class="acc">$40 (1.0x)</span></label>
-    <label>Y_SCALE <input type="range" id="dYScale" min="16" max="128" value="64"> <span id="dYScaleV" class="acc">$40 (1.0x)</span></label>
+    <label>X_SCALE <input type="range" id="dXScale" min="16" max="255" value="64"> <span id="dXScaleV" class="acc">$40 (1.0x)</span></label>
+    <label>Y_SCALE <input type="range" id="dYScale" min="16" max="255" value="64"> <span id="dYScaleV" class="acc">$40 (1.0x)</span></label>
   </div>
   <div class="ctl">
     <label>FORMAT <select id="dFmt"></select></label>
@@ -439,15 +439,15 @@
   <p>Aktuell im Core frei (Stand Seed 11): <b>5.758 ALMs</b>, <b>223 M10K-Blöcke</b>, <b>37 DSP-Blöcke</b>.</p>
   <table>
     <tr><th>Teilmodul</th><th class="num">ALMs</th><th class="num">M10K-Blöcke</th><th class="num">DSPs</th><th>Bemerkung</th></tr>
-    <tr><td><b>Ping-Pong Zeilenbuffer A &amp; B</b> (2 &times; 2048 &times; 32 Bit)</td><td class="num">~40</td><td class="num">16</td><td class="num">0</td><td>Clear-on-Read spart kompletten Löschzyklus</td></tr>
+    <tr><td><b>Ping-Pong Zeilenbuffer A &amp; B</b> (2 &times; 2048 &times; 32 Bit + Forwarding)</td><td class="num">~50</td><td class="num">16</td><td class="num">0</td><td>FullHD-fähig (2048 px) + 1-Takt Write-Forwarding + Clear</td></tr>
     <tr><td><b>Dedizierte Sprite-Palette</b> (256 &times; 24 Bit Dual-Port)</td><td class="num">~20</td><td class="num">1</td><td class="num">0</td><td>100 % unabhängig von Playfield-CLUT</td></tr>
-    <tr><td><b>64-Bit Prefetch-FIFO</b> (DDR3 &rarr; Entpacker)</td><td class="num">~25</td><td class="num">1&ndash;2</td><td class="num">0</td><td>Puffert <code>4&times;64 Bit</code> (256-Bit) DDR3-BL8-Bursts</td></tr>
-    <tr><td><b>32-Bit Multi-Mode Entpacker</b> (13 Formate + Zero-Word-Skip)</td><td class="num">~105</td><td class="num">0</td><td class="num">0</td><td>Überspringt leere <code>64'h0</code>-Worte in 1 Takt</td></tr>
-    <tr><td><b>Eigener 2-Stufen High-Speed HAM/CLUT-Decoder</b></td><td class="num">~95</td><td class="num">0</td><td class="num">0</td><td>Vorberechnete Deltas &rarr; &lt; 3,5 ns Rekursionsschleife</td></tr>
-    <tr><td><b>X/Y-Skalierer, H/V-Flip &amp; 24-Bit RGB X-Interpolator</b></td><td class="num">~90</td><td class="num">0</td><td class="num">0</td><td>2&times; 8-Bit-Addierer je Kanal + Transparenz-Kantenschutz</td></tr>
-    <tr><td><b>Y-Scanner, Clipping, 8&times;8 TDM-Mult &amp; DMA-FSM</b></td><td class="num">~190</td><td class="num">0</td><td class="num">0&ndash;1</td><td>1 Multiplizierer für <code>Y_SCALE</code> und Zeilenadresse im TDM</td></tr>
-    <tr><td><b>Denise 24-Bit Ausgangs-Prioritätsmischer</b> (4 Ebenen)</td><td class="num">~35</td><td class="num">0</td><td class="num">0</td><td>Mischung ganz am Ende nach fertigem <code>amiga_rgb</code></td></tr>
-    <tr><td><b>Gesamtsumme Sprite-Engine</b></td><td class="num ok"><b>~600 ALMs</b></td><td class="num ok"><b>18&ndash;19 M10K</b></td><td class="num ok"><b>0&ndash;1 DSP</b></td><td class="ok"><b>~10,4 % der freien ALMs &middot; ~8,5 % der freien M10K</b></td></tr>
+    <tr><td><b>64-Bit Prefetch-FIFO</b> (64 &times; 64 Bit, DDR3 &rarr; Entpacker)</td><td class="num">~25</td><td class="num">1</td><td class="num">0</td><td>Puffert <code>4&times;64 Bit</code> (256-Bit) DDR3-BL8-Bursts</td></tr>
+    <tr><td><b>32-Bit Multi-Mode Entpacker</b> (13 Formate + Zero-Word-Skip)</td><td class="num">~110</td><td class="num">0</td><td class="num">0</td><td>Erzeugt <code>opaque = (raw_code != 0)</code> + 1-Takt Skip bei 1:1</td></tr>
+    <tr><td><b>Eigener 2-Stufen High-Speed HAM/CLUT-Decoder</b></td><td class="num">~100</td><td class="num">0</td><td class="num">0</td><td>13-Bit signed Pre-Deltas &rarr; &lt; 3,5 ns Rekursionsschleife</td></tr>
+    <tr><td><b>X/Y-Skalierer, H/V-Flip &amp; 24-Bit RGB X-Interpolator</b></td><td class="num">~105</td><td class="num">0</td><td class="num">0</td><td>2&times; 8-Bit-Addierer je Kanal + <code>opaque</code>-Bit + Edge-Guard</td></tr>
+    <tr><td><b>Y-Scanner (4096), Clipping, 12&times;8 TDM-Mult &amp; DMA-FSM</b></td><td class="num">~205</td><td class="num">0</td><td class="num">0&ndash;1</td><td>12&times;8 Multiplizierer für <code>Y_SCALE</code> und Zeilenadresse im TDM</td></tr>
+    <tr><td><b>Denise 24-Bit Ausgangs-Prioritätsmischer</b> (4 Ebenen)</td><td class="num">~35</td><td class="num">0</td><td class="num">0</td><td>Mischung nach <code>amiga_rgb</code> + Blank-Gate für alle Ebenen</td></tr>
+    <tr><td><b>Gesamtsumme Sprite-Engine</b></td><td class="num ok"><b>~650 ALMs</b></td><td class="num ok"><b>18 M10K</b></td><td class="num ok"><b>0&ndash;1 DSP</b></td><td class="ok"><b>~11,3 % der freien ALMs &middot; ~8,1 % der freien M10K</b></td></tr>
   </table>
 </section>
 
@@ -570,10 +570,15 @@ function renderPipe() {
   });
 
   const canOverwrite = !zeroSkipMode && (160 > curCell.prio);
+  const isTie = !zeroSkipMode && (160 === curCell.prio);
   document.getElementById('lbInfo').textContent = zeroSkipMode
-    ? 'Zero-Word-Skip bei X=' + curCell.x + ': 64-Bit-Wort ist 64\'h00000000_00000000 -> acc = 0, dst_x springt in 1 Takt um +16 Pixel weiter, Zeilenbuffer bleibt unverändert!'
-    : 'Spalte X=' + curCell.x + ': Alter Buffer-Inhalt hat BUF_PRIO=' + curCell.prio + ' (' + curCell.src + '). Neues Sprite#3 hat SPR_PRIO=160 -> ' +
-      (canOverwrite ? '160 > ' + curCell.prio + ' => WE = 1 (Pixel wird mit Prio 160 überschrieben!)' : '160 < ' + curCell.prio + ' => WE = 0 (Sprite#5 mit Prio 210 bleibt vorn!)');
+    ? 'Zero-Word-Skip bei X=' + curCell.x + ': 64-Bit-Wort ist 64\'h00000000_00000000 (bei X_SCALE=$40 & !prev_opaque) -> acc = 0, dst_x springt in 1 Takt um +16 Pixel weiter!'
+    : 'Spalte X=' + curCell.x + ': Alter Buffer-Inhalt hat BUF_PRIO=' + curCell.prio + ' (' + curCell.src + '). Neues Sprite hat SPR_PRIO=160 -> ' +
+      (canOverwrite
+        ? '160 > ' + curCell.prio + ' => WE = 1 (Pixel wird mit Prio 160 überschrieben!)'
+        : (isTie
+          ? '160 == 160 => WE = 0 bei PRIO_GE=0 (Gleichstand: vorhandenes ' + curCell.src + ' mit Prio 160 bleibt stehen!)'
+          : '160 < ' + curCell.prio + ' => WE = 0 (' + curCell.src + ' mit Prio ' + curCell.prio + ' bleibt vorn!)'));
 }
 
 function stepPipe() {
@@ -848,26 +853,31 @@ function renderDescriptor() {
   document.getElementById('dXScaleV').textContent = hexPad(xScale, 2) + ' (' + (64 / xScale).toFixed(2) + '×)';
   document.getElementById('dYScaleV').textContent = hexPad(yScale, 2) + ' (' + (64 / yScale).toFixed(2) + '×)';
 
+  const yHeightLo = yHeight & 0xFF;
+  const yHeightHi = (yHeight >> 8) & 0x7;
+  const dataPtr = (0x02080000 | yHeightHi) >>> 0;
+
   document.getElementById('w0_y').textContent = hexPad(yPos, 4);
   document.getElementById('w0_x').textContent = hexPad(xPos, 4);
-  document.getElementById('w0_h').textContent = hexPad(yHeight, 2);
+  document.getElementById('w0_h').textContent = hexPad(yHeightLo, 2);
   document.getElementById('w0_w').textContent = hexPad(xWidth, 2);
   document.getElementById('w0_p').textContent = hexPad(prio, 2);
   document.getElementById('w0_pal').textContent = hexPad(pal, 2);
 
+  document.getElementById('w1_ptr').textContent = hexPad(dataPtr, 8);
   document.getElementById('w1_ff').textContent = hexPad(fmtFlags, 2);
   document.getElementById('w1_xs').textContent = hexPad(xScale, 2);
   document.getElementById('w1_ys').textContent = hexPad(yScale, 2);
   document.getElementById('w1_sc').textContent = hexPad(stepCtrl, 2) + (clut ? ' (CLUT)' : ' (HAM)');
 
   document.getElementById('dAsmOut').textContent =
-    '; 16-Byte Sprite-Descriptor im DDR3-Fast-RAM (32-Byte Burst-aligned):\n' +
+    '; 16-Byte Sprite-Descriptor im DDR3-Fast-RAM (32-Byte Burst-aligned, FullHD 2048px ready):\n' +
     'Sprite_Desc:\n' +
     '    DC.W ' + hexPad(yPos, 4) + ', ' + hexPad(xPos, 4) +
     '          ; +$00: Y_POS = ' + yPos + ', X_POS = ' + xPos + '\n' +
-    '    DC.B ' + hexPad(yHeight, 2) + ', ' + hexPad(xWidth, 2) + ', ' + hexPad(prio, 2) + ', ' + hexPad(pal, 2) +
-    '      ; +$04: Y_HEIGHT = ' + yHeight + ', X_WIDTH256 = ' + xWidth + ' (' + (xWidth * pxPerBurst) + ' px), PRIO = ' + prio + ', PAL_OFFSET = ' + pal + '\n' +
-    '    DC.L $02080000               ; +$08: DATA_PTR (32-Byte aligned Pixel-Adresse im Fast-RAM)\n' +
+    '    DC.B ' + hexPad(yHeightLo, 2) + ', ' + hexPad(xWidth, 2) + ', ' + hexPad(prio, 2) + ', ' + hexPad(pal, 2) +
+    '      ; +$04: Y_HEIGHT_LO = ' + yHeightLo + ' (Total=' + yHeight + '), X_WIDTH256 = ' + xWidth + ' (' + (xWidth * pxPerBurst) + ' px), PRIO = ' + prio + ', PAL_OFFSET = ' + pal + '\n' +
+    '    DC.L ' + hexPad(dataPtr, 8) + '               ; +$08: DATA_PTR ($02080000) | Y_HEIGHT[10:8] (' + yHeightHi + ')\n' +
     '    DC.B ' + hexPad(fmtFlags, 2) + ', ' + hexPad(xScale, 2) + ', ' + hexPad(yScale, 2) + ', ' + hexPad(stepCtrl, 2) +
     '      ; +$0C: FORMAT=' + fmt + '/FLAGS=' + hexPad(flags, 1) + ', X_SCALE=' + hexPad(xScale, 2) + ', Y_SCALE=' + hexPad(yScale, 2) + ', STEP_CTRL=' + (clut ? 'CLUT_MODE' : 'HAM_MODE');
 }
