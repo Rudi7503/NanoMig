@@ -1074,9 +1074,9 @@ function renderFrame() {{
 
   const pct = totalWords > 0 ? (skippedWords * 100 / totalWords).toFixed(1) : '0.0';
   document.getElementById('hwStats').textContent =
-    'Aktives Format: FORMAT ' + fmtId + ' (' + pxPerBurst + ' px/Burst) + 20 CLUT-Sterne (FORMAT 0)\n' +
+    'Aktives Format: FORMAT ' + fmtId + ' (' + pxPerBurst + ' px/Burst) + 20 CLUT-Sterne (FORMAT 0)\\n' +
     'Gelesene 64-Bit-Worte/Frame: ' + totalWords + '  |  Per 1-Takt Zero-Word-Skip übersprungen: ' +
-    skippedWords + ' (' + pct + '%)\n' +
+    skippedWords + ' (' + pct + '%)\\n' +
     'Decoder-Takte Mittel: ~' + Math.round(totalCycles / H) + ' Takte/Zeile (' + (totalCycles / H / 72.64).toFixed(1) + '%)' +
     '  |  Peak-Zeile (Y=' + peakLineY + '): ' + maxLineCycles + ' von 7.264 clk_114-Takten (' + (maxLineCycles / 72.64).toFixed(1) + '% Peak-Last!)';
 
