@@ -244,8 +244,8 @@ module minimig
 	output [8:0]  ldata_okk,   // left DAC data  (PWM volume)
 	output [8:0]  rdata_okk,   // right DAC data (PWM volume)
 	output  [1:0] aud_mix,
-	output [15:0] audio_ext_l,
-	output [15:0] audio_ext_r,
+	output signed [20:0] audio_ext_l,
+	output signed [20:0] audio_ext_r,
 	output        audio_dma_req,
 	output [31:0] audio_dma_addr,
 	input         audio_dma_ack,
@@ -478,12 +478,15 @@ always @(posedge clk) begin
     end
 end
 
+wire signed [15:0] cap_audio_l = (!audio_ext_l[20] && |audio_ext_l[19:15]) ? 16'sh7FFF : (audio_ext_l[20] && !(&audio_ext_l[19:15])) ? 16'sh8000 : audio_ext_l[15:0];
+wire signed [15:0] cap_audio_r = (!audio_ext_r[20] && |audio_ext_r[19:15]) ? 16'sh7FFF : (audio_ext_r[20] && !(&audio_ext_r[19:15])) ? 16'sh8000 : audio_ext_r[15:0];
+
 audio_capture AUDIO_CAPTURE (
     .clk(clk),
     .reset(reset),
     .sample_strobe(cap_sample_strobe),
-    .in_l(audio_ext_l),
-    .in_r(audio_ext_r),
+    .in_l(cap_audio_l),
+    .in_r(cap_audio_r),
     .buf_cs(audio_cap_access),
     .buf_addr(cpu_address_out[12:1]),
     .buf_rdata(audio_cap_rdata),

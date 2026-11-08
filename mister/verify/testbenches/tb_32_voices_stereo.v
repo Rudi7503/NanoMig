@@ -7,7 +7,7 @@ reg clk=0; always #5 clk=~clk;
 reg reset=1,cs=0,wr=0;
 reg [9:1] addr=0;
 reg [15:0] wdata=0;
-wire [15:0] rdata,sl,sr;
+wire [15:0] rdata; wire signed [20:0] sl, sr;
 wire req,irq; wire [31:0] dma_addr;
 reg ack=0; reg [15:0] data=0;
 audio_ext dut(.clk(clk),.reset(reset),.ntsc(1'b0),.reg_cs(cs),.reg_wr(wr),.reg_addr(addr),

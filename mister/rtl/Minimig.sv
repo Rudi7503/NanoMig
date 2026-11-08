@@ -504,7 +504,7 @@ sdram_ctrl #(.FOLD_CHIP_ARBITRATION(1)) ram1
 wire audio_dma_req, audio_dma_ack, audio_dma_error;
 wire [31:0] audio_dma_addr;
 wire [15:0] audio_dma_data;
-wire [15:0] audio_ext_l, audio_ext_r;
+wire signed [20:0] audio_ext_l, audio_ext_r;
 
 wire [24:1] arb_sdram_addon_addr;
 wire        arb_sdram_addon_claim;
@@ -1546,12 +1546,13 @@ always @(posedge CLK_AUDIO) begin
 	if(old_d0 == old_d1) {dsnd_al, dsnd_ar} <= old_d1;
 end
 
-// Coherent stereo mailbox. The source holds both words until the audio
-// clock acknowledges the toggle; neither channel can tear across a sample.
-reg [31:0] ext_mailbox;
+// Coherent stereo mailbox (42-bit: 2x 21-bit signed audio with +18 dB headroom).
+// The source holds both words until the audio clock acknowledges the toggle;
+// neither channel can tear across a sample.
+reg [41:0] ext_mailbox;
 reg ext_toggle, ext_ack;
 (* ASYNC_REG = "TRUE" *) reg [1:0] ext_ack_sync, ext_toggle_sync;
-reg signed [15:0] ext_audio_l, ext_audio_r;
+reg signed [20:0] ext_audio_l, ext_audio_r;
 always @(posedge clk_sys or posedge reset) begin
 	if (reset) begin
 		ext_mailbox <= 0;
@@ -1580,17 +1581,54 @@ always @(posedge CLK_AUDIO or posedge reset) begin
 	end
 end
 
-reg [15:0] out_l, out_r;
+// Master 22-Bit Summer & 48 kHz True-Peak AGC Limiter
+// Sums Paula (4-ch), 32-Voice Ext (+18 dB headroom), Toccata, MT32, CDDA, Drive Sounds.
+// Smoothly limits master peaks to -0.5 dBFS ($7800 = 30,720) with 0 hard clipping.
+reg signed [21:0] tmp_l, tmp_r;
+reg [8:0] audio_strobe_div;
+wire master_sample_strobe = (audio_strobe_div == 9'd0);
+
 always @(posedge CLK_AUDIO) begin
-	reg [18:0] tmp_l, tmp_r;
+	if (reset) begin
+		audio_strobe_div <= 9'd0;
+		tmp_l <= 22'sd0;
+		tmp_r <= 22'sd0;
+	end else begin
+		audio_strobe_div <= audio_strobe_div + 1'b1;
 
-	tmp_l <= {{3{aud_l[15]}},aud_l} + {{3{toccata_aud_left[15]}},toccata_aud_left} + (mt32_mute ? 19'd0 : {{3{mt32_i2s_l[15]}},mt32_i2s_l}) + {{3{cdda_sl[15]}}, cdda_sl} + {{3{dsnd_al[15]}}, dsnd_al} + {{3{ext_audio_l[15]}},ext_audio_l};
-	tmp_r <= {{3{aud_r[15]}},aud_r} + {{3{toccata_aud_right[15]}},toccata_aud_right} + (mt32_mute ? 19'd0 : {{3{mt32_i2s_r[15]}},mt32_i2s_r}) + {{3{cdda_sr[15]}}, cdda_sr} + {{3{dsnd_ar[15]}}, dsnd_ar} + {{3{ext_audio_r[15]}},ext_audio_r};
+	tmp_l <= {{6{aud_l[15]}},aud_l} + 
+	         {{6{toccata_aud_left[15]}},toccata_aud_left} + 
+	         (mt32_mute ? 22'sd0 : {{6{mt32_i2s_l[15]}},mt32_i2s_l}) + 
+	         {{6{cdda_sl[15]}}, cdda_sl} + 
+	         {{6{dsnd_al[15]}}, dsnd_al} + 
+	         {{1{ext_audio_l[20]}},ext_audio_l};
 
-	// clamp the output
-	out_l <= (tmp_l[18:15] == 4'b0000 || tmp_l[18:15] == 4'b1111) ? tmp_l[15:0] : {tmp_l[18], {15{~tmp_l[18]}}};
-	out_r <= (tmp_r[18:15] == 4'b0000 || tmp_r[18:15] == 4'b1111) ? tmp_r[15:0] : {tmp_r[18], {15{~tmp_r[18]}}};
+	tmp_r <= {{6{aud_r[15]}},aud_r} + 
+	         {{6{toccata_aud_right[15]}},toccata_aud_right} + 
+	         (mt32_mute ? 22'sd0 : {{6{mt32_i2s_r[15]}},mt32_i2s_r}) + 
+	         {{6{cdda_sr[15]}}, cdda_sr} + 
+	         {{6{dsnd_ar[15]}}, dsnd_ar} + 
+	         {{1{ext_audio_r[20]}},ext_audio_r};
+	end
 end
+
+wire signed [15:0] out_l, out_r;
+wire master_agc_active;
+wire [15:0] master_peak_hold;
+
+audio_agc_limiter #(
+	.CEILING(22'sd30720)   // -0.5 dBFS ceiling margin
+) master_agc_limiter (
+	.clk(CLK_AUDIO),
+	.reset(reset),
+	.sample_strobe(master_sample_strobe),
+	.in_l(tmp_l),
+	.in_r(tmp_r),
+	.out_l(out_l),
+	.out_r(out_r),
+	.agc_active(master_agc_active),
+	.peak_hold(master_peak_hold)
+);
 
 assign AUDIO_S = 1;
 assign AUDIO_L = out_l;
