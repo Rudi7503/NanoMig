@@ -40,8 +40,14 @@ In `c0_ham_from_setup.rpt` (Slow 1100mV 100C) hatte der bisherige Playfield-Deco
 * **Entscheidende Beobachtung:** Die Vorzeichen-Deltas `delta_r`, `delta_g`, `delta_b` hängen **nur von `code`, `mode` und `step_r/g/b` ab – nicht vom `accumulator`!**
 * **Verbindliche Bitbreiten (`step_r/g/b` sind 5 Bit `0..31`, daher reichen 10 Bit signed exakt):**
   * Wie in [`mister/rtl/ham_video_pipeline.v`](../mister/rtl/ham_video_pipeline.v#L50-L51) stammen `step_r`, `step_g`, `step_b` aus dem 16-Bit-Steuerwort (`[14:10]`, `[9:5]`, `[4:0]`) und sind jeweils **5 Bit breit (`0 .. 31`)** (der Port im Sprite-Decoder wird entsprechend sauber als `input wire [4:0] step_r, step_g, step_b` deklariert).
-  * Damit beträgt das maximale Standard-Delta `31 × 4 (Turbo) × 2 (Level ±2) = ±248`, und selbst mit maximaler Sprite-eigener `CUSTOM_STEP`-Skalierung (`× 2`) maximal **`±496`**.
-  * Die vorberechneten Deltas passen damit überlauffrei in **10 Bit signed (`-512 .. +511`)**, und die Addition `acc + delta` im Rekursions-Zyklus benötigt nur **11 Bit signed** vor der Sättigung auf `0..255` (`uint8`).
+  * **Exakte Definition der 4 `CUSTOM_STEP`-Faktoren (`STEP_CTRL[7] == 1`):**  
+    Für jeden Kanal `c` (`R = STEP_CTRL[5:4]`, `G = STEP_CTRL[3:2]`, `B = STEP_CTRL[1:0]`) wird die effektive 6-Bit-Schrittweite `eff_step_c[5:0]` (`0..62`) wie folgt bestimmt:
+    * `2'b00` (`0,5×`): `eff_step_c = step_c >> 1` *(ganzzahlige Abrundung `floor(step_c / 2)`)*
+    * `2'b01` (`1,0×`): `eff_step_c = step_c` *(unverändert `0..31`)*
+    * `2'b10` (`1,5×`): `eff_step_c = step_c + (step_c >> 1)` *(exakt `step_c + floor(step_c / 2)`, max. `31 + 15 = 46`)*
+    * `2'b11` (`2,0×`): `eff_step_c = step_c << 1` *(exakt `2 * step_c`, max. `62`)*
+  * Damit beträgt das maximale Standard-Delta `31 × 4 (Turbo) × 2 (Level ±2) = ±248`, und mit `CUSTOM_STEP = 2'b11` (`eff_step_c = 62`) maximal **`62 × 4 × 2 = ±496`**.
+  * Die vorberechneten Deltas passen damit überlauffrei in **10 Bit signed (`-512 .. +511`)**, und die Addition `acc + delta` im Rekursions-Zyklus liegt in **`[-496 .. +751]`** und benötigt nur **11 Bit signed** vor der Sättigung auf `0..255` (`uint8`).
 * **2-Stufen-Aufteilung (ohne Zusatzlatenz, parallel zum Paletten-BRAM-Read):**
   1. **Stufe 1 (Entpacker & Paletten-Read-Takt):**  
      Parallel zum synchronen Lesezugriff auf das M10K-Paletten-RAM (`palette_index = (PAL_OFFSET + raw_code) & 8'hFF`) berechnet die Logik bereits `anchor_reg`, `opaque_reg = (raw_code != 0)` sowie die fertigen **10-Bit-signed** Summanden `delta_r`, `delta_g`, `delta_b` und speichert sie in Registern.
@@ -120,8 +126,11 @@ $$\underbrace{\text{BUF\_PRIO [31:24]}}_{\text{8-Bit Priorität (`0` = leer)}} \
   $$\text{eff\_old\_prio} = (\text{last\_wr\_valid} \land (\text{dst\_x} == \text{last\_wr\_x})) \;?\; \text{last\_wr\_prio} : \text{ram\_old\_prio}$$
 * **Schreibbedingung (`WE`):**
   $$\text{WE} = \text{out\_opaque} \;\land\; \big(\text{PRIO\_GE} \;?\; (\text{SPR\_PRIO} \ge \text{eff\_old\_prio}) : (\text{SPR\_PRIO} > \text{eff\_old\_prio})\big)$$
-* **Deterministisches Löschen über alle 2.048 Spalten:**  
-  Im aktiven Auslese-Puffer wird jede gelesene Spalte sofort im selben Takt mit `32'h0000_0000` überschrieben (**Clear-on-Read**). Zusätzlich läuft der Löschzähler bis zum Zeilenende deterministisch über alle verbleibenden Spalten bis `2047`, sodass auch bei schmaleren Bildschirmmodi oder Moduswechseln niemals alte Pixel am Rand stehenbleiben.
+* **Quellraster-Vertrag vs. `2048 px` FullHD-BRAM-Reserve & Deterministisches Löschen:**  
+  * **Aktuelle Minimig-AGA / Denise-Integration (Quellraster vor dem MiSTer-HDMI-Scaler):** Die Videoausgabe von Denise arbeitet im Amiga-Quellraster (`clk_sys = 28,375 MHz`, PAL-Zeilendauer `64 µs` = `1.816 clk_sys`-Takte = `7.264 clk_114`-Takte; aktive horizontale Breite `SPR_CLIP_XMAX` bis `1.432` Pixel im SuperHiRes-Overscan).
+  * Da die Schreibstufe des Zeilenbuffers auf `0 <= dst_x < SPR_CLIP_XMAX` clippt, werden außerhalb von `SPR_CLIP_XMAX` niemals Pixel in den Zeilenbuffer geschrieben.
+  * Im aktiven Auslese-Puffer wird jede gelesene Spalte `0 .. SPR_CLIP_XMAX - 1` sofort im selben Takt mit `32'h0000_0000` überschrieben (**Clear-on-Read**, benötigt bei SuperHiRes-Overscan maximal `1.432` der `1.816` `clk_sys`-Takte!). Bei einer Verkleinerung von `SPR_CLIP_XMAX` oder beim Frame-Start übernimmt die `clk_114`-Seite (`7.264` Takte/Zeile) einen vollständigen `0..2047`-Clear.
+  * **FullHD-Reserve (`2048` Einträge):** Die physische Tiefe von `2048 × 32 Bit` (`16 M10K`) hält die Hardware-Adressierung bereits komplett für künftige native HD-/RTG-Ausgabemodi (`SPR_CLIP_XMAX` bis `1920` / `2048`) bereit.
 
 ### 5.2 Mischen NACH dem fertigen 24-Bit-Amiga-Bild (4 Ebenen über `PRIO[7:6]`)
 Das Mischen erfolgt **ganz am Ende von [`denise.v`](../mister/rtl/denise.v#L532)** nach dem fertigen 24-Bit-Amiga-Bild (`amiga_rgb[23:0]`).  
@@ -152,7 +161,7 @@ Alle Felder in Wort 0 sind für den 68000/68020-Programmierer sauber auf **16-Bi
 | :---: | :---: | :---: | :--- | :--- |
 | `+$00` | `[63:48]` | `int16` | **`Y_POS`** | Startzeile (vorzeichenbehaftet, ausgewertet als `int13` `-4096 .. +4095`, deckt FullHD `1080p` + Offscreen-Clipping ab) |
 | `+$02` | `[47:32]` | `int16` | **`X_POS`** | Startspalte (vorzeichenbehaftet, ausgewertet als `int13` `-4096 .. +4095`, deckt `2048 px` + Offscreen-Clipping ab) |
-| `+$04` | `[31:24]` | `uint8` | **`Y_HEIGHT_LO`** | Untere 8 Bit der Quellhöhe; zusammen mit `DATA_PTR[2:0]` als `Y_HEIGHT[10:8]` ergibt sich **`uint11 Y_HEIGHT` (`1 .. 2047` Quellzeilen; `11'd0` = Listen-Sentinel!)** |
+| `+$04` | `[31:24]` | `uint8` | **`Y_HEIGHT_LO`** | Untere 8 Bit der Quellhöhe; zusammen mit `DATA_PTR[2:0]` als `Y_HEIGHT[10:8]` ergibt sich **`uint11 Y_HEIGHT = {DATA_PTR[2:0], Y_HEIGHT_LO}` (`1 .. 2047` Quellzeilen)**. **Wichtig:** Das Listen-Sentinel ist **`Y_HEIGHT[10:0] == 11'd0`** (damit Höhen wie `256`, `512` oder `1024`, bei denen `Y_HEIGHT_LO == 0` ist, korrekt erkannt werden!) |
 | `+$05` | `[23:16]` | `uint8` | **`X_WIDTH256`** | Breite in **`4 × 64 Bit` (256-Bit / 32-Byte) Burst-Blöcken** (`1 .. 64` Bursts = **32 bis 4.096 Quellpixel**; `0` = No-Op; Werte `> 64` werden auf `64` geklemmt) |
 | `+$06` | `[15:8]` | `uint8` | **`PRIO`** | 8-Bit Priorität (`0` = dieses Sprite überspringen/unsichtbar; `1 .. 255` = aktiv) |
 | `+$07` | `[7:0]` | `uint8` | **`PAL_OFFSET`** | Start-Offset in der 256-Farben-Sprite-Palette (`palette_idx = (PAL_OFFSET + raw_code) & 8'hFF`) |
@@ -160,7 +169,7 @@ Alle Felder in Wort 0 sind für den 68000/68020-Programmierer sauber auf **16-Bi
 ### 64-Bit Wort 1 (Offset `+$08 .. +$0F`): Datenzeiger, Format, Skalierung & Steuerung
 | Offset | Bits | Typ | Feldname | Beschreibung |
 | :---: | :---: | :---: | :--- | :--- |
-| `+$08` | `[63:32]` | `uint32` | **`DATA_PTR`** | `[31:5]`: 32-Byte-aligned Basisadresse der Pixeldaten im Fast-RAM (`DATA_PTR & 32'hFFFF_FFE0`)<br>`[2:0]`: **`Y_HEIGHT[10:8]`** (obere 3 Bits der Quellhöhe für Sprites mit `256 .. 2047` Zeilen; bei normalen Sprites `<= 255` einfach `0`) |
+| `+$08` | `[63:32]` | `uint32` | **`DATA_PTR`** | `[31:5]`: 32-Byte-aligned Basisadresse der Pixeldaten im Fast-RAM (`DATA_PTR & 32'hFFFF_FFE0`; Bits `[4:3]` sind reserviert `00` und werden ausmaskiert)<br>`[2:0]`: **`Y_HEIGHT[10:8]`** (obere 3 Bits der 11-Bit-Quellhöhe für Sprites mit `256 .. 2047` Zeilen) |
 | `+$0C` | `[31:28]` | `uint4` | **`FORMAT`** | HAM/CLUT-Packformat `0 .. 12` (gemäß Tabelle in Abschnitt 3; `13..15` = No-Op) |
 | `+$0C` | `[27:24]` | `uint4` | **`FLAGS`** | Bit `0`: `H_FLIP` (Horizontal spiegeln)<br>Bit `1`: `V_FLIP` (Vertikal spiegeln)<br>Bit `2`: `SMOOTH_X` (24-Bit RGB Horizontal-Interpolation ein)<br>Bit `3`: `PRIO_GE` (`>=` statt `>` bei gleicher Priorität) |
 | `+$0D` | `[23:16]` | `uint8` | **`X_SCALE`** | Horizontaler Skalierungsfaktor (Festkomma `2.6`, `$40` = 1,0×; zulässiger Bereich **`$10` (4,0× Zoom) bis `$FF` (0,25× Shrink)**; `0` = No-Op, `1..$0F` wird auf `$10` geklemmt) |
@@ -179,32 +188,37 @@ Für jede vorzubereitende Zielzeile `next_y` (`0 .. Screen_Height - 1`, bis `108
 2. **Sliding-Window Start-Index (`first_active_idx`) & Early Exit:**
    * Zu Beginn des Frames (`next_y == 0`) ist `first_active_idx = 0`. Solange die führenden Sprites der Liste bereits komplett oberhalb von `next_y` liegen (`scaled_y >= Y_HEIGHT`), rückt `first_active_idx` für die Folgezeile vor.
    * Liest die Engine `Y_HEIGHT == 0` (Sentinel) **oder** `Y_POS > next_y`, bricht der Scan für diese Zeile sofort ab (**Early Exit**).
-3. **Vorzeichenrichtige Y-Skalierung (`12 × 8 Bit`) & `V_FLIP`:**
-   * Hat ein Sprite `Y_POS <= next_y`, ist die Differenz `dy = next_y - Y_POS` garantiert nichtnegativ. Ist `dy >= 2048`, ist das Sprite abgelaufen.
-   * Für `dy[11:0]` (`0..2047`) und `eff_y_scale[7:0]` (`$10..$FF`) berechnet der geteilte Multiplizierer in **Zyklus 1** das volle 20-Bit-Produkt:
-     $$\text{scaled\_y}[13:0] = (\text{dy}[11:0] \times \text{eff\_y\_scale}[7:0]) \gg 6$$
-   * Ist `scaled_y >= Y_HEIGHT[10:0]`, wird das Sprite auf dieser Zeile übersprungen.
+3. **Vorzeichenrichtige Y-Skalierung (`13 × 8 Bit`, kein verfrühtes `dy`-Clipping!) & `V_FLIP`:**
+   * Hat ein Sprite `Y_POS <= next_y` (mit `Y_POS` als `int13` `-4096 .. +4095` und `next_y` in `0 .. 2047`), ist die Differenz `dy = next_y - Y_POS` garantiert nichtnegativ und liegt in **`0 .. 6143` (`13 Bit unsigned`)**. *(Ein Vorab-Verwerfen bei `dy >= 2048` findet ausdrücklich **nicht** statt, damit auch stark vergrößerte hohe Sprites wie `Y_HEIGHT = 1080, Y_SCALE = 16, Y_POS = -1500` bei `dy = 2500 -> scaled_y = 625` vollständig sichtbar bleiben!)*
+   * Für `dy[12:0]` (`0..6143`) und `eff_y_scale[7:0]` (`$10..$FF`) berechnet der geteilte Multiplizierer in **Zyklus 1** das volle **21-Bit-Produkt**:
+     $$\text{scaled\_y}[14:0] = (\text{dy}[12:0] \times \text{eff\_y\_scale}[7:0]) \gg 6$$
+   * Das Sprite ist auf dieser Bildschirmzeile genau dann abgelaufen, wenn **`scaled_y >= Y_HEIGHT[10:0]`** gilt.
    * Andernfalls ist die Quellzeile `rel_y[10:0] = V_FLIP ? (Y_HEIGHT - 11'd1 - scaled_y[10:0]) : scaled_y[10:0]`.
    * In **Zyklus 2** berechnet derselbe Multiplizierer den Zeilen-Offset im RAM (`11 × 7 Bit = 18 Bit` Burst-Index):
      $$\text{Line\_Addr} = (\text{DATA\_PTR} \ \& \ \text{32'hFFFF\_FFE0}) + \big((\text{rel\_y}[10:0] \times \text{eff\_width256}[6:0]) \ll 5\big)$$
-4. **Horizontale Skalierung (`X_SCALE`), `H_FLIP` & 24-Bit-RGB-Interpolation (`SMOOTH_X`):**
-   * Der HAM/CLUT-Decoder verarbeitet alle Quellpixel einer Zeile immer streng von links nach rechts (`src_x = 0 .. src_width_px - 1`).
-   * **Exakte Zielspalten-Steuerung:**
-     * Phasenakkumulator `x_phase` (Festkomma `.6`): Für jedes Zielpixel wird `x_phase <= x_phase + eff_x_scale` addiert. Solange `x_phase < 64` (`eff_x_scale < $40`, Vergrößerung), hält `decoder_hold = 1` den Decoder an, während `dst_x` um `+1` (bei `H_FLIP == 0`) bzw. `-1` (bei `H_FLIP == 1`) weiterrückt.
-     * Bei `H_FLIP == 1` startet `dst_x` am rechten Rand des skalierten Sprites: `dst_x_start = X_POS + dst_width_px - 1` (wobei `dst_width_px = (src_width_px << 6) / eff_x_scale` einmalig beim Sprite-Zeilenstart per 10-Takt-Shift-Subtract-Teiler während der DDR3-Erstburst-Latenz berechnet wird – **0 Extra-ALMs/DSPs und pixelgenauer rechter Rand!**).
-   * **24-Bit RGB Horizontal-Interpolation (`SMOOTH_X`):**
-     * Hält `prev_rgb[23:0]`, `prev_opaque` und `curr_rgb[23:0]`, `curr_opaque`.
-     * Mit **zwei 8-Bit-Addierern pro Farbkanal** werden die 4 Subpixel-Phasen (`frac = x_phase[5:4]`) berechnet:
-       * `mid = (P0 + P1) >> 1`
-       * `qtr = (mid + (frac[1] ? P1 : P0)) >> 1`
-     * **Transparenz-Kantenschutz (Edge-Guard):**
-       * `prev_opaque && curr_opaque`: `out_opaque = 1`, `out_rgb = interp_rgb(P0, P1, frac)`.
-       * `prev_opaque && !curr_opaque`: `out_opaque = (frac < 2'b10)`, `out_rgb = P0` (kein Mischen mit Schwarz!).
-       * `!prev_opaque && curr_opaque`: `out_opaque = (frac >= 2'b10)`, `out_rgb = P1` (kein Mischen mit Schwarz!).
-       * `!prev_opaque && !curr_opaque`: `out_opaque = 0`, `out_rgb = 24'h000000`.
-5. **Horizontales Clipping (`0 .. 2047`) & Bitgenauer `Zero-Word-Skip`:**
-   * **Clipping:** Schreibzugriffe in den Zeilenbuffer finden nur statt, wenn `0 <= dst_x < 2048`. Erreicht `dst_x` bei `H_FLIP == 0` den Wert `2048` (oder fällt bei `H_FLIP == 1` unter `0`), bricht die Engine die aktuelle Sprite-Zeile sofort ab.
-   * **Bitgenauer `Zero-Word-Skip`:** Ist das nächste 64-Bit-Wort `64'h00000000_00000000` **und** gilt `eff_x_scale == 8'h40` (1:1) **und** `prev_opaque == 0` (Pipeline frei von opaken Kantenpixeln), überspringt die Engine das 64-Bit-Wort in **1 Takt** (`acc <= 0`, `dst_x <= dst_x +/- N`). Andernfalls läuft das Wort regulär durch den Entpacker. Dadurch sind `Skip EIN` und `Skip AUS` in allen Modi **100 % bit-identisch**.
+4. **Einheitliche X-Abtastregel (`X_SCALE`), `H_FLIP` ohne Dividierer & 24-Bit-RGB-Interpolation (`SMOOTH_X`):**
+   * Der HAM/CLUT-Decoder verarbeitet alle Quellpixel einer Zeile (`src_width_px = eff_width256 * px_per_burst`, bis zu `4.096` Quellpixel) immer streng von links nach rechts (`src_idx = 0 .. src_width_px - 1`).
+   * **Einheitliche Phasenakkumulator-Abtastung (`u_fp` im `12.6`-Festkommaformat, kein Dividierer nötig!):**
+     * Zu Beginn der Sprite-Zeile startet die Festkomma-Quellposition bei `u_fp = 18'd0` und die Zielspalte (`16 Bit signed`, `-32768 .. +32767`) bei `dst_x = X_POS`.
+     * Solange **`(u_fp >> 6) < src_width_px`** gilt, wird pro Ausgabeschritt ein Zielpixel an `dst_x` erzeugt:
+       * Linkes Stützpixel ist `P0 = src_pixel[u_fp >> 6]`, rechtes Nachbarpixel ist `P1 = ((u_fp >> 6) + 1 < src_width_px) ? src_pixel[(u_fp >> 6) + 1] : Transparent(opaque=0, rgb=0)`.
+       * Im Streaming-Betrieb hält die Stufe nach dem Decoder das Paar `(P0, P1)` in zwei Registern; bei jedem Ausgabeschritt rückt `u_fp_next = u_fp + eff_x_scale` vor, und der Decoder liefert genau `delta_src = (u_fp_next >> 6) - (u_fp >> 6)` (`0` Takte bei Zoom, `1` Takt bei 1:1, `1..4` Takte bei Shrink) neue Quellpixel nach!
+     * **Verbindliche `H_FLIP`-Regel ohne Hardware-Dividierer:**
+       * Bei `H_FLIP == 0` zählt `dst_x` nach jedem Zielpixel vorwärts (`dst_x <= dst_x + 16'sd1`).
+       * Bei `H_FLIP == 1` gibt `X_POS` im Descriptor direkt die **rechte Startspalte** des gespiegelten Sprites an, und `dst_x` zählt nach jedem Zielpixel rückwärts (`dst_x <= dst_x - 16'sd1`). Damit entfällt jede Division im FPGA, und `H_FLIP == 1` erzeugt garantiert auf das Pixel genau dieselbe Zielbreite und dieselben Abtastpunkte wie `H_FLIP == 0`!
+   * **24-Bit RGB Horizontal-Interpolation (`SMOOTH_X`) mit 9-Bit-Zwischensummen:**
+     * Für jeden Farbkanal `c` (`R, G, B` je `0..255`) werden mit **9-Bit unsigned Zwischensummen (`0..510`)** die 4 Subpixel-Phasen (`frac = u_fp[5:4]`) berechnet:
+       * `mid_c  = (9'd0 + P0_c + P1_c) >> 1`
+       * `qtr1_c = (9'd0 + mid_c + P0_c) >> 1` *(für `frac == 2'd1`, 25 %)*
+       * `qtr3_c = (9'd0 + mid_c + P1_c) >> 1` *(für `frac == 2'd3`, 75 %)*
+     * **Verbindliche Transparenz-Kantenschutz-Wahrheitstabelle (Edge-Guard):**
+       * `P0.opaque && P1.opaque`: `out_opaque = 1`, `out_rgb = SMOOTH_X ? mux(frac, P0, qtr1, mid, qtr3) : P0.rgb`.
+       * `P0.opaque && !P1.opaque`: `out_opaque = SMOOTH_X ? (frac < 2'd2) : 1'b1`, `out_rgb = out_opaque ? P0.rgb : 24'h000000`.
+       * `!P0.opaque && P1.opaque`: `out_opaque = SMOOTH_X ? (frac >= 2'd2) : 1'b0`, `out_rgb = out_opaque ? P1.rgb : 24'h000000`.
+       * `!P0.opaque && !P1.opaque`: `out_opaque = 0`, `out_rgb = 24'h000000`.
+5. **Horizontales Clipping (`16 Bit signed` -> `0 .. SPR_CLIP_XMAX - 1`) & Bitgenauer `Zero-Word-Skip`:**
+   * **Clipping:** Da `dst_x` intern als `int16` (`-32768 .. +32767`) geführt wird, kann auch `X_POS = 4095` plus `4096 × 4 = 16384` niemals überlaufen. In den Zeilenbuffer wird nur geschrieben, wenn `0 <= dst_x < SPR_CLIP_XMAX` (mit `SPR_CLIP_XMAX <= 2048`) gilt. Erreicht `dst_x` bei `H_FLIP == 0` den Wert `SPR_CLIP_XMAX` (oder fällt bei `H_FLIP == 1` unter `0`), bricht die Engine die aktuelle Sprite-Zeile sofort ab.
+   * **Bitgenauer `Zero-Word-Skip`:** Ist ein 64-Bit-aligned Quellwort `64'h00000000_00000000` (`N = 8..16` transparente Pixel) **und** gilt `eff_x_scale == 8'h40` (1:1), `u_fp[5:0] == 6'd0` **sowie** dass sämtliche Pipeline-Stufen leer/transparent sind (`s1_valid == 0 && s2_valid == 0 && !P0.opaque`), überspringt die Engine das 64-Bit-Wort in **1 Takt** (`acc <= 0`, `u_fp <= u_fp + (N << 6)`, `dst_x <= H_FLIP ? (dst_x - N) : (dst_x + N)`). Andernfalls läuft das Wort regulär durch den Entpacker. Dadurch sind `Skip EIN` und `Skip AUS` in allen Modi **100 % bit-identisch**.
 
 ---
 
@@ -219,7 +233,7 @@ Für jede vorzubereitende Zielzeile `next_y` (`0 .. Screen_Height - 1`, bis `108
    * Ein neuer 4er-Burst wird nur angefordert, wenn `fifo_count + in_flight_beats <= 60`.
 3. **Dynamisches Zeilen-Zeitbudget & Diagnosezähler (`SPR_LINE_OVERRUN`):**
    * Es gibt **keine starre 32-Sprite-Sperre pro Zeile**: In einer Scanline (`7.264 clk_114-Takte` bei 15 kHz PAL bzw. `3.632 clk_114-Takte` bei 31 kHz) können beliebig viele aktive Sprites (z. B. >100 kleine Partikel-Sprites oder mehrere `2048 px` breite FullHD-Layer) gerendert werden, solange das Taktbudget der Zeile reicht.
-   * Wird `line_budget_eof` (16 Takte vor Zeilenende) erreicht, beendet die DMA-FSM einen eventuell laufenden 4er-Burst geordnet, verwirft den Rest der Zeile, leert das FIFO und inkrementiert den 16-Bit-Diagnosezähler **`SPR_OVERRUN_CNT`** (Statusbit `SPR_LINE_OVERRUN`).
+   * Wird `line_budget_eof` (16 Takte vor Zeilenende) erreicht, stellt die DMA-FSM keine neuen Burst-Anforderungen mehr, verwirft eventuell noch eintreffende Beats eines bereits laufenden Bursts über ein Zeilen-Epoch-Tag (`req_line_id != cur_line_id` bzw. `drain_beats`-Zähler, sodass niemals veraltete Beats in der Folgezeile landen!), leert das FIFO und inkrementiert den 16-Bit-Diagnosezähler **`SPR_OVERRUN_CNT`** (Statusbit `SPR_LINE_OVERRUN`). Die bereits in den Zeilenbuffer geschriebenen Pixel der Zeile bleiben dabei gültig sichtbar.
 
 ### 8.2 Geschätzter FPGA-Ressourcenbedarf (Cyclone V, inkl. `2048 px` FullHD-Ausbau)
 Aktuell frei im Core (Stand Seed 11): **5.758 ALMs**, **223 M10K-Blöcke**, **37 DSPs**.

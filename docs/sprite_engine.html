@@ -310,16 +310,18 @@
   <div class="ctl">
     <label>Pixel P0 (links):
       <select id="lerpP0">
-        <option value="224,64,32">Opak Rot-Orange ($E04020)</option>
-        <option value="32,160,240">Opak Hellblau ($20A0F0)</option>
-        <option value="0,0,0">Transparent Schwarz ($000000, code=0)</option>
+        <option value="1,224,64,32">Opak Rot-Orange ($E04020, opaque=1)</option>
+        <option value="1,32,160,240">Opak Hellblau ($20A0F0, opaque=1)</option>
+        <option value="1,0,0,1">Opak Fast-Schwarz ($000001, opaque=1)</option>
+        <option value="0,0,0,0">Transparent ($000000, raw_code=0, opaque=0)</option>
       </select>
     </label>
     <label>Pixel P1 (rechts):
       <select id="lerpP1">
-        <option value="32,224,112" selected>Opak Smaragdgrün ($20E070)</option>
-        <option value="255,220,40">Opak Goldgelb ($FFDC28)</option>
-        <option value="0,0,0">Transparent Schwarz ($000000, code=0)</option>
+        <option value="1,32,224,112" selected>Opak Smaragdgrün ($20E070, opaque=1)</option>
+        <option value="1,255,220,40">Opak Goldgelb ($FFDC28, opaque=1)</option>
+        <option value="1,0,1,0">Opak Fast-Schwarz ($000100, opaque=1)</option>
+        <option value="0,0,0,0">Transparent ($000000, raw_code=0, opaque=0)</option>
       </select>
     </label>
     <label>
@@ -704,39 +706,52 @@ document.getElementById('fmtClutChk').onchange = renderFormat;
 renderFormat();
 
 // =========================================================================
-// 4. 24-BIT X-INTERPOLATOR DEMO
+// 4. 24-BIT X-INTERPOLATOR DEMO (WITH EXPLICIT OPAQUE BIT)
 // =========================================================================
-function parseRgb(str) {
-  return str.split(',').map(Number);
+function parsePx(str) {
+  const arr = str.split(',').map(Number);
+  return { opaque: arr[0] === 1, rgb: [arr[1], arr[2], arr[3]] };
 }
 function rgbHex(r, g, b) {
   return '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('').toUpperCase();
 }
+function evalStep(p0, p1, frac, smooth) {
+  if (p0.opaque && p1.opaque) {
+    if (!smooth || frac === 0) return { opaque: true, rgb: p0.rgb };
+    const mid = [ (p0.rgb[0] + p1.rgb[0]) >> 1, (p0.rgb[1] + p1.rgb[1]) >> 1, (p0.rgb[2] + p1.rgb[2]) >> 1 ];
+    if (frac === 2) return { opaque: true, rgb: mid };
+    if (frac === 1) return { opaque: true, rgb: [ (mid[0] + p0.rgb[0]) >> 1, (mid[1] + p0.rgb[1]) >> 1, (mid[2] + p0.rgb[2]) >> 1 ] };
+    return { opaque: true, rgb: [ (mid[0] + p1.rgb[0]) >> 1, (mid[1] + p1.rgb[1]) >> 1, (mid[2] + p1.rgb[2]) >> 1 ] };
+  }
+  if (p0.opaque && !p1.opaque) {
+    const op = smooth ? (frac < 2) : true;
+    return { opaque: op, rgb: op ? p0.rgb : [0,0,0] };
+  }
+  if (!p0.opaque && p1.opaque) {
+    const op = smooth ? (frac >= 2) : false;
+    return { opaque: op, rgb: op ? p1.rgb : [0,0,0] };
+  }
+  return { opaque: false, rgb: [0,0,0] };
+}
 function renderLerp() {
-  const p0 = parseRgb(document.getElementById('lerpP0').value);
-  const p1 = parseRgb(document.getElementById('lerpP1').value);
+  const p0 = parsePx(document.getElementById('lerpP0').value);
+  const p1 = parsePx(document.getElementById('lerpP1').value);
   const smooth = document.getElementById('lerpSmoothChk').checked;
-  const p0Trans = (p0[0] === 0 && p0[1] === 0 && p0[2] === 0);
-  const p1Trans = (p1[0] === 0 && p1[1] === 0 && p1[2] === 0);
-  const edgeGuard = p0Trans || p1Trans;
-
-  const mid = [ (p0[0] + p1[0]) >> 1, (p0[1] + p1[1]) >> 1, (p0[2] + p1[2]) >> 1 ];
-  const qtr1 = [ (mid[0] + p0[0]) >> 1, (mid[1] + p0[1]) >> 1, (mid[2] + p0[2]) >> 1 ];
-  const qtr3 = [ (mid[0] + p1[0]) >> 1, (mid[1] + p1[1]) >> 1, (mid[2] + p1[2]) >> 1 ];
+  const edgeGuard = (!p0.opaque || !p1.opaque);
 
   const steps = [
-    { label:'frac = 0/4 (P0)',   rgb: p0 },
-    { label:'frac = 1/4 (25%)',  rgb: (!smooth || edgeGuard) ? p0 : qtr1 },
-    { label:'frac = 2/4 (mid)',  rgb: (!smooth || edgeGuard) ? p0 : mid },
-    { label:'frac = 3/4 (75%)',  rgb: (!smooth || edgeGuard) ? p1 : qtr3 },
-    { label:'frac = 4/4 (P1)',   rgb: p1 }
+    { label:'frac = 0/4 (P0)',   px: evalStep(p0, p1, 0, smooth) },
+    { label:'frac = 1/4 (25%)',  px: evalStep(p0, p1, 1, smooth) },
+    { label:'frac = 2/4 (mid)',  px: evalStep(p0, p1, 2, smooth) },
+    { label:'frac = 3/4 (75%)',  px: evalStep(p0, p1, 3, smooth) },
+    { label:'frac = 4/4 (P1)',   px: p1 }
   ];
 
   const container = document.getElementById('lerpSteps');
   container.innerHTML = '';
   steps.forEach(s => {
-    const isTr = (s.rgb[0] === 0 && s.rgb[1] === 0 && s.rgb[2] === 0);
-    const hex = rgbHex(s.rgb[0], s.rgb[1], s.rgb[2]);
+    const isTr = !s.px.opaque;
+    const hex = rgbHex(s.px.rgb[0], s.px.rgb[1], s.px.rgb[2]);
     const box = document.createElement('div');
     box.style.background = '#0b0e12';
     box.style.border = '1px solid var(--line)';
@@ -749,19 +764,22 @@ function renderLerp() {
       '<div style="height:36px;border-radius:6px;margin-bottom:8px;border:1px solid #2a3340;background:' +
       (isTr ? 'repeating-linear-gradient(45deg,#1f2937,#1f2937 6px,#111827 6px,#111827 12px)' : hex) + '"></div>' +
       '<b>' + s.label + '</b><br>' +
-      '<span style="color:var(--acc)">' + (isTr ? 'TRANSPARENT' : hex) + '</span>';
+      '<span style="color:var(--acc)">' + (isTr ? 'TRANSPARENT (opaque=0)' : hex + ' (opaque=1)') + '</span>';
     container.appendChild(box);
   });
 
   const note = document.getElementById('lerpNote');
   if (edgeGuard) {
-    note.innerHTML = '<b>Transparenz-Kantenschutz (Edge-Guard) aktiv:</b> Da eines der beiden Nachbarpixel transparent (<code>$000000</code>) ist, mischt die Hardware <b>nicht</b> mit Schwarz, sondern schaltet sauber um &mdash; so entstehen niemals dunkle Trauerränder am Sprite-Saum!';
+    note.innerHTML = '<b>Transparenz-Kantenschutz (Edge-Guard via <code>opaque</code>-Bit) aktiv:</b> Ist P0 oder P1 transparent (<code>opaque=0</code>), schaltet die Kante exakt bei <code>frac == 2</code> ohne Schwarz-Beimischung um!';
   } else if (!smooth) {
     note.innerHTML = '<b>Nearest-Neighbor (<code>SMOOTH_X = 0</code>):</b> Scharfe Pixelkanten ohne Zwischenstufen für klassische Retro-Pixel-Art.';
   } else {
-    note.innerHTML = '<b>24-Bit Linear-Interpolation (<code>SMOOTH_X = 1</code>):</b> Zwei 8-Bit-Addierer pro Kanal erzeugen <code>mid = ' +
-      rgbHex(mid[0], mid[1], mid[2]) + '</code> und die Viertelschritte <code>' +
-      rgbHex(qtr1[0], qtr1[1], qtr1[2]) + '</code> / <code>' + rgbHex(qtr3[0], qtr3[1], qtr3[2]) + '</code> ohne DSP-Multiplizierer.';
+    const mid = steps[2].px.rgb;
+    const qtr1 = steps[1].px.rgb;
+    const qtr3 = steps[3].px.rgb;
+    note.innerHTML = '<b>24-Bit Linear-Interpolation (<code>SMOOTH_X = 1</code>, 9-Bit Zwischensummen):</b> Erzeugt <code>mid = ' +
+      rgbHex(mid[0], mid[1], mid[2]) + '</code> (bleibt dank separatem <code>opaque=1</code> selbst bei <code>#000000</code> opak!) und die Viertelschritte <code>' +
+      rgbHex(qtr1[0], qtr1[1], qtr1[2]) + '</code> / <code>' + rgbHex(qtr3[0], qtr3[1], qtr3[2]) + '</code>.';
   }
 }
 ['lerpP0', 'lerpP1', 'lerpSmoothChk'].forEach(id => {
