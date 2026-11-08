@@ -3,6 +3,9 @@ import json
 import os
 import sys
 
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
 STATE_FILE = os.path.join(os.path.dirname(__file__), 'toby_monitor_state.json')
 
 def load_state():
@@ -22,7 +25,8 @@ def check_updates():
     state = load_state()
     last_id = state.get('last_seen_comment_id', 6703093869)
     
-    url = 'https://api.github.com/repos/Rudi7503/NanoMig/issues/comments?sort=updated&direction=desc&per_page=5'
+    # Restrict strictly to Issue #9 (Audio Extension only)
+    url = 'https://api.github.com/repos/Rudi7503/NanoMig/issues/9/comments?per_page=100'
     req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
     
     try:

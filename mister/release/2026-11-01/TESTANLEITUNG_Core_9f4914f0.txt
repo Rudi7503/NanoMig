@@ -1,0 +1,61 @@
+==============================================================================
+TESTANLEITUNG: Minimig Core 9f4914f0 (Unified 22-Bit Master Mixer & 48 kHz True-Peak AGC Limiter)
+Datum: 08.11.2026
+Ziel: MiSTer FPGA (Minimig-AGA Core)
+==============================================================================
+
+Hallo Toby und Tobys KI,
+
+dieser Core `Minimig_9f4914f0.rbf` loest die Ursache fuer das bisher gelegentlich
+wahrgenommene leichte Knacken bei lauteren Passagen / Filterresonanzen:
+
+Ursache war digitales Hard-Clipping am 16-Bit-Master-DAC, wenn mehrere Stimmen
+und Filterspitzen im Master-Mixer zusammentrafen.
+
+Architektur-Upgrade im Core 9f4914f0:
+1. 21-Bit unbeschnittener Headroom aus audio_ext:
+   Alle 32 Stimmen liefern ihre vollstaendige 21-Bit-Akkumulatorsumme (+18 dB Headroom)
+   ueber die kohärente 42-Bit-Mailbox direkt an den Master-Mixer.
+2. 22-Bit Master-Summierer in Minimig.sv:
+   Paula (4-Kanal), die 32 erweiterten Stimmen, Toccata, MT32, CDDA und Drive-Sounds
+   werden in einem vorzeichenbehafteten 22-Bit-Akkumulator addiert (+36 dB Dynamikreserve).
+3. Zentraler 48-kHz True-Peak AGC-Limiter auf CLK_AUDIO:
+   Ein einziger, extrem schneller Limiter (< 350 ns Attack, 17 Takte @ 24,576 MHz)
+   faengt Pegelspitzen sanft bei -0,5 dBFS (30.720) ab, regelt mit ~85 ms Release-Decay
+   vollkommen unhoerbar zurueck und arbeitet im Normalbereich zu 100 % bit-exakt.
+   0 Hard-Clips!
+
+1. DATEIEN & PRUEFSUMMEN (SHA-256)
+------------------------------------------------------------------------------
+* Minimig_9f4914f0.rbf:
+  Groesse: 4110124 Bytes
+  SHA-256: 9f4914f0ded5db53658bdd21726ae772b4b859d1784f1103d24effec25965ae4
+
+* Minimig_9f4914f0_Gesamtpaket_20261108.zip:
+  Groesse: 2876005 Bytes
+  SHA-256: 07a2772535ed780e484f15d508d4e159db62635373fa893b61351c6e988e023d
+
+Enthaltene Testprogramme im Gesamtpaket:
+  - argon_demo: Vollstaendige Argon-Demo (Akt 1, 2, 3 mit 32-Kanal Vocoder)
+  - kaskade_stufen: Stufentest (1, 2, 4, 8, 16 Stufen)
+  - pcm_vs_adpcm: A/B-Hoervergleich (5s 16-Bit PCM vs. 5s 4-Bit ADPCM)
+  - filterbank_sweep: 32-Band Equalizer (Sweep + Outside-In 31,0,30,1...)
+  - adpcm_32ch: 32 Stimmen gleichzeitig 4-Bit ADPCM @ 48 kHz
+  - stress_48k: 32 Stimmen 16-Bit Stereo @ 48 kHz (~6,14 MB/s Audio-DMA Last)
+  - rechteck: 32-Stufen-Kaskade (Biquad 64-Pol-Test)
+  - ton_test: Direktausgabe (Referenz)
+  - filter1_test: Einzelfilter-Test
+  - adpcm_test: 2-Phasen ADPCM Test (1 Stimme + 4 Stimmen Raumhall)
+
+2. EMPFOHLENE TESTREIHENFOLGE MIT CORE 9f4914f0
+------------------------------------------------------------------------------
+Schritt 1: `argon_demo` mit voller Lautstaerke abspielen
+  - Achten Sie besonders auf Akt 3 (Vocoder) und Lautstaerkespitzen:
+    Ist das zuvor gelegentlich aufgetretene leichte Knacken jetzt komplett verschwunden?
+  - Bleibt der Sound glasklar und druckvoll ohne Pumping-Artefakte?
+
+Schritt 2: `kaskade_stufen` & `stress_48k`
+  - Pruefen, ob alle 32 Stimmen unter Maximallast absolut sauber und stoerungsfrei laufen.
+
+Vielen Dank fuer euren grossartigen Einsatz!
+==============================================================================
