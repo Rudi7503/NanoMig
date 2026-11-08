@@ -939,7 +939,7 @@ Update_DeepNote_Glide:
 ; ------------------------------------------------------------------------------
 Init_Act3_Vocoder:
         LEA     AUDIO_EXT_BASE,A0
-        LEA     VocoderBandCoeffs,A1
+        LEA     FilterBankCoeffs,A1
         MOVEQ   #31,D0
 .load_bp:
         MOVE.W  (A1)+,AUD_BQ_B0(A0)
@@ -1000,24 +1000,27 @@ Mute_Vocoder_Bands:
 
 ; ------------------------------------------------------------------------------
 ; Act III: 30-Second Vocoder Engine (D5 = 0..1537)
-; 2.0s Fade-In (D5=0..99), 26.76s Bi-directional Sweep, 2.0s Fade-Out (D5=1438..1537)
+; 1.0s Fade-In (D5=0..49), 28.76s Bi-directional Sweep, 1.0s Fade-Out (D5=1488..1537)
 ; Sweep starts centered around Band 14 (~676 Hz vowel formant) for instant vocal warmth!
+; 5-Band Resonant Cluster + Warm Bed + Smooth Crossfades (ZERO Zipper-Noise, NO Zero-Muting!)
 ; ------------------------------------------------------------------------------
 Update_Vocoder_30s:
-        MOVEM.L D2-D4/A0,-(SP)
+        MOVEM.L D2-D5/A0-A1,-(SP)
 
         ; 1. Calculate Linear Fade Multiplier in D4 (0..100)
-        CMPI.W  #100,D5
+        CMPI.W  #50,D5
         BGE.S   .chk_fadeout
-        ; Fade-In (0..99): Smooth swell from volume 0 to 100%
+        ; Fade-In (0..49): Smooth swell from volume 0 to 100%
         MOVE.W  D5,D4
+        ADD.W   D4,D4                   ; D4 = D5 * 2 (0..98)
         BRA.S   .calc_sweep
 .chk_fadeout:
-        CMPI.W  #1438,D5
+        CMPI.W  #1488,D5
         BLT.S   .sustain
-        ; Fade-Out (1438..1537): Smooth fade from 100% down to 0
+        ; Fade-Out (1488..1537): Smooth fade from 100% down to 0
         MOVE.W  #1537,D4
-        SUB.W   D5,D4
+        SUB.W   D5,D4                   ; 49..0
+        ADD.W   D4,D4                   ; 98..0
         BRA.S   .calc_sweep
 .sustain:
         MOVEQ   #100,D4                 ; Full volume (100%)
@@ -1039,28 +1042,42 @@ Update_Vocoder_30s:
         CMPI.W  #100,D4
         BNE.S   .do_update
         CMP.W   LastVocoderCenter(PC),D0
-        BEQ.S   .voc_exit
+        BEQ     .voc_exit
 
 .do_update:
         MOVE.W  D0,LastVocoderCenter
-
-        ; Mute all voices first
-        BSR.S   Mute_Vocoder_Bands
         LEA     AUDIO_EXT_BASE,A0
 
-        ; Voice 0 Warm Background Audio Bed: base $28 (40) scaled by D4
-        MOVE.W  #40,D2
+        ; 1. Voice 0 Warm Root Carrier Bed: base $40 (64) scaled by D4
+        MOVE.W  #64,D2
         MULU.W  D4,D2
-        DIVU.W  #100,D2                 ; 0..40
+        DIVU.W  #100,D2                 ; 0..64
         MOVE.W  D2,D3
         LSL.W   #8,D2
         OR.B    D3,D2
-        MOVE.W  D2,AUD_VOL(A0)          ; Set Voice 0 background volume
+        MOVE.W  D2,AUD_VOL(A0)          ; Set Voice 0 warm carrier bed
 
-        ; Center Band D0: base $D8 (216) scaled by D4
-        MOVE.W  #216,D2
+        ; 2. Gentle background bed on all filter bands (16 * D4 / 100)
+        ; Prevents harsh mute drops and keeps all 32 bands alive!
+        MOVE.W  #16,D2
         MULU.W  D4,D2
-        DIVU.W  #100,D2                 ; 0..216
+        DIVU.W  #100,D2                 ; 0..16
+        MOVE.W  D2,D3
+        LSL.W   #8,D2
+        OR.B    D3,D2                   ; D2 = bed volume word
+
+        LEA     VOICE_STRIDE(A0),A1
+        MOVEQ   #30,D1
+.fill_bed:
+        MOVE.W  D2,AUD_VOL(A1)
+        LEA     VOICE_STRIDE(A1),A1
+        DBRA    D1,.fill_bed
+
+        ; 3. Formant Cluster around Center Band D0 (5-Band Resonant Peak)
+        ; Center Band D0: base $A0 (160) scaled by D4
+        MOVE.W  #160,D2
+        MULU.W  D4,D2
+        DIVU.W  #100,D2                 ; 0..160
         MOVE.W  D2,D3
         LSL.W   #8,D2
         OR.B    D3,D2
@@ -1068,10 +1085,10 @@ Update_Vocoder_30s:
         LSL.W   #5,D1
         MOVE.W  D2,AUD_VOL(A0,D1.W)     ; Center band volume
 
-        ; Left Neighbor (D0-1): base $80 (128) scaled by D4
+        ; Left Neighbor (D0-1): base $70 (112) scaled by D4
         TST.W   D0
-        BEQ.S   .no_left
-        MOVE.W  #128,D2
+        BEQ.S   .no_left1
+        MOVE.W  #112,D2
         MULU.W  D4,D2
         DIVU.W  #100,D2
         MOVE.W  D2,D3
@@ -1081,12 +1098,12 @@ Update_Vocoder_30s:
         SUBQ.W  #1,D1
         LSL.W   #5,D1
         MOVE.W  D2,AUD_VOL(A0,D1.W)
-.no_left:
+.no_left1:
 
-        ; Right Neighbor (D0+1): base $50 (80) scaled by D4
+        ; Right Neighbor (D0+1): base $70 (112) scaled by D4
         CMPI.W  #31,D0
-        BGE.S   .voc_exit
-        MOVE.W  #80,D2
+        BGE.S   .no_right1
+        MOVE.W  #112,D2
         MULU.W  D4,D2
         DIVU.W  #100,D2
         MOVE.W  D2,D3
@@ -1096,9 +1113,39 @@ Update_Vocoder_30s:
         ADDQ.W  #1,D1
         LSL.W   #5,D1
         MOVE.W  D2,AUD_VOL(A0,D1.W)
+.no_right1:
+
+        ; Outer Left (D0-2): base $40 (64) scaled by D4
+        CMPI.W  #2,D0
+        BLT.S   .no_left2
+        MOVE.W  #64,D2
+        MULU.W  D4,D2
+        DIVU.W  #100,D2
+        MOVE.W  D2,D3
+        LSL.W   #8,D2
+        OR.B    D3,D2
+        MOVE.W  D0,D1
+        SUBQ.W  #2,D1
+        LSL.W   #5,D1
+        MOVE.W  D2,AUD_VOL(A0,D1.W)
+.no_left2:
+
+        ; Outer Right (D0+2): base $40 (64) scaled by D4
+        CMPI.W  #30,D0
+        BGE.S   .voc_exit
+        MOVE.W  #64,D2
+        MULU.W  D4,D2
+        DIVU.W  #100,D2
+        MOVE.W  D2,D3
+        LSL.W   #8,D2
+        OR.B    D3,D2
+        MOVE.W  D0,D1
+        ADDQ.W  #2,D1
+        LSL.W   #5,D1
+        MOVE.W  D2,AUD_VOL(A0,D1.W)
 
 .voc_exit:
-        MOVEM.L (SP)+,D2-D4/A0
+        MOVEM.L (SP)+,D2-D5/A0-A1
         RTS
 
 ; ------------------------------------------------------------------------------
@@ -1696,6 +1743,7 @@ ScopeOldY:      DS.W    40
 
 ; Generated Musical, Filter, Font, Waveform & Copper Data
         INCLUDE "argon_data.i"
+        INCLUDE "../filterbank_coeffs.i"
 
 ; 4-Bit Hardware ADPCM Music Stream (in Fast-RAM / Public DATA section)
         SECTION ArgonAudio,DATA
