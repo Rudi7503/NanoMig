@@ -837,8 +837,14 @@ renderPrioSim();
 // 6. INTERACTIVE 16-BYTE DESCRIPTOR LAB
 // =========================================================================
 function hexPad(val, digits) {
-  const mask = (1 << (digits * 4)) - 1;
-  return '$' + ((val & mask) >>> 0).toString(16).toUpperCase().padStart(digits, '0');
+  let u;
+  if (digits >= 8) {
+    u = (val >>> 0);
+  } else {
+    const mask = (1 << (digits * 4)) - 1;
+    u = ((val & mask) >>> 0);
+  }
+  return '$' + u.toString(16).toUpperCase().padStart(digits, '0');
 }
 
 function renderDescriptor() {

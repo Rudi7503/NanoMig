@@ -340,7 +340,8 @@ def render_scanline(
         # Unpack & decode source line left-to-right (with optional Zero-Word-Skip at 1:1)
         seq = FORMAT_SEQS[desc.fmt]
         px_per_64 = len(seq) * 2
-        src_width_px = eff_w256 * (len(seq) * 8)
+        # 13-bit unsigned src_width_px (up to 64 * 64 = 4096)
+        src_width_px = (eff_w256 * (len(seq) * 8)) & 0x1FFF
 
         acc_r = acc_g = acc_b = 0
         decoded_line: List[DecodedPixel] = []
@@ -387,18 +388,18 @@ def render_scanline(
 
         assert len(decoded_line) == src_width_px
 
-        # 5. Unified X-sampling phase accumulator u_fp (12.6 fixed point, no divider)
+        # 5. Unified X-sampling phase accumulator u_fp (19-bit unsigned 13.6 fixed point, no divider)
         u_fp = 0
         dst_x = sign_extend_13(desc.x_pos)
 
-        while (u_fp >> 6) < src_width_px:
+        while ((u_fp >> 6) & 0x1FFF) < src_width_px:
             # Right/left early clipping abort
             if not desc.h_flip and dst_x >= clip_xmax:
                 break
             if desc.h_flip and dst_x < 0:
                 break
 
-            idx0 = u_fp >> 6
+            idx0 = (u_fp >> 6) & 0x1FFF
             p0 = decoded_line[idx0]
             p1 = decoded_line[idx0 + 1] if (idx0 + 1 < src_width_px) else DecodedPixel(False, 0, 0, 0)
             frac2 = (u_fp >> 4) & 0x3
@@ -420,7 +421,8 @@ def render_scanline(
             else:
                 last_wr_valid = False
 
-            u_fp += eff_x_scale
+            # Explicit 19-bit unsigned hardware register mask (13.6 fixed-point: 0..524287)
+            u_fp = (u_fp + eff_x_scale) & 0x7FFFF
             dst_x = sign_extend_16(dst_x - 1 if desc.h_flip else dst_x + 1)
 
     return linebuf
@@ -568,7 +570,31 @@ def run_self_tests() -> None:
     assert denise_mix_pixel((250 << 24) | 0xFF0000, 0x112233, blank_aligned=False,
                             sprsel_aligned=True, pf_front_opaque=True, pf_any_opaque=True) == 0xFF0000
 
-    print("ALL SPRITE_REF_MODEL SELF-TESTS PASSED (100% BIT-EXACT)!")
+    # 7. Test: Toby's KI reproduction of 4096 source pixels (FORMAT=0, X_WIDTH256=64, X_SCALE=255)
+    #    With 19-bit u_fp (13.6 fixed-point), u_fp_next = 262395 -> u_fp[18:6] = 4099 >= 4096,
+    #    so it terminates cleanly after exactly 1029 destination pixels (instead of wrapping at 18 bits)!
+    ram_4096: Dict[int, int] = {}
+    for w_i in range(64 * 4):
+        ram_4096[0x00500000 + w_i * 8] = 0x11111111_11111111
+    d_4096 = SpriteDescriptor(
+        y_pos=0,
+        x_pos=0,
+        y_height_lo=1,
+        x_width256=64,
+        prio=180,
+        pal_offset=0,
+        data_ptr=0x00500000,
+        fmt=0,         # 64 px/burst * 64 bursts = 4096 source pixels
+        flags=0,
+        x_scale=255,   # Shrink factor 255/64
+        y_scale=0x40,
+        step_ctrl=0x40 # CLUT_MODE = 1
+    )
+    lb_4096 = render_scanline(0, [d_4096], ram_4096, palette)
+    n_written = sum(1 for v in lb_4096 if v != 0)
+    assert n_written == 1029, f"Expected exactly 1029 pixels for 4096px @ X_SCALE=255, got {n_written}"
+
+    print("ALL FUNCTIONAL SPRITE_REF_MODEL SELF-TESTS PASSED (INCLUDING 19-BIT u_fp 4096PX TEST)!")
 
 
 if __name__ == "__main__":

@@ -197,13 +197,14 @@ Für jede vorzubereitende Zielzeile `next_y` (`0 .. Screen_Height - 1`, bis `108
    * In **Zyklus 2** berechnet derselbe Multiplizierer den Zeilen-Offset im RAM (`11 × 7 Bit = 18 Bit` Burst-Index):
      $$\text{Line\_Addr} = (\text{DATA\_PTR} \ \& \ \text{32'hFFFF\_FFE0}) + \big((\text{rel\_y}[10:0] \times \text{eff\_width256}[6:0]) \ll 5\big)$$
 4. **Einheitliche X-Abtastregel (`X_SCALE`), `H_FLIP` ohne Dividierer & 24-Bit-RGB-Interpolation (`SMOOTH_X`):**
-   * Der HAM/CLUT-Decoder verarbeitet alle Quellpixel einer Zeile (`src_width_px = eff_width256 * px_per_burst`, bis zu `4.096` Quellpixel) immer streng von links nach rechts (`src_idx = 0 .. src_width_px - 1`).
-   * **Einheitliche Phasenakkumulator-Abtastung (`u_fp` im `12.6`-Festkommaformat, kein Dividierer nötig!):**
-     * Zu Beginn der Sprite-Zeile startet die Festkomma-Quellposition bei `u_fp = 18'd0` und die Zielspalte (`16 Bit signed`, `-32768 .. +32767`) bei `dst_x = X_POS`.
-     * Solange **`(u_fp >> 6) < src_width_px`** gilt, wird pro Ausgabeschritt ein Zielpixel an `dst_x` erzeugt:
-       * Linkes Stützpixel ist `P0 = src_pixel[u_fp >> 6]`, rechtes Nachbarpixel ist `P1 = ((u_fp >> 6) + 1 < src_width_px) ? src_pixel[(u_fp >> 6) + 1] : Transparent(opaque=0, rgb=0)`.
-       * Im Streaming-Betrieb hält die Stufe nach dem Decoder das Paar `(P0, P1)` in zwei Registern; bei jedem Ausgabeschritt rückt `u_fp_next = u_fp + eff_x_scale` vor, und der Decoder liefert genau `delta_src = (u_fp_next >> 6) - (u_fp >> 6)` (`0` Takte bei Zoom, `1` Takt bei 1:1, `1..4` Takte bei Shrink) neue Quellpixel nach!
-     * **Verbindliche `H_FLIP`-Regel ohne Hardware-Dividierer:**
+   * Der HAM/CLUT-Decoder verarbeitet alle Quellpixel einer Zeile (`src_width_px = eff_width256 * px_per_burst`, **13 Bit unsigned `0 .. 4096`**) immer streng von links nach rechts (`src_idx = 0 .. src_width_px - 1`).
+   * **Einheitliche Phasenakkumulator-Abtastung (`u_fp` mit 19 Bit unsigned im `13.6`-Festkommaformat, kein Dividierer nötig!):**
+     * Da `src_width_px` bei `X_WIDTH256 = 64` und `FORMAT 0` (`64 px/Burst`) bis zu **`4.096` Quellpixel** (`4096 << 6 = 262.144 = 2^18`) erreicht, wird die Festkomma-Quellposition `u_fp` zwingend mit **19 Bit unsigned (`13.6` Festkomma, `0 .. 524.287`)** und `src_width_px` mit **13 Bit unsigned (`0 .. 4096`)** geführt (verhindert jeden 18-Bit-Wraparound nach dem letzten Sample!).
+     * Zu Beginn der Sprite-Zeile startet `u_fp = 19'd0` und die Zielspalte (`16 Bit signed`, `-32768 .. +32767`) bei `dst_x = X_POS`.
+     * Solange **`(u_fp[18:6] < src_width_px[12:0])`** gilt, wird pro Ausgabeschritt ein Zielpixel an `dst_x` erzeugt:
+       * Linkes Stützpixel ist `P0 = src_pixel[u_fp[18:6]]`, rechtes Nachbarpixel ist `P1 = ((u_fp[18:6] + 13'd1) < src_width_px) ? src_pixel[u_fp[18:6] + 13'd1] : Transparent(opaque=0, rgb=0)`.
+       * Im Streaming-Betrieb hält die Stufe nach dem Decoder das Paar `(P0, P1)` in zwei Registern; bei jedem Ausgabeschritt rückt `u_fp_next[18:0] = u_fp[18:0] + eff_x_scale` vor, und der Decoder liefert genau `delta_src = u_fp_next[18:6] - u_fp[18:6]` (`0` Takte bei Zoom, `1` Takt bei 1:1, `1..4` Takte bei Shrink) neue Quellpixel nach!
+     * **Verbindliche `H_FLIP`-Regel ohne Hardware-Dividierer (Descriptor-Vertrag `DESC_REV = 2`):**
        * Bei `H_FLIP == 0` zählt `dst_x` nach jedem Zielpixel vorwärts (`dst_x <= dst_x + 16'sd1`).
        * Bei `H_FLIP == 1` gibt `X_POS` im Descriptor direkt die **rechte Startspalte** des gespiegelten Sprites an, und `dst_x` zählt nach jedem Zielpixel rückwärts (`dst_x <= dst_x - 16'sd1`). Damit entfällt jede Division im FPGA, und `H_FLIP == 1` erzeugt garantiert auf das Pixel genau dieselbe Zielbreite und dieselben Abtastpunkte wie `H_FLIP == 0`!
    * **24-Bit RGB Horizontal-Interpolation (`SMOOTH_X`) mit 9-Bit-Zwischensummen:**
@@ -218,7 +219,7 @@ Für jede vorzubereitende Zielzeile `next_y` (`0 .. Screen_Height - 1`, bis `108
        * `!P0.opaque && !P1.opaque`: `out_opaque = 0`, `out_rgb = 24'h000000`.
 5. **Horizontales Clipping (`16 Bit signed` -> `0 .. SPR_CLIP_XMAX - 1`) & Bitgenauer `Zero-Word-Skip`:**
    * **Clipping:** Da `dst_x` intern als `int16` (`-32768 .. +32767`) geführt wird, kann auch `X_POS = 4095` plus `4096 × 4 = 16384` niemals überlaufen. In den Zeilenbuffer wird nur geschrieben, wenn `0 <= dst_x < SPR_CLIP_XMAX` (mit `SPR_CLIP_XMAX <= 2048`) gilt. Erreicht `dst_x` bei `H_FLIP == 0` den Wert `SPR_CLIP_XMAX` (oder fällt bei `H_FLIP == 1` unter `0`), bricht die Engine die aktuelle Sprite-Zeile sofort ab.
-   * **Bitgenauer `Zero-Word-Skip`:** Ist ein 64-Bit-aligned Quellwort `64'h00000000_00000000` (`N = 8..16` transparente Pixel) **und** gilt `eff_x_scale == 8'h40` (1:1), `u_fp[5:0] == 6'd0` **sowie** dass sämtliche Pipeline-Stufen leer/transparent sind (`s1_valid == 0 && s2_valid == 0 && !P0.opaque`), überspringt die Engine das 64-Bit-Wort in **1 Takt** (`acc <= 0`, `u_fp <= u_fp + (N << 6)`, `dst_x <= H_FLIP ? (dst_x - N) : (dst_x + N)`). Andernfalls läuft das Wort regulär durch den Entpacker. Dadurch sind `Skip EIN` und `Skip AUS` in allen Modi **100 % bit-identisch**.
+   * **Bitgenauer `Zero-Word-Skip`:** Ist ein 64-Bit-aligned Quellwort `64'h00000000_00000000` (`N = 8..16` transparente Pixel) **und** gilt `eff_x_scale == 8'h40` (1:1), `u_fp[5:0] == 6'd0` **sowie** dass sämtliche Pipeline-Stufen leer/transparent sind (`s1_valid == 0 && s2_valid == 0 && !P0.opaque`), überspringt die Engine das 64-Bit-Wort in **1 Takt** (`acc <= 0`, `u_fp[18:0] <= u_fp[18:0] + (19'(N) << 6)`, `dst_x <= H_FLIP ? (dst_x - N) : (dst_x + N)`). Andernfalls läuft das Wort regulär durch den Entpacker. Dadurch sind `Skip EIN` und `Skip AUS` in allen Modi **100 % bit-identisch**.
 
 ---
 
