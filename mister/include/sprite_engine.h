@@ -41,8 +41,9 @@ extern "C" {
 
 /* Bits in SPR_COMMIT ($DFF58E) */
 #define SPR_COMMIT_REQ          (1u << 0)  /* CPU request: commit shadow config */
-#define SPR_COMMIT_ACK          (1u << 1)  /* HW status: commit completed before line 0 */
+#define SPR_COMMIT_ACK          (1u << 1)  /* HW status: commit completed before line 0 & old bank drained */
 #define SPR_COMMIT_ACTIVE_BANK  (1u << 2)  /* HW status: active bank (0=Bank A, 1=Bank B) */
+#define SPR_COMMIT_OLD_BUSY     (1u << 3)  /* HW status: 1=old bank still draining, 0=old bank idle/safe */
 
 /* =========================================================================
  * 2. 16-Byte Sprite Descriptor Structure (Fast-RAM, DESC_REV = 3)
@@ -144,15 +145,20 @@ static inline void SprSetPalette(uint8_t slot, uint8_t r, uint8_t g, uint8_t b) 
 }
 
 /**
- * Performs an atomic VBlank Bank-Commit handshake.
- * Sets SPR_COMMIT_REQ, waits for hardware SPR_COMMIT_ACK, then clears REQ.
+ * Performs an atomic VBlank Bank-Commit 4-phase handshake.
+ * Sets SPR_COMMIT_REQ, waits for hardware SPR_COMMIT_ACK (guaranteeing
+ * old bank is fully drained and safe to modify), then clears REQ and
+ * waits for HW to drop ACK, rearming the single-shot latch.
  */
 static inline void SprCommitConfig(void) {
     REG_SPR_COMMIT = SPR_COMMIT_REQ;
     while (!(REG_SPR_COMMIT & SPR_COMMIT_ACK)) {
-        /* Busy wait until hardware confirms commit before line 0 */
+        /* Busy wait until hardware confirms commit before line 0 and old bank drained */
     }
-    REG_SPR_COMMIT = 0; /* Clear REQ */
+    REG_SPR_COMMIT = 0; /* Clear REQ to complete handshake */
+    while (REG_SPR_COMMIT & SPR_COMMIT_ACK) {
+        /* Wait for HW to drop ACK and return to ARMED state */
+    }
 }
 
 #ifdef __cplusplus

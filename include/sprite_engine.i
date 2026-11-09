@@ -32,12 +32,14 @@ SPRF_RESET      EQU (1<<2)
 
 * Bits in SPR_COMMIT ($DFF58E)
 SPRB_COMMIT_REQ EQU 0       ; CPU request bit: commit shadow configuration
-SPRB_COMMIT_ACK EQU 1       ; Hardware status bit: commit completed before line 0
+SPRB_COMMIT_ACK EQU 1       ; Hardware status bit: commit completed before line 0 & old bank drained
 SPRB_ACTIVE_BNK EQU 2       ; Hardware status bit: active bank (0=Bank A, 1=Bank B)
+SPRB_OLD_BUSY   EQU 3       ; Hardware status bit: 1=old bank draining, 0=old bank idle/safe
 
 SPRF_COMMIT_REQ EQU (1<<0)
 SPRF_COMMIT_ACK EQU (1<<1)
 SPRF_ACTIVE_BNK EQU (1<<2)
+SPRF_OLD_BUSY   EQU (1<<3)
 
 * -------------------------------------------------------------------------
 * 2. 16-Byte Sprite Descriptor Offsets (DESC_REV = 3)
@@ -120,6 +122,9 @@ SprCommitBank:
                 MOVE.W  #SPRF_COMMIT_REQ,SPR_COMMIT(A5) ; Request bank commit
 .wait_ack:
                 BTST    #SPRB_COMMIT_ACK,SPR_COMMIT+1(A5) ; Test ACK bit in low byte
-                BEQ.S   .wait_ack                       ; Wait until hardware signals ACK
+                BEQ.S   .wait_ack                       ; Wait until hardware signals ACK (old_bank_safe)
                 CLR.W   SPR_COMMIT(A5)                  ; Clear REQ bit
+.wait_rearm:
+                BTST    #SPRB_COMMIT_ACK,SPR_COMMIT+1(A5)
+                BNE.S   .wait_rearm                     ; Wait until hardware clears ACK (rearmed)
                 RTS

@@ -278,17 +278,23 @@ Ein einzelner **`4 × 64 Bit`-DDR3-Burst (`BURSTCNT = 4` = 32 Bytes)** lädt gle
 3. **Diagnosezähler:**  
    Wurde ein Sprite wegen Erreichen von `line_budget_eof` vorzeitig abgebrochen oder eine Zeile wegen Drain-Timeout ausgelassen, inkrementiert die Hardware den 16-Bit-Zähler **`SPR_OVERRUN_CNT`** (`$DFF594`). Bereits in den Zeilenbuffer geschriebene Pixel bleiben sichtbar.
 
-### 7.3 Bank-Commit, Shadow-Register & VBlank-Kopplung
+### 7.3 Bank-Commit, Shadow-Register & VBlank-Kopplung (Review #8 Handshake-Vertrag)
 1. **Register-Schnittstelle (`$DFF58E SPR_COMMIT`):**
-   * Bit 0: **`SPR_COMMIT_REQ`** (CPU-Schreibzugriff: `1` = Schattenkonfiguration zur Übernahme vormerken).
-   * Bit 1: **`SPR_COMMIT_ACK`** (Hardware-Status: `1` = Übernahme vor Zeile 0 atomar erfolgt).
+   * Bit 0: **`SPR_COMMIT_REQ`** (CPU-Schreibzugriff: `1` = Schattenkonfiguration zur Übernahme anfordern).
+   * Bit 1: **`SPR_COMMIT_ACK`** (Hardware-Status: `1` = Übernahme vor Zeile 0 atomar erfolgt UND Altbank vollständig gedraint).
    * Bit 2: **`SPR_ACTIVE_BANK`** (Hardware-Status: `0` = Bank 0 aktiv, `1` = Bank 1 aktiv).
-2. **Atomarer Bank-Commit Handshake:**  
-   * Die CPU bereitet Deskriptor-Listen, Paletten und HAM-Steps in der inaktiven Bank vor und setzt `SPR_COMMIT_REQ = 1`.
-   * Bis zur Übernahme bleiben der aktive Deskriptor-Satz, die aktive Palette und die aktiven Steps unverändert unter exklusiver Hardware-Ownership.
-   * Am Frame-Start bei aktivem VBlank (`vblank_active && next_y == 0`) – noch **vor dem ersten Prefetch für Zeile 0** – übernimmt die Engine die Schattenregister atomar, wechselt die aktive Bank und setzt `SPR_COMMIT_ACK = 1`.
-   * Die CPU liest `SPR_COMMIT_ACK == 1`, nimmt `SPR_COMMIT_REQ <= 0` zurück, worauf die Hardware `SPR_COMMIT_ACK <= 0` löscht.
-   * Die zuvor aktive Alt-Bank wird für die CPU erst freigegeben, nachdem alle alten Vorabrufe und In-Flight-Responses vollständig gedraint wurden.
+   * Bit 3: **`SPR_OLD_BANK_BUSY`** (Hardware-Status: `1` = Vorherige Bank hat noch ausstehende Prefetches/Responses, `0` = vollständig frei).
+2. **Atomarer Bank-Commit Handshake (Single-Shot Edge-Trigger & Altbank-Sicherheit):**  
+   * **Strikter Single-Shot Schutz:** Die Hardware reagiert ausschließlich auf die positive Flanke `0 -> 1` von `SPR_COMMIT_REQ`. Verbleibt `SPR_COMMIT_REQ == 1` über mehrere VBlanks (oder Framewechsel), erfolgt **genau eine einzige** Bank-Umschaltung. Eine erneute Umschaltung erfordert zwingend das Zurücksetzen (`REQ = 0`) und das Bestätigen des Handshakes (`REQ = 0 && ACK = 0`).
+   * **Altbank-Freigabe vor ACK (`ACK => old_bank_safe`):** Am Frame-Start bei aktivem VBlank (`vblank_active && next_y == 0`) wartet die Commit-Logik, bis sämtliche ausstehenden Prefetches/In-Flight-Beats der bisher aktiven Bank vollständig gedraint sind (`in_flight_beats == 0`, `SPR_OLD_BANK_BUSY == 0`). Erst danach toggelt die Hardware `SPR_ACTIVE_BANK` und setzt im selben Takt `SPR_COMMIT_ACK = 1`.
+   * **Garantie für die 68000-CPU:** Sobald die CPU `SPR_COMMIT_ACK == 1` liest, ist die inaktive Altbank zu 100 % frei von DMA-Zugriffen und darf gefahrlos mit neuen Deskriptoren oder Palettendaten beschrieben werden.
+   * **4-Phasen-Handshake Ablauf:**
+     1. CPU schreibt Deskriptoren in inaktive Bank und setzt `SPR_COMMIT_REQ = 1`.
+     2. Hardware registriert die Flanke und wartet auf VBlank + Drain (`in_flight_beats == 0`).
+     3. Hardware toggelt `ACTIVE_BANK` und setzt `SPR_COMMIT_ACK = 1`.
+     4. CPU erkennt `ACK == 1`, nimmt `SPR_COMMIT_REQ = 0` zurück.
+     5. Hardware setzt `SPR_COMMIT_ACK = 0` zurück und ist wieder scharfgeschaltet (`ARMED`).
+   * **Register-Isolation:** `$DFF58E` (`SPR_COMMIT`) ist ein dezidiertes Steuerregister und wird weder durch Clear-on-Read noch durch VBlank-Diagnose-Resets gelöscht.
 3. **Buffer Ownership:**  
    Zeilenbuffer A und B tauschen ihre Rollen deterministisch am Zeilensynchronisationspunkt (`line_sync`). Während Denise Buffer A ausliest und per Clear-on-Read leert, schreibt die Engine exklusiv in Buffer B.
 
