@@ -178,8 +178,8 @@ def encode_ham_row_fmt(
             n_anc = 1 << (bw - 1)
             lst = []
             for d_code in range(n_anc, 1 << bw):
-                _, _, _, _, _, dr, dg, db, _, _ = precompute_ham_stage1(
-                    d_code, bw, False, pal_offset, sr, sg, sb
+                _, _, _, _, dr, dg, db, _, _ = precompute_ham_stage1(
+                    d_code, bw, fmt5, pal_offset
                 )
                 lst.append((d_code, dr, dg, db))
             delta_lut[bw] = lst
@@ -432,16 +432,13 @@ def render_animated_frame(
             SpriteDescriptor(
                 y_pos=fy,
                 x_pos=fx,
-                y_height_lo=m["h_lines"] & 0xFF,
-                x_width256=m["w_bursts"],
+                data_ptr=m["base_addr"],
+                height=m["h_lines"],
+                width=m["w_bursts"],
+                format=fmt5,
                 prio=m["prio"],
-                pal_offset=m["pal_offset"],
-                data_ptr=m["base_addr"] | (((fmt5 >> 4) & 0x1) << 3) | ((m["h_lines"] >> 8) & 0x7),
-                fmt=fmt5 & 0xF,
-                flags=0x4,  # SMOOTH_X = 1
-                x_scale=64,
-                y_scale=flicker_y_scale,
-                step_ctrl=0x10,  # BLEND_MODE = 1 (Additive Blending)
+                alpha=m["pal_offset"],
+                ctrl=(1 << 9) | (1 << 8),  # BLEND_MODE = 1 (Additive), SMOOTH_X = 1
             )
         )
 
@@ -463,16 +460,13 @@ def render_animated_frame(
             SpriteDescriptor(
                 y_pos=wy,
                 x_pos=wx,
-                y_height_lo=m["h_lines"] & 0xFF,
-                x_width256=m["w_bursts"],
+                data_ptr=m["base_addr"],
+                height=m["h_lines"],
+                width=m["w_bursts"],
+                format=fmt5,
                 prio=m["prio"],
-                pal_offset=m["pal_offset"],
-                data_ptr=m["base_addr"] | (((fmt5 >> 4) & 0x1) << 3) | ((m["h_lines"] >> 8) & 0x7),
-                fmt=fmt5 & 0xF,
-                flags=0x4,
-                x_scale=w_xscale,
-                y_scale=64,
-                step_ctrl=0,
+                alpha=m["pal_offset"],
+                ctrl=(1 << 8),  # SMOOTH_X = 1
             )
         )
 
@@ -486,16 +480,13 @@ def render_animated_frame(
             SpriteDescriptor(
                 y_pos=py,
                 x_pos=px,
-                y_height_lo=m["h_lines"] & 0xFF,
-                x_width256=m["w_bursts"],
+                data_ptr=m["base_addr"],
+                height=m["h_lines"],
+                width=m["w_bursts"],
+                format=fmt5,
                 prio=m["prio"],
-                pal_offset=m["pal_offset"],
-                data_ptr=m["base_addr"] | (((fmt5 >> 4) & 0x1) << 3) | ((m["h_lines"] >> 8) & 0x7),
-                fmt=fmt5 & 0xF,
-                flags=0x4,
-                x_scale=64,
-                y_scale=64,
-                step_ctrl=0,
+                alpha=m["pal_offset"],
+                ctrl=(1 << 8),  # SMOOTH_X = 1
             )
         )
 
@@ -506,16 +497,13 @@ def render_animated_frame(
         SpriteDescriptor(
             y_pos=base_oy + m_hull["y0"],
             x_pos=base_ox + m_hull["x0"],
-            y_height_lo=m_hull["h_lines"] & 0xFF,
-            x_width256=m_hull["w_bursts"],
+            data_ptr=m_hull["base_addr"],
+            height=m_hull["h_lines"],
+            width=m_hull["w_bursts"],
+            format=fmt5_h,
             prio=m_hull["prio"],
-            pal_offset=m_hull["pal_offset"],
-            data_ptr=m_hull["base_addr"] | (((fmt5_h >> 4) & 0x1) << 3) | ((m_hull["h_lines"] >> 8) & 0x7),
-            fmt=fmt5_h & 0xF,
-            flags=0x4,
-            x_scale=64,
-            y_scale=64,
-            step_ctrl=0,
+            alpha=m_hull["pal_offset"],
+            ctrl=(1 << 8),  # SMOOTH_X = 1
         )
     )
 
@@ -528,21 +516,18 @@ def render_animated_frame(
         SpriteDescriptor(
             y_pos=cp_y,
             x_pos=cp_x,
-            y_height_lo=m_cp["h_lines"] & 0xFF,
-            x_width256=m_cp["w_bursts"],
+            data_ptr=m_cp["base_addr"],
+            height=m_cp["h_lines"],
+            width=m_cp["w_bursts"],
+            format=fmt5_c,
             prio=m_cp["prio"],
-            pal_offset=m_cp["pal_offset"],
-            data_ptr=m_cp["base_addr"] | (((fmt5_c >> 4) & 0x1) << 3) | ((m_cp["h_lines"] >> 8) & 0x7),
-            fmt=fmt5_c & 0xF,
-            flags=0x4,
-            x_scale=64,
-            y_scale=64,
-            step_ctrl=0x20,  # BLEND_MODE = 2 (50/50 Translucent glass)
+            alpha=m_cp["pal_offset"],
+            ctrl=(2 << 9) | (1 << 8),  # BLEND_MODE = 2 (50/50 Translucent glass), SMOOTH_X = 1
         )
     )
 
     descriptors.sort(key=lambda d: d.y_pos)
-    descriptors.append(SpriteDescriptor(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+    descriptors.append(SpriteDescriptor(0, 0, 0, 0, 0, 0, 0, 0, 0))  # Sentinel: height=0
 
     img_out = np.zeros((screen_h, screen_w, 3), dtype=np.uint8)
     for y in range(screen_h):
@@ -551,9 +536,7 @@ def render_animated_frame(
             descriptors,
             ram_words64,
             palette256,
-            global_steps=(6, 6, 6),
             clip_xmax=screen_w,
-            zero_word_skip_en=zero_skip,
         )
         for x in range(screen_w):
             v = lb[x]
@@ -813,11 +796,12 @@ function unpack64(hi, lo, seq64) {{
   for (let i = 0; i < seq64.length; i++) {{
     const bw = seq64[i];
     bitPos -= bw;
+    const mask = (bw === 32) ? -1 : ((1 << bw) - 1);
     let code = 0;
     if (bitPos >= 32) {{
-      code = (hi >>> (bitPos - 32)) & ((1 << bw) - 1);
+      code = (hi >>> (bitPos - 32)) & mask;
     }} else if (bitPos + bw <= 32) {{
-      code = (lo >>> bitPos) & ((1 << bw) - 1);
+      code = (lo >>> bitPos) & mask;
     }} else {{
       const hiBits = (bitPos + bw) - 32;
       const loBits = 32 - bitPos;
@@ -969,6 +953,7 @@ function renderFrame() {{
       const decR  = new Uint8Array(srcWidthPx);
       const decG  = new Uint8Array(srcWidthPx);
       const decB  = new Uint8Array(srcWidthPx);
+      const decA  = new Uint8Array(srcWidthPx);
       const decSk = new Uint8Array(srcWidthPx);
 
       let pOut = 0;
@@ -1039,7 +1024,7 @@ function renderFrame() {{
             accG = (code >>> 8) & 0xFF;
             accB = code & 0xFF;
             if (code !== 0 && a !== 0) {{
-              decOp[pOut] = 1; decR[pOut] = accR; decG[pOut] = accG; decB[pOut] = accB;
+              decOp[pOut] = 1; decR[pOut] = accR; decG[pOut] = accG; decB[pOut] = accB; decA[pOut] = a;
               prevOp = true;
             }} else {{
               prevOp = false;
@@ -1127,7 +1112,9 @@ function renderFrame() {{
                   outG = (dg + g) >> 1;
                   outB = (db + b) >> 1;
                 }} else if (d.blend_mode === 3) {{ // 8-Bit Alpha Blending
-                  const a = (d.alpha !== undefined) ? d.alpha : 255;
+                  const pixA = (decA[idx0] > 0) ? decA[idx0] : 255;
+                  const sliderA = (d.alpha !== undefined) ? d.alpha : 255;
+                  const a = (sliderA === 255) ? pixA : ((pixA * sliderA) >> 8);
                   if (a === 255) {{
                     outR = r; outG = g; outB = b;
                   }} else if (a === 0) {{
@@ -1145,7 +1132,9 @@ function renderFrame() {{
                 }}
               }} else {{
                 if (d.blend_mode === 3) {{ // Alpha over empty target
-                  const a = (d.alpha !== undefined) ? d.alpha : 255;
+                  const pixA = (decA[idx0] > 0) ? decA[idx0] : 255;
+                  const sliderA = (d.alpha !== undefined) ? d.alpha : 255;
+                  const a = (sliderA === 255) ? pixA : ((pixA * sliderA) >> 8);
                   if (a === 0) {{
                     uFp = (uFp + d.x_scale) & 0x7FFFF;
                     dstX++;

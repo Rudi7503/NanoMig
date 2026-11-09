@@ -102,13 +102,10 @@ FMT_ARGB32_DIR  EQU 16      ; 32-bit ARGB8888 TrueColor (8 px/burst, per-pixel a
 * -------------------------------------------------------------------------
 SPR_SET_PALETTE MACRO
                 MOVE.W  \2,SPR_PAL_ADDR(\1)     ; Set palette slot 0..255
-                ROL.L   #8,\3                   ; Rotate: R in low byte
-                MOVE.B  \3,SPR_PAL_DATA_H+1(\1) ; Write Red byte
-                ROL.L   #8,\3                   ; Rotate: G in low byte
-                MOVE.B  \3,SPR_PAL_DATA_L(\1)   ; Write Green byte
-                ROL.L   #8,\3                   ; Rotate: B in low byte
-                MOVE.B  \3,SPR_PAL_DATA_L+1(\1) ; Write Blue byte
-                ROL.L   #8,\3                   ; Restore original Dn ($00RRGGBB)
+                SWAP    \3                      ; Low word is now $00RR
+                MOVE.W  \3,SPR_PAL_DATA_H(\1)   ; Write Red [7:0]
+                SWAP    \3                      ; Restore: low word is $GGBB
+                MOVE.W  \3,SPR_PAL_DATA_L(\1)   ; Write Green [15:8] and Blue [7:0]
                 ENDM
 
 * -------------------------------------------------------------------------
