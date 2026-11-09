@@ -800,37 +800,81 @@ def run_self_tests() -> None:
     assert d_unpacked.y_pos == -1500 and d_unpacked.x_pos == 100 and d_unpacked.fmt5 == 17
     assert (d_unpacked.data_ptr & 0x10) == 0
 
-    # 3. Review #6 Point 1: ARGB alpha == 255 with Byte7 == 0 MUST NOT BE OVERRIDDEN!
-    # FORMAT 18 pixel: Alpha=255, Red=255, Green=0, Blue=0 -> 0xFFFF0000
-    # Over empty buffer: must return 0xC8FF0000 (with endpoint saturation) regardless of Byte7!
-    ram_argb_test: Dict[int, int] = {
-        0x00100000: (0xFFFF0000 << 32),
-        0x00100008: 0, 0x00100010: 0, 0x00100018: 0,
-    }
-    for b7 in (0, 128, 255):
-        d_f18_a255 = SpriteDescriptor(
-            y_pos=0, x_pos=0, y_height_lo=1, x_width256=1, prio=200, pal_offset=b7,
-            data_ptr=0x00100008, fmt=2, flags=0, x_scale=0x40, y_scale=0x40, step_ctrl=0b0011_0000, # Blend 3
-        )
-        assert d_f18_a255.fmt5 == 18
-        lb_a255 = render_scanline(0, [d_f18_a255], ram_argb_test, palette)
-        assert lb_a255[0] == (200 << 24) | 0xFF0000, f"Byte7={b7} should not affect ARGB alpha=255! Got {hex(lb_a255[0])}"
+    # 3. Full 256 x 3 x 2 Alpha Verification Matrix (Review #6 & Review #7)
+    # Tests all 256 alpha values (0..255) x 3 Byte7 values (0, 128, 255) x 2 target states (empty & occupied).
+    # Verifies that:
+    #  - FORMAT 18 alpha is NEVER overridden by Byte 7 (no sentinel bug at 255!)
+    #  - Alpha 255 reaches exact saturation C_out = S without rounding loss
+    #  - Alpha 0 preserves destination color & priority (WE = 0)
+    #  - In-between values match exact /256 floor formula
+    sr, sg, sb = 240, 120, 60
+    dr, dg, db = 40, 80, 160
+    dest_rgb = (dr << 16) | (dg << 8) | db
+    for a in range(256):
+        for b7 in (0, 128, 255):
+            src_px = DecodedPixel(True, sr, sg, sb, alpha=a, has_per_pixel_alpha=True)
+            # Empty target:
+            out_empty = blend_pixel(0, 0, src_px, 3, global_alpha=b7)
+            if a == 255:
+                exp_empty = (sr << 16) | (sg << 8) | sb
+            elif a == 0:
+                exp_empty = 0
+            else:
+                exp_empty = ((sr * a >> 8) << 16) | ((sg * a >> 8) << 8) | (sb * a >> 8)
+            assert out_empty == exp_empty, f"Alpha {a} (Byte7={b7}) over empty failed: got {hex(out_empty)} vs {hex(exp_empty)}"
 
-    # Review #6 Point 5: ARGB alpha == 0 MUST NOT OVERWRITE DESTINATION!
-    # Background sprite: Red at prio 100
-    ram_dest: Dict[int, int] = {
-        0x00200000: (0xFFFF0000 << 32),
-        0x00200008: 0, 0x00200010: 0, 0x00200018: 0,
-    }
-    d_dest_red = SpriteDescriptor(0, 0, 1, 1, 100, 0, 0x00200008, 2, 0, 0x40, 0x40, 0) # FMT 18
-    # Foreground sprite: Green with Alpha=0 at prio 200
-    ram_fg_a0: Dict[int, int] = {
-        0x00300000: (0x0000FF00 << 32), # Alpha=0, Green=255
-        0x00300008: 0, 0x00300010: 0, 0x00300018: 0,
-    }
-    d_fg_a0 = SpriteDescriptor(0, 0, 1, 1, 200, 0, 0x00300008, 2, 0, 0x40, 0x40, 0b0011_0000) # Blend 3
-    lb_a0 = render_scanline(0, [d_dest_red, d_fg_a0], {**ram_dest, **ram_fg_a0}, palette)
-    assert lb_a0[0] == (100 << 24) | 0xFF0000, f"Alpha=0 must NOT overwrite destination! Got {hex(lb_a0[0])}"
+            # Occupied target:
+            out_occ = blend_pixel(dest_rgb, 100, src_px, 3, global_alpha=b7)
+            if a == 255:
+                exp_occ = (sr << 16) | (sg << 8) | sb
+            elif a == 0:
+                exp_occ = dest_rgb
+            else:
+                er = dr + (((sr - dr) * a) >> 8)
+                eg = dg + (((sg - dg) * a) >> 8)
+                eb = db + (((sb - db) * a) >> 8)
+                exp_occ = (er << 16) | (eg << 8) | eb
+            assert out_occ == exp_occ, f"Alpha {a} (Byte7={b7}) over occupied failed: got {hex(out_occ)} vs {hex(exp_occ)}"
+
+    # End-to-end render_scanline test for key alphas {0, 1, 127, 128, 254, 255} over empty and occupied targets
+    for a in (0, 1, 127, 128, 254, 255):
+        for b7 in (0, 128, 255):
+            ram_a_test: Dict[int, int] = {
+                0x00100000: ((a << 24) | (sr << 16) | (sg << 8) | sb) << 32,
+                0x00100008: 0, 0x00100010: 0, 0x00100018: 0,
+            }
+            d_empty = SpriteDescriptor(
+                y_pos=0, x_pos=0, y_height_lo=1, x_width256=1, prio=200, pal_offset=b7,
+                data_ptr=0x00100008, fmt=2, flags=0, x_scale=0x40, y_scale=0x40, step_ctrl=0b0011_0000,
+            )
+            lb_e = render_scanline(0, [d_empty], ram_a_test, palette)
+            if a == 0:
+                assert lb_e[0] == 0, f"Alpha 0 must leave empty buffer empty! Got {hex(lb_e[0])}"
+            elif a == 255:
+                assert lb_e[0] == (200 << 24) | (sr << 16) | (sg << 8) | sb
+            else:
+                exp_c = ((sr * a >> 8) << 16) | ((sg * a >> 8) << 8) | (sb * a >> 8)
+                assert lb_e[0] == (200 << 24) | exp_c
+
+            # Over occupied destination:
+            d_bg = SpriteDescriptor(
+                y_pos=0, x_pos=0, y_height_lo=1, x_width256=1, prio=100, pal_offset=0,
+                data_ptr=0x00200008, fmt=2, flags=0, x_scale=0x40, y_scale=0x40, step_ctrl=0,
+            )
+            ram_bg: Dict[int, int] = {
+                0x00200000: (0xFF000000 | dest_rgb) << 32,
+                0x00200008: 0, 0x00200010: 0, 0x00200018: 0,
+            }
+            lb_occ = render_scanline(0, [d_bg, d_empty], {**ram_bg, **ram_a_test}, palette)
+            if a == 0:
+                assert lb_occ[0] == (100 << 24) | dest_rgb, f"Alpha 0 must preserve dest! Got {hex(lb_occ[0])}"
+            elif a == 255:
+                assert lb_occ[0] == (200 << 24) | (sr << 16) | (sg << 8) | sb
+            else:
+                er = dr + (((sr - dr) * a) >> 8)
+                eg = dg + (((sg - dg) * a) >> 8)
+                eb = db + (((sb - db) * a) >> 8)
+                assert lb_occ[0] == (200 << 24) | (er << 16) | (eg << 8) | eb
 
     # Review #6 Point 2: FORMAT 13 and 14 MUST preserve PAL_OFFSET!
     # FORMAT 13: 12-6-8-6. First pixel is HAM12 (0x7F8 direct anchor -> 0xF0F010),
@@ -864,7 +908,7 @@ def run_self_tests() -> None:
                 lb_off = render_scanline(0, [desc_test], ram_skip, palette, (15, 15, 15), zero_word_skip_en=False)
                 assert lb_on == lb_off
 
-    print("ALL FUNCTIONAL SPRITE_REF_MODEL SELF-TESTS PASSED (REVIEW #6 VERIFIED)!")
+    print("ALL FUNCTIONAL SPRITE_REF_MODEL SELF-TESTS PASSED (REVIEW #6 & #7 VERIFIED)!")
 
 
 if __name__ == "__main__":

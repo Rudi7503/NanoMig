@@ -88,6 +88,12 @@ def verify_suite() -> None:
                     f"Case '{case_name}' unexpected non-zero pixel at x={x}: got {hex(act_val)}"
                 )
 
+    # Cross-check skip equivalence pair:
+    if "skip_pair_on" in cases and "skip_pair_off" in cases:
+        assert cases["skip_pair_on"]["expected_non_zero_pixels"] == cases["skip_pair_off"]["expected_non_zero_pixels"], (
+            "Zero-Word-Skip ON vs OFF mismatch in fixture suite!"
+        )
+
     print(f"Verified {len(cases)} fixture cases dynamically via render_scanline()!")
 
     # -------------------------------------------------------------------------

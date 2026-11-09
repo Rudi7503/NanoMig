@@ -10,7 +10,7 @@ so they can be independently rendered and verified by Python, Browser JS, and ha
 import json
 import os
 import sys
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 
 sys.path.insert(0, os.path.dirname(__file__))
 from sprite_ref_model import (
@@ -181,14 +181,50 @@ def generate_suite() -> Dict[str, Any]:
     suite["cases"]["format_18_argb_sweep"] = make_case("format_18_argb_sweep", [d_bg, d_argb_sweep], {**ram_blend, **ram_argb_sweep}, palette, next_y=0)
 
     # -------------------------------------------------------------------------
-    # 7. FORMAT 13 and 14 PAL_OFFSET Preservation (Review #6 Point 2)
+    # 7. FORMAT 13 and 14 PAL_OFFSET Preservation (Review #6 Point 2 & Review #7 Point 2)
     # -------------------------------------------------------------------------
+    # FORMAT 13: 12-6-8-6
     w64_f13 = (0x7F8 << 52) | (0x01 << 46) | (0x01 << 38) | (0x01 << 32)
     ram_f13: Dict[int, int] = {0x00700000: w64_f13, 0x00700008: 0, 0x00700010: 0, 0x00700018: 0}
     d_f13_0 = SpriteDescriptor(0, 0, 1, 1, 180, 0, 0x00700000, 13, 0, 0x40, 0x40, 0)
     d_f13_128 = SpriteDescriptor(0, 0, 1, 1, 180, 128, 0x00700000, 13, 0, 0x40, 0x40, 0)
     suite["cases"]["format_13_pal_0"] = make_case("format_13_pal_0", [d_f13_0], ram_f13, palette, next_y=0)
     suite["cases"]["format_13_pal_128"] = make_case("format_13_pal_128", [d_f13_128], ram_f13, palette, next_y=0)
+
+    # FORMAT 14: 12-5-5-5-5 (HAM12 direct anchor + 4x HAM05 palette anchors)
+    w32_f14 = (0x7F8 << 20) | (0x01 << 15) | (0x01 << 10) | (0x01 << 5) | 0x01
+    w64_f14 = (w32_f14 << 32) | w32_f14
+    ram_f14: Dict[int, int] = {0x00800000: w64_f14, 0x00800008: 0, 0x00800010: 0, 0x00800018: 0}
+    d_f14_0 = SpriteDescriptor(0, 0, 1, 1, 180, 0, 0x00800000, 14, 0, 0x40, 0x40, 0)
+    d_f14_128 = SpriteDescriptor(0, 0, 1, 1, 180, 128, 0x00800000, 14, 0, 0x40, 0x40, 0)
+    suite["cases"]["format_14_pal_0"] = make_case("format_14_pal_0", [d_f14_0], ram_f14, palette, next_y=0)
+    suite["cases"]["format_14_pal_128"] = make_case("format_14_pal_128", [d_f14_128], ram_f14, palette, next_y=0)
+
+    # -------------------------------------------------------------------------
+    # 8. Opaque Black in HAM16 ($8000) & Multiline V_FLIP (Review #7 Point 2)
+    # -------------------------------------------------------------------------
+    # HAM16 (FORMAT 16): 0x8000 = zero delta from black -> opaque black 0x000000!
+    w64_h16 = (0x8000 << 48) | (0x0000 << 32) | (0x8000 << 16) | 0x0000
+    ram_h16: Dict[int, int] = {0x00810000: w64_h16, 0x00810008: 0, 0x00810010: 0, 0x00810018: 0}
+    # DATA_PTR bit 3 = 1, fmt = 0 -> fmt5 = 16
+    d_h16_black = SpriteDescriptor(0, 0, 1, 1, 190, 0, 0x00810008, 0, 0, 0x40, 0x40, 0)
+    suite["cases"]["opaque_black_ham16"] = make_case("opaque_black_ham16", [d_h16_black], ram_h16, palette, next_y=0)
+
+    # V_FLIP Multiline at next_y = 3 (accesses source line (4-1)-3 = 0, inverting flip_v at next_y=0)
+    suite["cases"]["flip_v_y3"] = make_case("flip_v_y3", [d_vflip], ram_flip, palette, next_y=3)
+
+    # -------------------------------------------------------------------------
+    # 9. Zero-Word-Skip Pair Verification (Review #7 Point 2)
+    # -------------------------------------------------------------------------
+    ram_skip_pair: Dict[int, int] = {
+        0x00900000: 0x01020304_00000000,
+        0x00900008: 0x00000000_00000000, # Zero word -> skipped in 1 cycle
+        0x00900010: 0x05060708_00000000,
+        0x00900018: 0x00000000_00000000,
+    }
+    d_skip = SpriteDescriptor(0, 0, 1, 1, 170, 0, 0x00900000, 12, 0, 0x40, 0x40, 0x40)
+    suite["cases"]["skip_pair_on"] = make_case("skip_pair_on", [d_skip], ram_skip_pair, palette, next_y=0, zero_skip=True)
+    suite["cases"]["skip_pair_off"] = make_case("skip_pair_off", [d_skip], ram_skip_pair, palette, next_y=0, zero_skip=False)
 
     return suite
 
