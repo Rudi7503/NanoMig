@@ -677,16 +677,24 @@ def generate_html_demo(palette256: List[int], formats_meta: Dict[int, List[Dict]
 <script>
 const DATA = {payload_json};
 const SEQS_64 = {{
-  16: [32,32],
-  15: [16,16, 16,16],
-  14: [16,16, 16,16],
-  13: [16,12,12,12,12],
-  12: [12,5,5,5,5, 12,5,5,5,5],
-  11: [12,6,8,6, 12,6,8,6],
+  0:  Array(64).fill(1),
+  1:  Array(32).fill(2),
+  2:  Array(21).fill(3),
+  3:  Array(16).fill(4),
+  4:  Array(12).fill(5),
+  5:  Array(10).fill(6),
+  6:  Array(9).fill(7),
+  7:  Array(8).fill(8),
+  8:  Array(16).fill(4),
   9:  [6,3,4,3,6,3,4,3, 6,3,4,3,6,3,4,3],
-  8:  [4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4],
-  18: [32,32],
-  2:  [6,3,4,3,6,3,4,3, 6,3,4,3,6,3,4,3]
+  10: Array(8).fill(8),
+  11: [12,6,8,6, 12,6,8,6],
+  12: [12,5,5,5,5, 12,5,5,5,5],
+  13: [16,12,12,12,12],
+  14: [16,16, 16,16],
+  15: [16,16, 16,16],
+  16: [32,32],
+  18: [32,32]
 }};
 const W = 448, H = 440;
 const canvas = document.getElementById('screen');
@@ -703,11 +711,11 @@ function signExt(val, bits) {{
 function clamp8(v) {{ return v < 0 ? 0 : (v > 255 ? 255 : v); }}
 function ceilSpan(nSrc, scale) {{ return Math.floor((nSrc * 64 + scale - 1) / scale); }}
 
-// Build 20 genuine CLUT_MODE=1 (FORMAT 0, 64 px/Burst) star sprites for the descriptor list
+// Build 20 genuine CLUT01 (FORMAT 0, 1-bit CLUT, 64 px/Burst) star sprites for the descriptor list
 const STAR_SPRITES = Array.from({{length: 20}}, (_, i) => {{
   const cIdx = 4 + (i % 10);
-  // 2 pixels opaque at MSB of first 64-bit word in FORMAT 0 (4 bits per pixel)
-  const hi32 = ((cIdx & 0xF) << 28) | ((cIdx & 0xF) << 24);
+  // 2 pixels opaque (bits 31 and 30 set = 1) at MSB of first 64-bit word in FORMAT 0
+  const hi32 = 0xC0000000;
   const words64 = [
     [hi32 >>> 0, 0], [0, 0], [0, 0], [0, 0],
     [hi32 >>> 0, 0], [0, 0], [0, 0], [0, 0]
@@ -722,7 +730,7 @@ const STAR_SPRITES = Array.from({{length: 20}}, (_, i) => {{
       name: 'star_' + i,
       w_bursts: 1,
       h_lines: 2,
-      pal_offset: 160,
+      pal_offset: 159 + cIdx,
       fmt: 0,
       clut_mode: true,
       words64: words64
@@ -929,7 +937,7 @@ function renderFrame() {{
   let totalWords = 0, skippedWords = 0, totalCycles = 0;
   let totalSrcSteps = 0, totalDstSteps = 0, totalDescsScanned = 0;
   let maxLineCycles = 0, peakLineY = 0;
-  const step = 6; // 4-bit global step (0..15)
+  const step = 4; // Fixed HAM step in Hardware
 
   for (let y = 0; y < H; y++) {{
     linePrio.fill(0);
@@ -985,7 +993,7 @@ function renderFrame() {{
             accR = accG = accB = 0;
             prevOp = false;
             pOut++;
-          }} else if (d.part.clut_mode) {{
+          }} else if (d.part.clut_mode || d.part.fmt <= 7) {{
             const palCol = DATA.palette[(d.part.pal_offset + code) & 0xFF];
             accR = (palCol >> 16) & 0xFF;
             accG = (palCol >> 8) & 0xFF;
@@ -1010,15 +1018,29 @@ function renderFrame() {{
             decOp[pOut] = 1; decR[pOut] = accR; decG[pOut] = accG; decB[pOut] = accB;
             prevOp = true; pOut++;
           }} else if (bw === 16) {{
-            if (((code >> 15) & 1) === 0) {{
-              accR = ((code >> 10) & 31) << 3;
-              accG = ((code >> 5) & 31) << 3;
+            if (d.part.fmt === 15) {{
+              accR = ((code >> 11) & 31) << 3;
+              accG = ((code >> 5) & 63) << 2;
               accB = (code & 31) << 3;
             }} else {{
-              const m = ((code >> 14) & 1) ? (step << 2) : step;
-              accR = clamp8(accR + signExt((code >> 10) & 15, 4) * m);
-              accG = clamp8(accG + signExt((code >> 5) & 31, 5) * m);
-              accB = clamp8(accB + signExt(code & 31, 5) * m);
+              const msb = (code >> 15) & 1;
+              if (msb === 0) {{
+                accR = ((code >> 10) & 31) << 3;
+                accG = ((code >> 5) & 31) << 3;
+                accB = (code & 31) << 3;
+              }} else {{
+                const op = (code >> 14) & 3;
+                if (op === 2) {{
+                  let dr = (code >> 10) & 15;
+                  if (dr >= 8) dr -= 16;
+                  accR = clamp8(accR + dr * 4);
+                }} else {{
+                  const m = ((code >> 14) & 1) ? (step << 2) : step;
+                  accR = clamp8(accR + signExt((code >> 10) & 15, 4) * m);
+                  accG = clamp8(accG + signExt((code >> 5) & 31, 5) * m);
+                  accB = clamp8(accB + signExt(code & 31, 5) * m);
+                }}
+              }}
             }}
             decOp[pOut] = 1; decR[pOut] = accR; decG[pOut] = accG; decB[pOut] = accB;
             prevOp = true; pOut++;
@@ -1092,13 +1114,11 @@ function renderFrame() {{
               else {{ r = (mr + decR[idx1]) >> 1; g = (mg + decG[idx1]) >> 1; b = (mb + decB[idx1]) >> 1; curA = (ma + a1) >> 1; }}
             }}
           }} else if (op0 && !op1) {{
-            outOp = d.smooth ? (frac < 2) : true;
+            outOp = true;
             r = decR[idx0]; g = decG[idx0]; b = decB[idx0];
             curA = (decA[idx0] > 0) ? decA[idx0] : 255;
           }} else if (!op0 && op1) {{
-            outOp = d.smooth ? (frac >= 2) : false;
-            r = decR[idx1]; g = decG[idx1]; b = decB[idx1];
-            curA = (decA[idx1] > 0) ? decA[idx1] : 255;
+            outOp = false;
           }}
 
           if (outOp) {{

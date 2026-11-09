@@ -279,9 +279,6 @@ Die Descriptoren müssen aufsteigend nach `Y_POS` vorliegen. Da Koordinaten vorz
 3. **Diagnosezähler:**  
    Wurde ein Sprite wegen Erreichen von `line_budget_eof` vorzeitig abgebrochen oder eine Zeile wegen Drain-Timeout ausgelassen, inkrementiert die Hardware den 16-Bit-Zähler **`SPR_OVERRUN_CNT`** (`$DFF594`). Bereits in den Zeilenbuffer geschriebene Pixel bleiben sichtbar.
 
-### 7.3 Native Amiga-VBlank-Pointer-Übernahme (Revision 4.1)
-Anstelle komplexer Schattenbank-Handshakes mit asynchronen Flanken-Triggern folgt die Sprite-Engine der klassischen, bewährten **Amiga-Hardware-Architektur** (analog zu Copper `COP1LC`, Bitplanes `BPL1PT` und Denise-Sprites `SPR0PT`):
-
 ### 7.3 Native Amiga-VBlank-Pointer-Übernahme & Word-Staging-Vertrag (Revision 4.1)
 Anstelle komplexer Schattenbank-Handshakes mit asynchronen Flanken-Triggern folgt die Sprite-Engine der klassischen, bewährten **Amiga-Hardware-Architektur** (analog zu Copper `COP1LC`, Bitplanes `BPL1PT` und Denise-Sprites `SPR0PT`):
 
@@ -289,7 +286,7 @@ Anstelle komplexer Schattenbank-Handshakes mit asynchronen Flanken-Triggern folg
    * **`$DFF580` (`SPR_LIST_PTR_HI`):** 16-Bit-Schreibzugriff legt das High-Word in einem internen 16-Bit-Vorbereitungsregister (`staging_hi`) ab. Es erfolgt noch *keine* Aktualisierung des Schattenregisters.
    * **`$DFF582` (`SPR_LIST_PTR_LO`):** 16-Bit-Schreibzugriff übernimmt das Low-Word und schreibt `(staging_hi << 16) | val16` **vollständig atomar** in das Schattenregister `spr_list_ptr_shadow`.
    * **68000 `MOVE.L A0, $DFF580`:** Der Standard-68000-Bus führt einen 32-Bit-Zugriff automatisch als zwei 16-Bit-Zyklen aus (zuerst High-Word auf `$DFF580`, dann Low-Word auf `$DFF582`). Triggert der VBlank exakt zwischen den beiden Bus-Zyklen, bleibt das bisherige Schattenregister unverändert gültig. Ein zerrissener Zeiger ist damit hardwareseitig ausgeschlossen!
-   * **Lesezugriff (`$DFF580`, CPU):** Liefert den *aktuell von der Hardware dargestellten* Zeiger `spr_list_ptr_active` zurück. So weiß die CPU mit einem einzigen `MOVE.L $DFF580, D0`, welcher Puffer gerade aktiv gerendert wird.
+   * **Lesezugriff (`$DFF580` / `$DFF582`, CPU):** Liefert den *aktuell von der Hardware dargestellten* Zeiger `spr_list_ptr_active` zurück. Bei einem 32-Bit-Lesen (`MOVE.L $DFF580, D0`) schnappt der Lesezugriff auf `$DFF580` (High-Word) gleichzeitig das korrespondierende Low-Word in einem internen `read_snapshot`-Register ein. Das darauffolgende Lesen von `$DFF582` liefert diesen Schnappschuss. Dadurch ist auch das Auslesen atomar und gegen zwischenzeitliche VBlank-Sprünge geschützt.
 2. **Atomare VBlank-Übernahme & Nullpointer-Abschaltung:**
    * Am Frame-Start bei Beginn des vertikalen Austastintervalls (`vblank_start`) übernimmt die Hardware den Schattenzeiger atomar:
      $$\text{spr\_list\_ptr\_active} \le \text{spr\_list\_ptr\_shadow}$$
@@ -308,15 +305,18 @@ Anstelle komplexer Schattenbank-Handshakes mit asynchronen Flanken-Triggern folg
 
 ## 8. Diagnose-Metriken & Reproduzierbare Test-Suite
 
-### 8.1 Klarstellung der Zeilenlast-Metriken & Diagnose-Register
+### 8.1 Klarstellung der Zeilenlast-Metriken, Latenzverträge & Diagnose-Register
 Die im HUD angezeigte Zeilenlast ist als **`Decoder-Operationsschätzung ohne DMA/Clear/Ausgabe`** definiert. Für detaillierte Hardware-Analysen stellt die Engine getrennte Zähler bereit:
 * **`src_steps`:** Anzahl der dekomprimierten Quellpixel.
 * **`dst_steps`:** Anzahl der erzeugten Zielpixel nach Skalierung.
 * **`skip_words`:** Anzahl der per 1-Takt Zero-Word-Skip übersprungenen 64-Bit-Worte.
 * **`descriptors_scanned`:** Anzahl der im Frame ausgewerteten Descriptoren.
+* **Speicherlatenz-Verträge:**
+  * **Einzel-Burst-Arbiter-Latenz (`single_burst_latency`):** Maximale Turnaround-Zeit eines isolierten Bursts vom Anfordern bis zum 1. Beat beträgt $\le 16$ Takte ($139{,}4\text{ ns}$).
+  * **Warteschlangen-Latenz (`queue_latency`):** Bei Vorabruf-Pipelining mehrerer Bursts (z. B. 8 Bursts in Folge) werden die 4 Beats pro Burst sequentiell auf dem Bus übertragen, sodass spätere Bursts bis zur Freigabe des Busses warten ($16 + 7 \times 3 = 37$ Takte für den 8. Burst). Beide Metriken werden im Timing-Modell separat erfasst und validiert.
 * **Hardware-Register (Clear-on-Read / VBlank-Reset):**
-  * `$DFF580`: `SPR_LIST_PTR_HI` (W: High-Word Staging-Register).
-  * `$DFF582`: `SPR_LIST_PTR_LO` (W: Low-Word + Atomarer Shadow-Commit; R: Active Rendering Pointer; `0` = Engine OFF).
+  * `$DFF580`: `SPR_LIST_PTR_HI` (W: High-Word Staging-Register; R: High-Word von `spr_list_ptr_active` + atomarer Low-Word-Snapshot).
+  * `$DFF582`: `SPR_LIST_PTR_LO` (W: Low-Word + Atomarer Shadow-Commit; R: Low-Word Snapshot; `0` = Engine OFF).
   * `$DFF584`: `SPR_CTRL` (Bit 2: Reset).
   * `$DFF586`: `SPR_PAL_ADDR` (Paletten-Slot 0..255).
   * `$DFF588`: `SPR_PAL_DATA_H` (Paletten-Rot [7:0]).

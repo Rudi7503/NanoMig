@@ -565,9 +565,39 @@ def render_scanline(
                 else:
                     scaled_pixels.append(p0)
         elif x_sc == 2:  # 4x Zoom
-            for p0 in decoded_line:
-                for _ in range(4):
-                    scaled_pixels.append(p0)
+            for i in range(len(decoded_line)):
+                p0 = decoded_line[i]
+                scaled_pixels.append(p0)
+                if smooth and (i + 1 < len(decoded_line)):
+                    p1 = decoded_line[i + 1]
+                    if p0.opaque and p1.opaque:
+                        mr = (p0.r + p1.r) >> 1
+                        mg = (p0.g + p1.g) >> 1
+                        mb = (p0.b + p1.b) >> 1
+                        ma = (p0.alpha + p1.alpha) >> 1
+                        has_ppa = p0.has_per_pixel_alpha or p1.has_per_pixel_alpha
+                        # Subpixel 1: 1/4 towards p1
+                        r1 = (mr + p0.r) >> 1
+                        g1 = (mg + p0.g) >> 1
+                        b1 = (mb + p0.b) >> 1
+                        a1 = (ma + p0.alpha) >> 1
+                        scaled_pixels.append(DecodedPixel(True, r1, g1, b1, a1, has_ppa))
+                        # Subpixel 2: 1/2 towards p1
+                        scaled_pixels.append(DecodedPixel(True, mr, mg, mb, ma, has_ppa))
+                        # Subpixel 3: 3/4 towards p1
+                        r3 = (mr + p1.r) >> 1
+                        g3 = (mg + p1.g) >> 1
+                        b3 = (mb + p1.b) >> 1
+                        a3 = (ma + p1.alpha) >> 1
+                        scaled_pixels.append(DecodedPixel(True, r3, g3, b3, a3, has_ppa))
+                    elif p0.opaque:
+                        scaled_pixels.extend([p0, p0, p0])
+                    elif p1.opaque:
+                        scaled_pixels.extend([p1, p1, p1])
+                    else:
+                        scaled_pixels.extend([DecodedPixel(False, 0, 0, 0, 0, False)] * 3)
+                else:
+                    scaled_pixels.extend([p0, p0, p0])
         elif x_sc == 3:  # 1/2 Half Shrink
             for i in range(0, len(decoded_line), 2):
                 p0 = decoded_line[i]
@@ -589,7 +619,18 @@ def render_scanline(
                     scaled_pixels.append(p0)
         elif x_sc == 4:  # 1/4 Quarter Shrink
             for i in range(0, len(decoded_line), 4):
-                scaled_pixels.append(decoded_line[i])
+                chunk = [decoded_line[j] for j in range(i, min(i + 4, len(decoded_line))) if decoded_line[j].opaque]
+                if smooth and chunk:
+                    mr = sum(p.r for p in chunk) // len(chunk)
+                    mg = sum(p.g for p in chunk) // len(chunk)
+                    mb = sum(p.b for p in chunk) // len(chunk)
+                    ma = sum(p.alpha for p in chunk) // len(chunk)
+                    has_ppa = any(p.has_per_pixel_alpha for p in chunk)
+                    scaled_pixels.append(DecodedPixel(True, mr, mg, mb, ma, has_ppa))
+                elif chunk:
+                    scaled_pixels.append(decoded_line[i])
+                else:
+                    scaled_pixels.append(DecodedPixel(False, 0, 0, 0, 0, False))
         else:
             scaled_pixels = decoded_line
 

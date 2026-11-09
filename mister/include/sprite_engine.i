@@ -8,9 +8,9 @@
 * -------------------------------------------------------------------------
 * 1. Hardware Custom Register Offsets (relative to $DFF000 / CUSTOM Base)
 * -------------------------------------------------------------------------
-SPR_LIST_PTR    EQU $580    ; Long: W = Pending VBlank pointer; R = Active rendering pointer
-SPR_LIST_PTR_H  EQU $580    ; Word: High 16 bits of Descriptor Pointer
-SPR_LIST_PTR_L  EQU $582    ; Word: Low 16 bits of Descriptor Pointer
+SPR_LIST_PTR    EQU $580    ; Long: W = Atomic Pending VBlank pointer; R = Active rendering pointer
+SPR_LIST_PTR_H  EQU $580    ; Word: High 16 bits of Pointer (Staging only, no shadow commit)
+SPR_LIST_PTR_L  EQU $582    ; Word: Low 16 bits of Pointer (Atomically bundles HI+LO into shadow)
 SPR_CTRL        EQU $584    ; Word: Engine Control (Bit 2: Reset)
 SPR_PAL_ADDR    EQU $586    ; Word: Palette RAM Address (0..255)
 SPR_PAL_DATA_H  EQU $588    ; Word: Palette Data High: Red [7:0]
@@ -29,7 +29,7 @@ SPRF_RESET      EQU (1<<2)
 * -------------------------------------------------------------------------
 * Structure Size: 16 Bytes ($10)
 * Alignment: Must be 32-byte aligned in Fast-RAM for 4x64-bit DDR3 burst!
-* Note: CMP.L spr_YPos(A0), spr_YPos(A1) sorts primarily by Y and secondarily by X!
+* Note: Sort by comparing signed Word spr_YPos, and on match compare signed Word spr_XPos!
 
 spr_YPos        EQU 0       ; Word (int16): Start scanline (-4096..+4095) [Wort-aligned]
 spr_XPos        EQU 2       ; Word (int16): Start column   (-4096..+4095) [Wort-aligned]
