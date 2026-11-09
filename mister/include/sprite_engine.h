@@ -1,15 +1,17 @@
-#ifndef NANOMIG_SPRITE_ENGINE_H
-#define NANOMIG_SPRITE_ENGINE_H
-
 /**
  * NanoMig / Minimig-AGA 32/64-Bit HAM, ARGB & HighColor Sprite Engine
- * C/C++ Hardware Header (AmigaOS m68k / vbcc / gcc / SAS/C)
- * Architecture Spec Revision 3 (Commit a241f87 / 6d7fd28)
+ * C/C++ Hardware Header & API (AmigaOS / m68k-amigaos-gcc)
+ * Architecture Spec Revision 4
  *
- * Motorola 68000 Big-Endian Architecture
+ * All registers and memory structures follow Motorola 68000 Big-Endian conventions.
+ * 16-Byte Sprite Descriptors are naturally word- and long-aligned in Fast-RAM.
  */
 
+#ifndef SPRITE_ENGINE_H
+#define SPRITE_ENGINE_H
+
 #include <stdint.h>
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -27,8 +29,8 @@ extern "C" {
 #define REG_SPR_PAL_ADDR        (*(volatile uint16_t*)(CUSTOM_BASE + 0x586))
 #define REG_SPR_PAL_DATA_H      (*(volatile uint16_t*)(CUSTOM_BASE + 0x588)) /* Red [7:0] */
 #define REG_SPR_PAL_DATA_L      (*(volatile uint16_t*)(CUSTOM_BASE + 0x58A)) /* Green [15:8], Blue [7:0] */
-#define REG_SPR_STEP_RGB        (*(volatile uint16_t*)(CUSTOM_BASE + 0x58C)) /* R[11:8], G[7:4], B[3:0] in 0..15 */
-#define REG_SPR_COMMIT          (*(volatile uint16_t*)(CUSTOM_BASE + 0x58E)) /* Bit 0: REQ, Bit 1: ACK, Bit 2: BANK */
+#define REG_SPR_RESERVED_58C    (*(volatile uint16_t*)(CUSTOM_BASE + 0x58C)) /* Formerly STEP_RGB, now fixed=4 in HW */
+#define REG_SPR_COMMIT          (*(volatile uint16_t*)(CUSTOM_BASE + 0x58E)) /* Bit 0: REQ, Bit 1: ACK, Bit 2: BANK, Bit 3: BUSY */
 #define REG_SPR_MAX_BUSY        (*(volatile uint16_t*)(CUSTOM_BASE + 0x590)) /* Max line busy cycles */
 #define REG_SPR_DMA_STALL       (*(volatile uint16_t*)(CUSTOM_BASE + 0x592)) /* DMA wait cycles */
 #define REG_SPR_OVERRUN_CNT     (*(volatile uint16_t*)(CUSTOM_BASE + 0x594)) /* Line budget overruns */
@@ -46,93 +48,90 @@ extern "C" {
 #define SPR_COMMIT_OLD_BUSY     (1u << 3)  /* HW status: 1=old bank still draining, 0=old bank idle/safe */
 
 /* =========================================================================
- * 2. 16-Byte Sprite Descriptor Structure (Fast-RAM, DESC_REV = 3)
+ * 2. Supported Formats (FORMAT 0..16)
  * ========================================================================= */
-#define SPR_DESC_REV            3
+#define SPR_FMT_CLUT01          0   /* 1-bit CLUT (2 colors, 256 px/burst, 0 pad) */
+#define SPR_FMT_CLUT02          1   /* 2-bit CLUT (4 colors, 128 px/burst, 0 pad) */
+#define SPR_FMT_CLUT03          2   /* 3-bit CLUT (8 colors, 85 px/burst, 1 pad @ bit 0) */
+#define SPR_FMT_CLUT04          3   /* 4-bit CLUT (16 colors, 64 px/burst, 0 pad) */
+#define SPR_FMT_CLUT05          4   /* 5-bit CLUT (32 colors, 51 px/burst, 1 pad @ bit 0) */
+#define SPR_FMT_CLUT06          5   /* 6-bit CLUT (64 colors/EHB, 42 px/burst, 4 pad @ bits [3:0]) */
+#define SPR_FMT_CLUT07          6   /* 7-bit CLUT (128 colors, 36 px/burst, 4 pad @ bits [3:0]) */
+#define SPR_FMT_CLUT08          7   /* 8-bit CLUT (256 colors, 32 px/burst, 0 pad) */
+#define SPR_FMT_HAM04_64PX      8   /* HAM04 (4-4-4-4...), 64 px/burst */
+#define SPR_FMT_HAM06_03_64PX   9   /* HAM06 (6-3-4-3-6-3-4-3), 64 px/burst (Standard) */
+#define SPR_FMT_HAM08_32PX      10  /* HAM08 (8-8-8-8), 32 px/burst */
+#define SPR_FMT_HAM12_12_686    11  /* 12-6-8-6, 32 px/burst (HAM12 anchor + HAM06/08) */
+#define SPR_FMT_HAM12_12_5555   12  /* 12-5-5-5-5, 40 px/burst (HAM12 anchor + 4x HAM05) */
+#define SPR_FMT_HAM16_12X4      13  /* 16-12-12-12-12, 20 px/burst (100% palette-free) */
+#define SPR_FMT_HAM16_DIRECT    14  /* 16-16, 16 px/burst (Pure HAM16 palette-free) */
+#define SPR_FMT_RGB16_HIGHCOLOR 15  /* 16-16 Direct HighColor (RGB565 / RGB555 $8000=black) */
+#define SPR_FMT_ARGB32_DIRECT   16  /* 32-bit ARGB8888 TrueColor (8 px/burst, per-pixel alpha) */
+
+/* =========================================================================
+ * 3. 16-Byte Sprite Descriptor Structure (Fast-RAM, DESC_REV = 4)
+ * ========================================================================= */
+#define SPR_DESC_REV            4
 #define MAX_SPRITE_DESCRIPTORS  4096
 
 #pragma pack(push, 1)
 typedef struct SpriteDesc {
     /* 64-Bit Word 0 (Offset +$00 .. +$07) */
-    int16_t  y_pos;             /* +$00: Start scanline (-4096 .. +4095) */
-    int16_t  x_pos;             /* +$02: Start column   (-4096 .. +4095) */
-    uint8_t  y_height_lo;       /* +$04: Lower 8 bits of 11-bit height (1..2047; 0=Sentinel) */
-    uint8_t  x_width256;        /* +$05: Width in 256-bit (32-byte) bursts (1..64) */
-    uint8_t  prio;              /* +$06: Priority (1..255; 0=inactive/skip) */
-    uint8_t  pal_offset_alpha;  /* +$07: PAL_OFFSET for Fmt 0..14; SPR_ALPHA for Fmt 15..17 */
+    int16_t  y_pos;             /* +$00: Start scanline (-4096 .. +4095) [Wort-aligned] */
+    int16_t  x_pos;             /* +$02: Start column   (-4096 .. +4095) [Wort-aligned] */
+    uint32_t data_ptr;          /* +$04: Clean 32-bit Fast-RAM pointer (32-byte-aligned) [Long-aligned] */
 
     /* 64-Bit Word 1 (Offset +$08 .. +$0F) */
-    uint32_t data_ptr_raw;      /* +$08: [31:5] Base addr, [4]=0, [3]=FORMAT[4], [2:0]=HEIGHT[10:8] */
-    uint8_t  format_flags;      /* +$0C: [7:4] FORMAT_LO[3:0], [3:0] FLAGS */
-    uint8_t  x_scale;           /* +$0D: Fixed-point 2.6 ($40 = 1.0x; $10=4x zoom .. $FF=0.25x shrink) */
-    uint8_t  y_scale;           /* +$0E: Fixed-point 2.6 ($40 = 1.0x; $10=4x zoom .. $FF=0.25x shrink) */
-    uint8_t  step_blend_ctrl;   /* +$0F: Bit 7: CUSTOM_STEP, Bit 6: CLUT_MODE, Bits [5:4]: BLEND_MODE */
+    uint16_t height;            /* +$08: Height in scanlines (1..2047; 0 = Sentinel / list end!) */
+    uint8_t  width;             /* +$0A: Width in 256-bit (32-byte) bursts (1..64) */
+    uint8_t  format;            /* +$0B: Format (0..7 CLUT, 8..14 HAM, 15 RGB16, 16 ARGB32) */
+    uint8_t  prio;              /* +$0C: Priority (1..255; 0 = inactive/skip) */
+    uint8_t  alpha;             /* +$0D: Global Alpha (Fmt 13..16) / PAL_OFFSET (Fmt 0..12) */
+    uint16_t ctrl;              /* +$0E: Scale, Flip, Smooth, Blend-Mode, Prio-GE */
 } SpriteDesc_t;
 #pragma pack(pop)
 
-/* Flags in format_flags [3:0] */
-#define SPR_FLAG_H_FLIP         (1u << 0)  /* Horizontal mirror */
-#define SPR_FLAG_V_FLIP         (1u << 1)  /* Vertical mirror */
-#define SPR_FLAG_SMOOTH_X       (1u << 2)  /* 24-bit linear RGB horizontal interpolation */
-#define SPR_FLAG_PRIO_GE        (1u << 3)  /* Priority >= instead of > on tie */
+/* Binary Scale factors in ctrl [2:0] (X_SCALE) and [5:3] (Y_SCALE) */
+#define SPR_SCALE_1X            0u  /* 1:1 Normal */
+#define SPR_SCALE_2X            1u  /* 2x Zoom (Pixel doubling) */
+#define SPR_SCALE_4X            2u  /* 4x Zoom (Pixel quadrupling) */
+#define SPR_SCALE_HALF          3u  /* 1/2 Subsampling (Every 2nd pixel) */
+#define SPR_SCALE_QUARTER       4u  /* 1/4 Subsampling (Every 4th pixel) */
 
-/* Blend Modes in step_blend_ctrl [5:4] */
-#define SPR_BLEND_OPAQUE        (0u << 4)  /* 00: Normal / Opaque overwrite */
-#define SPR_BLEND_ADDITIVE      (1u << 4)  /* 01: Additive min(255, S + D) (thruster flames/lasers) */
-#define SPR_BLEND_50_50         (2u << 4)  /* 10: 50/50 Translucent (S + D) >> 1 (canopy glass/shadow) */
-#define SPR_BLEND_ALPHA         (3u << 4)  /* 11: Full 8-bit Alpha: D + alpha*(S - D)/256 */
+#define SPR_X_SCALE(s)          (((uint16_t)(s) & 7u) << 0)
+#define SPR_Y_SCALE(s)          (((uint16_t)(s) & 7u) << 3)
 
-/* Step / Mode Control in step_blend_ctrl */
-#define SPR_CTRL_CLUT_MODE      (1u << 6)  /* 1 = Direct Palette CLUT; 0 = HAM mode */
-#define SPR_CTRL_CUSTOM_STEP    (1u << 7)  /* 1 = Use sprite custom step multiplier; 0 = global */
-
-/* All 19 Supported Pack Formats (FORMAT 0..18) */
-#define SPR_FMT_HAM04_64PX      0   /* HAM04, 64 px/burst */
-#define SPR_FMT_HAM03_42PX      1   /* HAM03, 42.6 px/burst */
-#define SPR_FMT_HAM06_03_64PX   2   /* 6-3-4-3-6-3-4-3, 64 px/burst (Standard) */
-#define SPR_FMT_HAM05_51PX      3   /* HAM05, 51.2 px/burst */
-#define SPR_FMT_HAM06_42PX      4   /* HAM06, 42.6 px/burst */
-#define SPR_FMT_HAM08_32PX      5   /* HAM08, 32 px/burst */
-#define SPR_FMT_HAM06_04_48PX   6   /* 6-4-6-4, 48 px/burst */
-#define SPR_FMT_HAM05_04_53PX   7   /* 5-4-5-4, 53.3 px/burst */
-#define SPR_FMT_HAM06_05_46PX   8   /* 6-5-6-5, 46.5 px/burst */
-#define SPR_FMT_HAM08_06_36PX   9   /* 8-6-8-6, 36.5 px/burst */
-#define SPR_FMT_HAM08_06X4_40PX 10  /* 8-6-6-6-6, 40 px/burst */
-#define SPR_FMT_HAM08_05_40PX   11  /* 8-5-8-6-5, 40 px/burst */
-#define SPR_FMT_CLUT256_32PX    12  /* 8-8-8-8, 32 px/burst (Direct 256-color palette) */
-#define SPR_FMT_HAM12_12_686    13  /* 12-6-8-6, 32 px/burst (HAM12 anchor + HAM06/08) */
-#define SPR_FMT_HAM12_12_5555   14  /* 12-5-5-5-5, 40 px/burst (HAM12 anchor + 4x HAM05) */
-#define SPR_FMT_HAM16_12X4      15  /* 16-12-12-12-12, 20 px/burst (100% palette-free) */
-#define SPR_FMT_HAM16_DIRECT    16  /* 16-16, 16 px/burst (Pure HAM16 palette-free) */
-#define SPR_FMT_RGB16_HIGHCOLOR 17  /* 16-16 Direct HighColor (RGB565 / RGB555 $8000=black) */
-#define SPR_FMT_ARGB32_DIRECT   18  /* 32-bit ARGB8888 TrueColor (8 px/burst, per-pixel alpha) */
+/* Flags in ctrl [15:6] */
+#define SPR_FLAG_H_FLIP         (1u << 6)  /* Horizontal mirror */
+#define SPR_FLAG_V_FLIP         (1u << 7)  /* Vertical mirror */
+#define SPR_FLAG_SMOOTH_X       (1u << 8)  /* 24-bit linear RGB horizontal interpolation */
+#define SPR_BLEND_OPAQUE        (0u << 9)  /* 00: Normal / Opaque overwrite */
+#define SPR_BLEND_ADDITIVE      (1u << 9)  /* 01: Additive min(255, S + D) (thruster flames/lasers) */
+#define SPR_BLEND_50_50         (2u << 9)  /* 10: 50/50 Translucent (S + D) >> 1 (canopy glass/shadow) */
+#define SPR_BLEND_ALPHA         (3u << 9)  /* 11: Full 8-bit Alpha: D + alpha*(S - D)/256 */
+#define SPR_FLAG_PRIO_GE        (1u << 11) /* Priority >= instead of > on tie */
 
 /* =========================================================================
- * 3. Helper Macros to initialize a SpriteDesc
+ * 4. Helper Macros to initialize a SpriteDesc
  * ========================================================================= */
-#define SPR_INIT_DESC(desc, _x, _y, _w_bursts, _height, _prio, _fmt, _addr, _flags, _xscale, _yscale, _blend) do { \
-    (desc)->x_pos = (int16_t)(_x); \
-    (desc)->y_pos = (int16_t)(_y); \
-    (desc)->y_height_lo = (uint8_t)((_height) & 0xFF); \
-    (desc)->x_width256  = (uint8_t)(_w_bursts); \
-    (desc)->prio        = (uint8_t)(_prio); \
-    (desc)->pal_offset_alpha = 0; \
-    (desc)->data_ptr_raw = (((uint32_t)(_addr)) & 0xFFFFFFE0u) \
-                         | ((((uint32_t)(_fmt) >> 4) & 1u) << 3) \
-                         | ((((uint32_t)(_height) >> 8) & 7u)); \
-    (desc)->format_flags = (uint8_t)((((_fmt) & 0x0F) << 4) | ((_flags) & 0x0F)); \
-    (desc)->x_scale = (uint8_t)(_xscale); \
-    (desc)->y_scale = (uint8_t)(_yscale); \
-    (desc)->step_blend_ctrl = (uint8_t)(_blend); \
+#define SPR_INIT_DESC(desc, _y, _x, _addr, _h, _w_bursts, _fmt, _prio, _alpha, _ctrl) do { \
+    (desc)->y_pos    = (int16_t)(_y); \
+    (desc)->x_pos    = (int16_t)(_x); \
+    (desc)->data_ptr = (uint32_t)(_addr); \
+    (desc)->height   = (uint16_t)(_h); \
+    (desc)->width    = (uint8_t)(_w_bursts); \
+    (desc)->format   = (uint8_t)(_fmt); \
+    (desc)->prio     = (uint8_t)(_prio); \
+    (desc)->alpha    = (uint8_t)(_alpha); \
+    (desc)->ctrl     = (uint16_t)(_ctrl); \
 } while(0)
 
 #define SPR_SENTINEL(desc) do { \
-    (desc)->y_height_lo = 0; \
-    (desc)->data_ptr_raw &= ~7u; /* height[10:8] = 0 -> total height = 0 */ \
+    (desc)->height = 0; \
 } while(0)
 
 /* =========================================================================
- * 4. Inline Functions for Amiga C Programs
+ * 5. Inline Functions for Amiga C Programs
  * ========================================================================= */
 
 /**
@@ -165,4 +164,4 @@ static inline void SprCommitConfig(void) {
 }
 #endif
 
-#endif /* NANOMIG_SPRITE_ENGINE_H */
+#endif /* SPRITE_ENGINE_H */

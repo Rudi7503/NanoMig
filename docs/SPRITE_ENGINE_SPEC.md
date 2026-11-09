@@ -40,33 +40,23 @@ Die Sprite-Engine kombiniert **variable HAM-Modi (`HAM03`, `HAM04`, `HAM05`, `HA
 * Würde sich die Sprite-Engine den Decoder mit dem Playfield (`ext_ham`) teilen, wäre der Decoder bei aktivem SuperHiRes-HAM-Playfield (1280 px) oder FullHD für den Großteil der Zeile durch das Playfield blockiert.
 * Mit einem **eigenen dedizierten Decoder** (~100 ALMs) + eigener Paletten-RAM-Instanz (1 M10K) stehen der Sprite-Engine **100 % der Zeilenzeit (volle 64 µs)** ungeteilt zur Verfügung.
 
-### 2.2 Pipeline-Optimierung & Exakte Bitbreiten der Delta-Vorberechnung (4-Bit Steps, 12-Bit signed Pre-Delta)
+### 2.2 Pipeline-Optimierung & Feste Hardware-Schrittweite (Schritt = 4)
 In `c0_ham_from_setup.rpt` (Slow 1100mV 100C) hatte der bisherige Playfield-Decoder (`ham_pixel_decoder.v`) eine kombinatorische Laufzeit von **`14,774 ns`**, weil Bit-Decode, `turbo`-Shift, Delta-Mux und die Addition `accumulator + delta` im selben Takt stattfanden.
 
-* **Entscheidende Beobachtung:** Die Vorzeichen-Deltas `delta_r`, `delta_g`, `delta_b` sowie die direkten `HAM12`/`HAM16`/`RGB16`/`ARGB32`-Ankerfarben hängen **nur von `code`, `mode` und `step_r/g/b` ab – nicht vom `accumulator`!**
-* **Verbindliche Bitbreiten (`step_r/g/b` sind 4 Bit `0..15`, Pre-Delta ist 12 Bit signed):**
-  * Im globalen Sprite-Step-Register **`SPR_STEP_RGB` (`$DFF588`)** sind `step_r`, `step_g`, `step_b` jeweils **4 Bit breit (`0 .. 15`, Default `4`)**:
-    * `[15:12]`: Reserviert (`0`)
-    * `[11:8]`: `STEP_R[3:0]` (`0 .. 15`)
-    * `[7:4]`: `STEP_G[3:0]` (`0 .. 15`)
-    * `[3:0]`: `STEP_B[3:0]` (`0 .. 15`)
-  * **Exakte Definition der 4 `CUSTOM_STEP`-Faktoren (`STEP_CTRL[7] == 1`):**  
-    Für jeden Kanal `c` (`R = STEP_CTRL[5:4]`, `G = STEP_CTRL[3:2]`, `B = STEP_CTRL[1:0]`) wird die effektive **5-Bit-Schrittweite `eff_step_c[4:0]` (`0..30`)** wie folgt bestimmt:
-    * `2'b00` (`0,5×`): `eff_step_c = step_c >> 1` *(ganzzahlige Abrundung `floor(step_c / 2)`, `0..7`)*
-    * `2'b01` (`1,0×`): `eff_step_c = step_c` *(unverändert `0..15`)*
-    * `2'b10` (`1,5×`): `eff_step_c = step_c + (step_c >> 1)` *(exakt `step_c + floor(step_c / 2)`, max. `15 + 7 = 22`)*
-    * `2'b11` (`2,0×`): `eff_step_c = step_c << 1` *(exakt `2 * step_c`, max. `30`)*
-  * **Maximale Delta-Spanne über alle Modi (`HAM03..16`):**
-    * `HAM03..08` (`level ∈ {-2, -1, +1, +2}`, `turbo ∈ {1, 4}`): `|delta| <= 30 × 4 × 2 = 240`.
-    * `HAM12` (`dr, db ∈ [-4..+3]`, `dg ∈ [-8..+7]`, `turbo ∈ {1, 4}`): `delta_g ∈ [-8 × 30 × 4 .. +7 × 30 × 4] = [-960 .. +840]`.
-    * `HAM16` (`dr ∈ [-8..+7]`, `dg, db ∈ [-16..+15]`, `turbo ∈ {1, 4}`): `delta_g, delta_b ∈ [-16 × 30 × 4 .. +15 × 30 × 4] = [-1920 .. +1800]`.
-    * Durch die 4-Bit-Begrenzung von `step_c` ist der Delta-Multiplizierer für `HAM12`/`HAM16` in Stufe 1 lediglich ein winziger `5×5`-Bit-Multiplizierer (~15 ALMs pro Kanal).
-    * Alle vorberechneten Deltas passen überlauffrei in **12 Bit signed (`-2048 .. +2047`)**, und die Addition `acc + delta` im Rekursions-Zyklus liegt in **`[-1920 .. +2055]`** und benötigt **13 Bit signed** vor der Sättigung auf `0..255` (`uint8`).
+* **Entscheidende Vereinfachung (Revision 4):** Die HAM-Deltaschrittweite ist **global fest in Hardware auf `4` verdrahtet** ($2^2 = 4$, exakte 6-Bit-Quantisierung im 8-Bit-RGB-Raum $256/64 = 4$).
+  * Das Custom-Register **`$DFF58C` (`SPR_STEP_RGB`) entfällt komplett**.
+  * Die `CUSTOM_STEP`-Multiplikatoren im Deskriptor entfallen komplett.
+  * In Hardware bedeutet die Multiplikation mit `4` einen reinen **Bit-Shift um 2 Positionen (`<< 2`)** – es sind keinerlei Multiplizierer in Stufe 1 mehr erforderlich!
+* **Maximale Delta-Spanne über alle Modi (`HAM04..16`):**
+  * `HAM04..08` (`level ∈ {-2, -1, +1, +2}`, `turbo ∈ {1, 4}`): `|delta| <= 4 × 4 × 2 = 32`.
+  * `HAM12` (`dr, db ∈ [-4..+3]`, `dg ∈ [-8..+7]`, `turbo ∈ {1, 4}`): `delta_g ∈ [-8 × 4 × 4 .. +7 × 4 × 4] = [-128 .. +112]`.
+  * `HAM16` (`dr ∈ [-8..+7]`, `dg, db ∈ [-16..+15]`, `turbo ∈ {1, 4}`): `delta_g, delta_b ∈ [-16 × 4 × 4 .. +15 × 4 × 4] = [-256 .. +240]`.
+  * Alle vorberechneten Deltas passen überlauffrei in **10 Bit signed (`-512 .. +511`)**, und die Addition `acc + delta` im Rekursions-Zyklus benötigt **11 Bit signed** vor der Sättigung auf `0..255` (`uint8`).
 * **2-Stufen-Aufteilung (ohne Zusatzlatenz, parallel zum Paletten-BRAM-Read):**
   1. **Stufe 1 (Entpacker & Paletten-Read-Takt):**  
-     Parallel zum synchronen Lesezugriff auf das M10K-Paletten-RAM (`palette_index = (PAL_OFFSET + raw_code) & 8'hFF`) berechnet die Logik bereits `anchor_reg`, `direct_anchor_reg` (für `HAM12`/`HAM16`/`RGB16`/`ARGB32`), `direct_rgb_reg[23:0]`, `alpha_reg[7:0]`, `opaque_reg = (raw_code != 0)` sowie die fertigen **12-Bit-signed** Summanden `delta_r`, `delta_g`, `delta_b` und speichert sie in Registern.
+     Parallel zum synchronen Lesezugriff auf das M10K-Paletten-RAM (`palette_index = (PAL_OFFSET + raw_code) & 8'hFF`) berechnet die Logik bereits `anchor_reg`, `direct_anchor_reg` (für `HAM12`/`HAM16`/`RGB16`/`ARGB32`), `direct_rgb_reg[23:0]`, `alpha_reg[7:0]`, `opaque_reg = (raw_code != 0)` sowie die fertigen Summanden `delta_r`, `delta_g`, `delta_b` per Shift (`<< 2` bzw. `<< 4` bei Turbo) und speichert sie in Registern.
   2. **Stufe 2 (Akkumulator-Takt):**  
-     Im eigentlichen Rekursions-Zyklus wählt der Anker-Mux `anchor_rgb = direct_anchor_reg ? direct_rgb_reg : palette_data`, und der Decoder führt **nur noch eine einzige 13-Bit-Addition mit Sättigung auf `0..255`** aus:
+     Im eigentlichen Rekursions-Zyklus wählt der Anker-Mux `anchor_rgb = direct_anchor_reg ? direct_rgb_reg : palette_data`, und der Decoder führt **nur noch eine einzige 11-Bit-Addition mit Sättigung auf `0..255`** aus:
      $$\text{acc\_next} = (\neg\text{opaque\_reg}) \;?\; \text{24'h000000} : \big(\text{anchor\_reg} \;?\; \text{anchor\_rgb} : \text{sat}_{0..255}(\text{acc} + \text{delta\_reg})\big)$$
 * **Pipeline-Steuerung (`valid`, `decoder_hold`, `line_reset`):**
   * Zu Beginn jeder neuen Sprite-Quellzeile (`line_reset = 1`) werden `acc_r/g/b <= 0`, `prev_rgb <= 0`, `prev_opaque <= 0` sowie die Pipeline-Valid-Stufen synchron zurückgesetzt.
@@ -74,34 +64,32 @@ In `c0_ham_from_setup.rpt` (Slow 1100mV 100C) hatte der bisherige Playfield-Deco
 
 ---
 
-## 3. Die 19 festgelegten 32/64-Bit-Formate (`HAM03..16`, `RGB16`, `ARGB32`) & `CLUT_MODE`
+## 3. Die 17 festgelegten 256-Bit-Burst-Formate (CLUT 1..8 Bit, HAM, RGB16, ARGB32)
 
 Die minimale Sprite-Breite (und das Zeilen-Raster) im RAM ist auf **`4 × 64 Bit = 256 Bit` (32 Bytes)** festgelegt.  
-Dadurch nutzt jeder DMA-Lesezugriff mit **`BURSTCNT = 4`** den physischen **DDR3-BL8-Burst** (32-Bit DDR3 × 8 = 256 Bit) zu **100 %** aus und liefert in 4 aufeinanderfolgenden `clk_114`-Takten **8 bis 64 Pixel auf einen Schlag**:
+Dadurch nutzt jeder DMA-Lesezugriff mit **`BURSTCNT = 4`** den physischen **DDR3-BL8-Burst** (32-Bit DDR3 × 8 = 256 Bit) zu **100 %** aus und liefert in 4 aufeinanderfolgenden `clk_114`-Takten **8 bis 256 Pixel auf einen Schlag**:
 
-| `FORMAT` (`5 Bit`) | Name im Konverter | Bit-Sequenz (pro 32-Bit-Wort, bzw. `FORMAT 15` pro 64-Bit-Wort) | Pixel / 32 Bit | Pixel / 64 Bit | **Pixel / 256-Bit-Burst (`4×64 Bit`)** | Anker-Typ (HAM) | Verhalten bei `CLUT_MODE = 1` |
-| :---: | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
-| **`0`** | `HAM_32BIT_44444444` | `4 - 4 - 4 - 4 - 4 - 4 - 4 - 4` | **8 px** | 16 px | **64 px** | 8 Pal.-Slots | 16 CLUT-Farben |
-| **`1`** | `HAM_32BIT_53535353` | `5 - 3 - 5 - 3 - 5 - 3 - 5 - 3` | **8 px** | 16 px | **64 px** | 16 / 4 Pal. | 32 / 8 CLUT |
-| **`2`** | `HAM_32BIT_63436343` | `6 - 3 - 4 - 3 - 6 - 3 - 4 - 3` | **8 px** | 16 px | **64 px** | 32 / 8 / 4 Pal. | 64 / 16 / 8 CLUT |
-| **`3`** | `HAM_32BIT_6446444` | `6 - 4 - 4 - 6 - 4 - 4 - 4` | **7 px** | 14 px | **56 px** | 32 / 8 Pal. | 64 / 16 CLUT |
-| **`4`** | `HAM_32BIT_5454545` | `5 - 4 - 5 - 4 - 5 - 4 - 5` | **7 px** | 14 px | **56 px** | 16 / 8 Pal. | 32 / 16 CLUT |
-| **`5`** | `HAM_32BIT_6454544` | `6 - 4 - 5 - 4 - 5 - 4 - 4` | **7 px** | 14 px | **56 px** | 32 / 16 / 8 Pal. | 64 / 32 / 16 CLUT |
-| **`6`** | `HAM_32BIT_655655` | `6 - 5 - 5 - 6 - 5 - 5` | **6 px** | 12 px | **48 px** | 32 / 16 Pal. | 64 / 32 CLUT |
-| **`7`** | `HAM_32BIT_844844` | `8 - 4 - 4 - 8 - 4 - 4` | **6 px** | 12 px | **48 px** | 128 / 8 Pal. | 256 / 16 CLUT |
-| **`8`** | `HAM_32BIT_846554` | `8 - 4 - 6 - 5 - 5 - 4` | **6 px** | 12 px | **48 px** | 128..8 Pal. | 256..16 CLUT |
-| **`9`** | `HAM_32BIT_646565` | `6 - 4 - 6 - 5 - 6 - 5` | **6 px** | 12 px | **48 px** | 32 / 16 / 8 Pal. | 64 / 32 / 16 CLUT |
-| **`10`** | `HAM_32BIT_86666` | `8 - 6 - 6 - 6 - 6` | **5 px** | 10 px | **40 px** | 128 / 32 Pal. | 256 / 64 CLUT |
-| **`11`** | `HAM_32BIT_85865` | `8 - 5 - 8 - 6 - 5` | **5 px** | 10 px | **40 px** | 128 / 32 / 16 Pal. | 256 / 64 / 32 CLUT |
-| **`12`** | `HAM_32BIT_8888` | `8 - 8 - 8 - 8` | **4 px** | 8 px | **32 px** | 128 Pal.-Slots | **256 CLUT-Farben** |
-| **`13`** | `HAM_32BIT_12_6_8_6` | **`12 - 6 - 8 - 6`** *(32 Bit)* | **4 px** | 8 px | **32 px** | `HAM12` (Direkt) + 32/128 Pal. | `RGB444` + 64/256 CLUT |
-| **`14`** | `HAM_32BIT_12_5555` | **`12 - 5 - 5 - 5 - 5`** *(32 Bit)* | **5 px** | 10 px | **40 px** | `HAM12` (Direkt) + 16 Pal. | `RGB444` + 32 CLUT |
-| **`15`** | `HAM_64BIT_16_12_12_12_12` | **`16 - 12 - 12 - 12 - 12`** *(64 Bit!)* | *2,5 px* | **5 px** | **20 px** | **100 % palettenfrei** (`HAM16` + 4×`HAM12`) | `RGB565` + 4×`RGB444` |
-| **`16`** | `HAM_32BIT_16_16` | **`16 - 16`** *(Reines `HAM16`, 32 Bit)* | **2 px** | 4 px | **16 px** | **100 % palettenfrei** (`RGB555` + 4/5/5 Delta) | Direktes `RGB565` |
-| **`17`** | `RGB_32BIT_16_16` | **`16 - 16`** *(Direct HighColor, 32 Bit)* | **2 px** | 4 px | **16 px** | **Direktes `RGB565`** (`65.535` Farben, kein HAM) | **Direktes `RGB555`** (`32.767` Farben) |
-| **`18`** | `RGB_32BIT_DIRECT` | **`32`** *(`ARGB8888` TrueColor, 32 Bit)* | **1 px** | **2 px** | **8 px** | **100 % palettenfrei** (`ARGB8888`, Per-Pixel Alpha) | **Direktes 32-Bit TrueColor** |
+| `FORMAT` | Name im Konverter | Typ / Modus | Pixel / 256-Bit-Burst | Füllbits am Ende des Bursts (LSB) |
+| :---: | :--- | :--- | :---: | :--- |
+| **`0`** | `FMT_CLUT01` | 1-Bit CLUT (2 Farben) | **256 px** | **0 Füllbits** |
+| **`1`** | `FMT_CLUT02` | 2-Bit CLUT (4 Farben) | **128 px** | **0 Füllbits** |
+| **`2`** | `FMT_CLUT03` | 3-Bit CLUT (8 Farben) | **85 px** | **1 Füllbit** (`Bit [0]`) |
+| **`3`** | `FMT_CLUT04` | 4-Bit CLUT (16 Farben) | **64 px** | **0 Füllbits** |
+| **`4`** | `FMT_CLUT05` | 5-Bit CLUT (32 Farben) | **51 px** | **1 Füllbit** (`Bit [0]`) |
+| **`5`** | `FMT_CLUT06` | 6-Bit CLUT (64 Farben / EHB) | **42 px** | **4 Füllbits** (`Bits [3:0]`) |
+| **`6`** | `FMT_CLUT07` | 7-Bit CLUT (128 Farben) | **36 px** | **4 Füllbits** (`Bits [3:0]`) |
+| **`7`** | `FMT_CLUT08` | 8-Bit CLUT (256 Farben) | **32 px** | **0 Füllbits** |
+| **`8`** | `FMT_HAM04_64` | HAM04 (`4-4-4-4...`) | **64 px** | **0 Füllbits** |
+| **`9`** | `FMT_HAM06_03_64` | HAM06 (`6-3-4-3-6-3-4-3`) | **64 px** | **0 Füllbits** |
+| **`10`** | `FMT_HAM08_32` | HAM08 (`8-8-8-8`) | **32 px** | **0 Füllbits** |
+| **`11`** | `FMT_HAM12_12_686` | HAM12 (`12-6-8-6`) | **32 px** | **0 Füllbits** |
+| **`12`** | `FMT_HAM12_12_5555` | HAM12 (`12-5-5-5-5`) | **40 px** | **0 Füllbits** |
+| **`13`** | `FMT_HAM16_12X4` | HAM16 (`16-12-12-12-12`) | **20 px** | **0 Füllbits** |
+| **`14`** | `FMT_HAM16_DIRECT` | Reines HAM16 (`16-16`) | **16 px** | **0 Füllbits** |
+| **`15`** | `FMT_RGB16` | Direct HighColor (`RGB565` / `RGB555`) | **16 px** | **0 Füllbits** |
+| **`16`** | `FMT_ARGB32` | Direct TrueColor (`ARGB8888` mit Alpha) | **8 px** | **0 Füllbits** |
 
-*(Die 5-Bit-Formatkennung setzt sich aus `FORMAT[4:0] = {DATA_PTR[3], FORMAT_LO[3:0]}` zusammen; für Formate `0..15` ist `DATA_PTR[3] = 0`, für `16, 17, 18` ist `DATA_PTR[3] = 1`. Werte `FORMAT = 19..31` sind als ungültig/Reserve definiert und führen zum deterministischen Überspringen des Sprites ohne DMA-Zugriff).*
+*(Werte `FORMAT >= 17` sind als ungültig/Reserve definiert und führen zum deterministischen Überspringen des Sprites ohne DMA-Zugriff).*
 
 ### 3.1 Exakte Bit-Definition von `HAM12`, `HAM16`, `RGB16` und `FORMAT 18` (`ARGB8888`)
 
@@ -229,30 +217,28 @@ Das Mischen erfolgt **ganz am Ende von [`denise.v`](../mister/rtl/denise.v#L532)
 
 ---
 
-## 6. Sprite-Descriptor im Fast-RAM (16 Bytes = 2 × 64 Bit, `DESC_REV = 3`)
+## 6. Sprite-Descriptor im Fast-RAM (16 Bytes = 2 × 64 Bit, `DESC_REV = 4`)
 
 Das Sprite-Array liegt 32-Byte-aligned im DDR3-Fast-RAM und ist aufsteigend nach **`Y_POS`** sortiert.  
 Ein einzelner **`4 × 64 Bit`-DDR3-Burst (`BURSTCNT = 4` = 32 Bytes)** lädt gleichzeitig **2 komplette Sprite-Descriptoren**!
+Alle 16-Bit- und 32-Bit-Felder sind zu 100 % natürlich auf geraden Adressen ausgerichtet (keine 68000 Address Errors).
 
-### 64-Bit Wort 0 (Offset `+$00 .. +$07`): Position, Größe, Priorität & Palette/Alpha
+### 64-Bit Wort 0 (Offset `+$00 .. +$07`): Y/X-Position & Reiner 32-Bit Datenzeiger
 | Offset | Bits | Typ | Feldname | Beschreibung |
 | :---: | :---: | :---: | :--- | :--- |
-| `+$00` | `[63:48]` | `int16` | **`Y_POS`** | Startzeile (vorzeichenbehaftet, ausgewertet als `int13` `-4096 .. +4095`, deckt FullHD `1080p` + Offscreen-Clipping ab; Bits `[15:13]` werden vorzeichenrichtig ignoriert) |
-| `+$02` | `[47:32]` | `int16` | **`X_POS`** | Startspalte (vorzeichenbehaftet, ausgewertet als `int13` `-4096 .. +4095`, deckt `2048 px` + Offscreen-Clipping ab; Bits `[15:13]` werden vorzeichenrichtig ignoriert) |
-| `+$04` | `[31:24]` | `uint8` | **`Y_HEIGHT_LO`** | Untere 8 Bit der Quellhöhe; zusammen mit `DATA_PTR[2:0]` als `Y_HEIGHT[10:8]` ergibt sich **`uint11 Y_HEIGHT = {DATA_PTR[2:0], Y_HEIGHT_LO}` (`1 .. 2047` Quellzeilen)**. **Wichtig:** Das Listen-Sentinel ist **`Y_HEIGHT[10:0] == 11'd0`** |
-| `+$05` | `[23:16]` | `uint8` | **`X_WIDTH256`** | Breite in **`4 × 64 Bit` (256-Bit / 32-Byte) Burst-Blöcken** (`1 .. 64` Bursts = **8 bis 4.096 Quellpixel**; `0` = No-Op; Werte `> 64` werden auf `64` geklemmt) |
-| `+$06` | `[15:8]` | `uint8` | **`PRIO`** | 8-Bit Priorität (`0` = dieses Sprite überspringen/unsichtbar; `1 .. 255` = aktiv) |
-| `+$07` | `[7:0]` | `uint8` | **`PAL_OFFSET` / `SPR_ALPHA`** | Für Formate `0..14`: Paletten-Offset (`(PAL_OFFSET + raw_code) & 8'hFF`). Wichtig: Formate 13 (`12_6_8_6`) und 14 (`12_5555`) nutzen `PAL_OFFSET` für die nachfolgenden 6-/8-/5-Bit-Palettenanker!<br>Für palettenfreie Formate `15..17`: Globaler Alpha-Wert **`SPR_ALPHA[7:0]`** (`0..255`) für `BLEND_MODE = 11`.<br>Für Format `18` (`ARGB8888`): Per-Pixel-Alpha im Datenwort `code[31:24]` (Byte 7 reserviert/ignoriert). |
+| `+$00` | `[63:48]` | `int16` | **`Y_POS`** | Startzeile (vorzeichenbehaftet, ausgewertet als `int13` `-4096 .. +4095`, deckt FullHD `1080p` + Offscreen-Clipping ab). Liegt an Offset `+$00`, damit `CMP.L (A0), (A1)` primär nach Y und sekundär nach X sortiert! |
+| `+$02` | `[47:32]` | `int16` | **`X_POS`** | Startspalte (vorzeichenbehaftet, ausgewertet als `int13` `-4096 .. +4095`, deckt `2048 px` + Offscreen-Clipping ab). |
+| `+$04` | `[31:0]`  | `uint32` | **`DATA_PTR`** | **Reiner 32-Bit Pointer** auf die Sprite-Pixeldaten im Fast-RAM (32-Byte-aligned). Keine hineingeschobenen Bits mehr! Direkt mit `MOVE.L #Gfx, spr_DataPtr(A0)` beschreibbar. |
 
-### 64-Bit Wort 1 (Offset `+$08 .. +$0F`): Datenzeiger, Format, Skalierung & Blend-Steuerung
+### 64-Bit Wort 1 (Offset `+$08 .. +$0F`): Höhe, Breite, Format, Priorität, Alpha & Steuerwort
 | Offset | Bits | Typ | Feldname | Beschreibung |
 | :---: | :---: | :---: | :--- | :--- |
-| `+$08` | `[63:32]` | `uint32` | **`DATA_PTR`** | `[31:5]`: 32-Byte-aligned Basisadresse der Pixeldaten im Fast-RAM.<br>`[4]`: **Hardware-Maske 0** (`DATA_PTR & ~32'h10`, Pointer Bit 4 wird stets ignoriert/genullt).<br>`[3]`: **`FORMAT[4]`** (oberstes Bit des 5-Bit-Packformats: `0` für Formate `0..15`, `1` für Formate `16..18`).<br>`[2:0]`: **`Y_HEIGHT[10:8]`** (obere 3 Bits der 11-Bit-Quellhöhe für Sprites mit `256 .. 2047` Zeilen). |
-| `+$0C` | `[31:28]` | `uint4` | **`FORMAT_LO`** | Untere 4 Bits des 5-Bit-Packformats **`uint5 FORMAT = {DATA_PTR[3], FORMAT_LO[3:0]}`** (`0 .. 18` gültig gemäß Abschnitt 3; `19 .. 31` = No-Op ohne DMA). |
-| `+$0C` | `[27:24]` | `uint4` | **`FLAGS`** | Bit `0`: `H_FLIP` (Horizontal spiegeln)<br>Bit `1`: `V_FLIP` (Vertikal spiegeln)<br>Bit `2`: `SMOOTH_X` (24-Bit RGB Horizontal-Interpolation ein)<br>Bit `3`: `PRIO_GE` (`>=` statt `>` bei gleicher Priorität) |
-| `+$0D` | `[23:16]` | `uint8` | **`X_SCALE`** | Horizontaler Skalierungsfaktor (Festkomma `2.6`, `$40` = 1,0×; Bereich **`$10` (4,0× Zoom) bis `$FF` (0,25× Shrink)**; `0` = No-Op, `1..$0F` geklemmt auf `$10`). |
-| `+$0E` | `[15:8]` | `uint8` | **`Y_SCALE`** | Vertikaler Skalierungsfaktor (Festkomma `2.6`, `$40` = 1,0×; Bereich **`$10` (4,0× Zoom) bis `$FF` (0,25× Shrink)**; `0` = No-Op, `1..$0F` geklemmt auf `$10`). |
-| `+$0F` | `[7:0]` | `uint8` | **`STEP_CTRL` / `BLEND_CTRL`** | Bit `7`: `CUSTOM_STEP` (`0` = Globale 4-Bit-HAM-Steps aus `$DFF588`, `1` = Sprite-eigene HAM-Step-Skalierung).<br>Bit `6`: **`CLUT_MODE`** (`0` = HAM-Modus bzw. `RGB565` bei `FORMAT 17`, `1` = Palettenmodus bzw. `RGB555` bei `FORMAT 17`).<br>Bits `[5:4]`: **`BLEND_MODE[1:0]`** (wenn `CUSTOM_STEP == 0` oder `FORMAT >= 17`): `00` Opak, `01` Additiv, `10` 50/50, `11` Alpha.<br>Bits `[5:0]`: Wenn `CUSTOM_STEP == 1` bei HAM: `R[5:4]`, `G[3:2]`, `B[1:0]` Schrittmultiplikatoren. |
+| `+$08` | `[63:48]` | `uint16` | **`HEIGHT`** | **Echte 16-Bit Quellhöhe** (`1 .. 2047` Zeilen; **`0` = Sentinel / Listenende!**). |
+| `+$0A` | `[47:40]` | `uint8` | **`WIDTH`** | Quellbreite in **256-Bit (32-Byte) Bursts** (`1 .. 64` Bursts = 8 bis 4096 Quellpixel; `0` = No-Op; Werte `> 64` werden auf `64` geklemmt). |
+| `+$0B` | `[39:32]` | `uint8` | **`FORMAT`** | **Echtes 8-Bit-Format (`0 .. 16`)**: `0..7` = CLUT 1..8 Bit, `8..14` = HAM, `15` = RGB16 Direct, `16` = ARGB32 Direct. |
+| `+$0C` | `[31:24]` | `uint8` | **`PRIO`** | 8-Bit Priorität (`0` = dieses Sprite überspringen/unsichtbar; `1 .. 255` = aktiv). |
+| `+$0D` | `[23:16]` | `uint8` | **`ALPHA`** | Für Formate `0..12`: Paletten-Offset (`PAL_OFFSET`).<br>Für palettenfreie Formate `13..16`: Globaler Alpha-Wert (`0..255`) für `BLEND_MODE = 11`. Bei `FORMAT 16` (`ARGB8888`) dominiert das Per-Pixel-Alpha `code[31:24]`. |
+| `+$0E` | `[15:0]`  | `uint16` | **`CTRL`** | **Steuerwort (Flags, Blend-Mode & 2er-Potenz Skalierung)**:<br>• `Bits [2:0]`: `X_SCALE` (`0`=1x, `1`=2x, `2`=4x, `3`=1/2, `4`=1/4)<br>• `Bits [5:3]`: `Y_SCALE` (`0`=1x, `1`=2x, `2`=4x, `3`=1/2, `4`=1/4)<br>• `Bit 6`: `H_FLIP` (Horizontal spiegeln)<br>• `Bit 7`: `V_FLIP` (Vertikal spiegeln)<br>• `Bit 8`: `SMOOTH_X` (24-Bit lineare Farbglättung)<br>• `Bits [10:9]`: `BLEND_MODE` (`00` Opak, `01` Additiv, `10` 50/50, `11` Alpha)<br>• `Bit 11`: `PRIO_GE` (`>=` statt `>` bei Prioritätsgleichstand)<br>• `Bits [15:12]`: Reserviert (`0`). |
 
 ---
 
