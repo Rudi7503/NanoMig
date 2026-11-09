@@ -61,6 +61,9 @@ FORMAT_SEQS_256: Dict[int, Tuple[int, ...]] = {
     14: (16,) * 16,                 # HAM16 Direct: 16 px
     15: (16,) * 16,                 # RGB16 Direct (RGB565): 16 px
     16: (32,) * 8,                  # ARGB32 TrueColor: 8 px
+    17: (12, 5, 5, 5, 5) * 8,       # HAM12 12_5555_DELTA (ham5delta): 40 px
+    18: (12, 6, 8, 6) * 8,          # HAM12 12_686_DELTA (ham6delta/ham8delta): 32 px
+    19: (8,) * 32,                  # HAM08_DELTA (ham8delta): 32 px
 }
 
 # 64-bit word sequences for 64-bit memory word access
@@ -82,11 +85,15 @@ FORMAT_SEQS_64: Dict[int, Tuple[int, ...]] = {
     14: (16,) * 4,
     15: (16,) * 4,
     16: (32,) * 2,
+    17: (12, 5, 5, 5, 5) * 2,
+    18: (12, 6, 8, 6) * 2,
+    19: (8,) * 8,
 }
 
 FORMAT_PAD_BITS: Dict[int, int] = {
     0: 0, 1: 0, 2: 1, 3: 0, 4: 1, 5: 4, 6: 4, 7: 0,
-    8: 0, 9: 0, 10: 0, 11: 0, 12: 0, 13: 0, 14: 0, 15: 0, 16: 0
+    8: 0, 9: 0, 10: 0, 11: 0, 12: 0, 13: 0, 14: 0, 15: 0, 16: 0,
+    17: 0, 18: 0, 19: 0
 }
 
 
@@ -336,6 +343,39 @@ def precompute_ham_stage1(
             if db_s3 >= 4:
                 db_s3 -= 8
             return (False, False, 0, 0, dr_s3 * mult, dg_s4 * mult, db_s3 * mult, 255, False)
+
+    # 5b. Pure HAM Delta Formats: FMT 17 (ham5delta), FMT 18 (ham6delta/ham8delta), FMT 19 (ham8delta)
+    if fmt5 == 17 and bw == 5:
+        turbo = bool(raw_code & 0x10)
+        mult = 16 if turbo else 4
+        dr = 1 if (raw_code & 0x8) else -1
+        dg = two_delta((raw_code >> 1) & 0x3)
+        db = 1 if (raw_code & 0x1) else -1
+        return (False, False, 0, 0, dr * mult, dg * mult, db * mult, 255, False)
+
+    if fmt5 == 18:
+        if bw == 6:
+            turbo_mode = (raw_code >> 4) & 0x3
+            mult = (1, 4, 8, 16)[turbo_mode]
+            dr = 1 if (raw_code & 0x8) else -1
+            dg = two_delta((raw_code >> 1) & 0x3)
+            db = 1 if (raw_code & 0x1) else -1
+            return (False, False, 0, 0, dr * mult, dg * mult, db * mult, 255, False)
+        elif bw == 8:
+            turbo_mode = (raw_code >> 6) & 0x3
+            mult = (1, 4, 8, 16)[turbo_mode]
+            dr = two_delta((raw_code >> 4) & 0x3)
+            dg = two_delta((raw_code >> 2) & 0x3)
+            db = two_delta(raw_code & 0x3)
+            return (False, False, 0, 0, dr * mult, dg * mult, db * mult, 255, False)
+
+    if fmt5 == 19 and bw == 8:
+        turbo_mode = (raw_code >> 6) & 0x3
+        mult = (1, 4, 8, 16)[turbo_mode]
+        dr = two_delta((raw_code >> 4) & 0x3)
+        dg = two_delta((raw_code >> 2) & 0x3)
+        db = two_delta(raw_code & 0x3)
+        return (False, False, 0, 0, dr * mult, dg * mult, db * mult, 255, False)
 
     # 6. Standard HAM (bw <= 8)
     msb = bool(raw_code & (1 << (bw - 1)))
@@ -771,6 +811,20 @@ def run_self_tests() -> None:
     assert helper_render([0, 0x90112233], 1)[:4] == ["00000000", "00000000", "c309131c", "c309131c"]
     assert helper_render([0, 0x90112233], 2)[:8] == ["00000000", "00000000", "00000000", "00000000", "c309131c", "c309131c", "c309131c", "c309131c"]
     print("[PASS] All Review 12 Smooth Shrink & Edge Verifications satisfied!")
+
+    # 7. Pure HAM-Delta Modes (FMT 17 ham5delta, FMT 18 ham6delta/ham8delta, FMT 19 ham8delta):
+    # ham5delta (fmt 17, bw 5): turbo=1 (16x), dr=+1, dg=-1, db=+1 -> (+16, -16, +16)
+    _, _, _, _, dr, dg, db, _, _ = precompute_ham_stage1(0x1B, 5, 17, 0)
+    assert (dr, dg, db) == (16, -16, 16), f"Expected (16,-16,16) for ham5delta 0x1B, got {(dr, dg, db)}"
+
+    # ham6delta (fmt 18, bw 6): turbo=2 (8x), dr=+1, dg=-1, db=+1 -> (+8, -8, +8)
+    _, _, _, _, dr, dg, db, _, _ = precompute_ham_stage1(0x2B, 6, 18, 0)
+    assert (dr, dg, db) == (8, -8, 8), f"Expected (8,-8,8) for ham6delta 0x2B, got {(dr, dg, db)}"
+
+    # ham8delta (fmt 18/19, bw 8): turbo=3 (16x), dr=+1, dg=+1, db=+2 -> (+16, +16, +32)
+    _, _, _, _, dr, dg, db, _, _ = precompute_ham_stage1(0xEB, 8, 18, 0)
+    assert (dr, dg, db) == (16, 16, 32), f"Expected (16,16,32) for ham8delta 0xEB, got {(dr, dg, db)}"
+    print("[PASS] Pure HAM-Delta Modes (ham5delta, ham6delta, ham8delta) verified!")
 
     print("[PASS] All Review 10 Regression Verifications satisfied!")
 

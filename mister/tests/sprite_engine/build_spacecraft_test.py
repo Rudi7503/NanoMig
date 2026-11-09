@@ -694,7 +694,9 @@ const SEQS_64 = {{
   14: [16,16, 16,16],
   15: [16,16, 16,16],
   16: [32,32],
-  18: [32,32]
+  17: [12,5,5,5,5, 12,5,5,5,5],
+  18: [12,6,8,6, 12,6,8,6],
+  19: Array(8).fill(8)
 }};
 const W = 448, H = 440;
 const canvas = document.getElementById('screen');
@@ -1057,23 +1059,50 @@ function renderFrame() {{
             }}
             pOut++;
           }} else {{
-            const msb = (code >> (bw - 1)) & 1;
-            if (msb === 0) {{
-              const palCol = DATA.palette[(d.part.pal_offset + code) & 0xFF];
-              accR = (palCol >> 16) & 0xFF;
-              accG = (palCol >> 8) & 0xFF;
-              accB = palCol & 0xFF;
+            if (d.part.fmt === 17 && bw === 5) {{
+              const turbo = !!(code & 16);
+              const mult = turbo ? 16 : 4;
+              const dr = (code & 8) ? 1 : -1;
+              const dg = twoDelta((code >> 1) & 3);
+              const db = (code & 1) ? 1 : -1;
+              accR = clamp8(accR + dr * mult);
+              accG = clamp8(accG + dg * mult);
+              accB = clamp8(accB + db * mult);
+            }} else if (d.part.fmt === 18 && bw === 6) {{
+              const mult = [1, 4, 8, 16][(code >> 4) & 3];
+              const dr = (code & 8) ? 1 : -1;
+              const dg = twoDelta((code >> 1) & 3);
+              const db = (code & 1) ? 1 : -1;
+              accR = clamp8(accR + dr * mult);
+              accG = clamp8(accG + dg * mult);
+              accB = clamp8(accB + db * mult);
+            }} else if ((d.part.fmt === 18 || d.part.fmt === 19) && bw === 8) {{
+              const mult = [1, 4, 8, 16][(code >> 6) & 3];
+              const dr = twoDelta((code >> 4) & 3);
+              const dg = twoDelta((code >> 2) & 3);
+              const db = twoDelta(code & 3);
+              accR = clamp8(accR + dr * mult);
+              accG = clamp8(accG + dg * mult);
+              accB = clamp8(accB + db * mult);
             }} else {{
-              let turbo = false, dr = 0, dg = 0, db = 0;
-              if (bw === 3) {{ dr = (code & 2) ? 2 : -2; dg = (code & 1) ? 2 : -2; db = dr; }}
-              else if (bw === 4) {{ dr = (code & 4) ? 2 : -2; dg = (code & 2) ? 2 : -2; db = (code & 1) ? 2 : -2; }}
-              else if (bw === 5) {{ turbo = !!(code & 8); dr = (code & 4) ? 1 : -1; dg = (code & 2) ? 1 : -1; db = (code & 1) ? 1 : -1; }}
-              else if (bw === 6) {{ turbo = !!(code & 16); dr = (code & 8) ? 1 : -1; dg = twoDelta((code >> 1) & 3); db = (code & 1) ? 1 : -1; }}
-              else if (bw === 8) {{ turbo = !!(code & 64); dr = twoDelta((code >> 4) & 3); dg = twoDelta((code >> 2) & 3); db = twoDelta(code & 3); }}
-              const mag = turbo ? (step << 2) : step;
-              accR = clamp8(accR + dr * mag);
-              accG = clamp8(accG + dg * mag);
-              accB = clamp8(accB + db * mag);
+              const msb = (code >> (bw - 1)) & 1;
+              if (msb === 0) {{
+                const palCol = DATA.palette[(d.part.pal_offset + code) & 0xFF];
+                accR = (palCol >> 16) & 0xFF;
+                accG = (palCol >> 8) & 0xFF;
+                accB = palCol & 0xFF;
+              }} else {{
+                let turbo = false, dr = 0, dg = 0, db = 0;
+                if (bw === 3) {{ dr = (code & 2) ? 2 : -2; dg = (code & 1) ? 2 : -2; db = dr; }}
+                else if (bw === 4) {{ dr = (code & 4) ? 2 : -2; dg = (code & 2) ? 2 : -2; db = (code & 1) ? 2 : -2; }}
+                else if (bw === 5) {{ turbo = !!(code & 8); dr = (code & 4) ? 1 : -1; dg = (code & 2) ? 1 : -1; db = (code & 1) ? 1 : -1; }}
+                else if (bw === 6) {{ turbo = !!(code & 16); dr = (code & 8) ? 1 : -1; dg = twoDelta((code >> 1) & 3); db = (code & 1) ? 1 : -1; }}
+                else if (bw === 8) {{ turbo = !!(code & 64); dr = twoDelta((code >> 4) & 3); dg = twoDelta((code >> 2) & 3); db = twoDelta(code & 3); }}
+                const mag = turbo ? (step << 2) : step;
+                accR = clamp8(accR + dr * mag);
+                accG = clamp8(accG + dg * mag);
+                accB = clamp8(accB + db * mag);
+              }}
             }}
             decOp[pOut] = 1; decR[pOut] = accR; decG[pOut] = accG; decB[pOut] = accB;
             prevOp = true; pOut++;

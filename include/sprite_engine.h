@@ -58,6 +58,9 @@ extern "C" {
 #define SPR_FMT_HAM16_DIRECT    14  /* 16-16, 16 px/burst (Pure HAM16 palette-free) */
 #define SPR_FMT_RGB16_HIGHCOLOR 15  /* 16-16 Direct HighColor (RGB565 / RGB555 $8000=black) */
 #define SPR_FMT_ARGB32_DIRECT   16  /* 32-bit ARGB8888 TrueColor (8 px/burst, per-pixel alpha) */
+#define SPR_FMT_HAM12_5D        17  /* 12-5-5-5-5, 40 px/burst (HAM12 anchor + 4x ham5delta, palette-free) */
+#define SPR_FMT_HAM12_686_D     18  /* 12-6-8-6, 32 px/burst (HAM12 anchor + ham6delta/ham8delta, palette-free) */
+#define SPR_FMT_HAM08_D         19  /* 8-8-8-8, 32 px/burst (Pure ham8delta 4-level turbo, palette-free) */
 
 /* =========================================================================
  * 3. 16-Byte Sprite Descriptor Structure (Fast-RAM, DESC_REV = 4)

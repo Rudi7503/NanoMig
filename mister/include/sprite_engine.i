@@ -78,6 +78,9 @@ FMT_HAM16_12X4  EQU 13      ; 16-12-12-12-12, 20 px/burst (100% palette-free)
 FMT_HAM16_16    EQU 14      ; 16-16 Pure HAM16, 16 px/burst (palette-free)
 FMT_RGB16_DIR   EQU 15      ; 16-16 Direct HighColor (RGB565 / RGB555 $8000=black)
 FMT_ARGB32_DIR  EQU 16      ; 32-bit ARGB8888 TrueColor (8 px/burst, per-pixel alpha)
+FMT_HAM12_5D     EQU 17      ; 12-5-5-5-5, 40 px/burst (HAM12 anchor + 4x ham5delta, palette-free)
+FMT_HAM12_686_D  EQU 18      ; 12-6-8-6, 32 px/burst (HAM12 anchor + ham6delta/ham8delta, palette-free)
+FMT_HAM08_D      EQU 19      ; 8-8-8-8, 32 px/burst (Pure ham8delta 4-level turbo, palette-free)
 
 * -------------------------------------------------------------------------
 * 3. Macro: Set Palette Entry ($DFF586 .. $DFF58A)

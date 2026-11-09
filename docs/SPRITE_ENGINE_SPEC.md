@@ -88,8 +88,11 @@ Dadurch nutzt jeder DMA-Lesezugriff mit **`BURSTCNT = 4`** den physischen **DDR3
 | **`14`** | `FMT_HAM16_DIRECT` | Reines HAM16 (`16-16`) | **16 px** | **0 Füllbits** |
 | **`15`** | `FMT_RGB16` | Direct HighColor (`RGB565` / `RGB555`) | **16 px** | **0 Füllbits** |
 | **`16`** | `FMT_ARGB32` | Direct TrueColor (`ARGB8888` mit Alpha) | **8 px** | **0 Füllbits** |
+| **`17`** | `FMT_HAM12_5D` | `HAM12 12_5555_DELTA` (`ham5delta`) | **40 px** | **0 Füllbits** |
+| **`18`** | `FMT_HAM12_686_D` | `HAM12 12_686_DELTA` (`ham6delta/ham8delta`) | **32 px** | **0 Füllbits** |
+| **`19`** | `FMT_HAM08_D` | `HAM08_DELTA` (`ham8delta` Turboturbo) | **32 px** | **0 Füllbits** |
 
-*(Werte `FORMAT >= 17` sind als ungültig/Reserve definiert und führen zum deterministischen Überspringen des Sprites ohne DMA-Zugriff).*
+*(Werte `FORMAT >= 20` sind als ungültig/Reserve definiert und führen zum deterministischen Überspringen des Sprites ohne DMA-Zugriff).*
 
 ### 3.1 Exakte Bit-Definition der erweiterten Formate (`HAM12`, `HAM16`, `RGB16`, `ARGB32`)
 
@@ -139,6 +142,33 @@ Dadurch nutzt jeder DMA-Lesezugriff mit **`BURSTCNT = 4`** den physischen **DDR3
      * In allen Paletten-Formaten (`FORMAT 0..7, 11, 12`): Index `0` ist transparent (`opaque = 0`). Palettenslots mit Farbwert `24'h000000` bei Index `!= 0` sind opak (`opaque = 1`).
      * `HAM16 Direct` (`FORMAT 14`): Code `16'h8000` nach Reset ist **opakes Tiefschwarz** (`opaque = 1`, `acc = 24'h000000`).
      * `RGB16 Direct` (`FORMAT 15`): Code `16'h0000` ist transparent. Opakes Schwarz wird z.B. als Fast-Black `16'h0020` oder über Blend-Modus/Palette erzeugt. Code `16'h8000` ist Dunkelrot (`128, 0, 0`).
+
+
+### 3.2 Die neuen reinen HAM-Delta-Modi (`ham5delta`, `ham6delta`, `ham8delta`)
+
+In reinen Delta-Streams nach einem 12-Bit RGB444-Direktanker entfällt das Anker-Bit (`anchor`). Dadurch stehen alle Bits für präzise Farb-Deltas und mehrstufige Turbo-Schritte zur Verfügung:
+
+1. **`ham5delta` (5 Bit pro Pixel, genutzt in `FORMAT 17` `HAM12 12_5555_DELTA`):**
+   * **Bit `[4]` (Turbo):** `0` = $4\times$ (Standard-Schritt), `1` = $16\times$ (Super-Turbo).
+   * **Bit `[3]` (`dr`):** 1 Bit für Rot ($1 = +1, 0 = -1$).
+   * **Bits `[2:1]` (`dg`):** 2 Bits für Grün (`two_delta`: `00` = -2, `01` = -1, `10` = +1, `11` = +2).
+   * **Bit `[0]` (`db`):** 1 Bit für Blau ($1 = +1, 0 = -1$).
+   * Entspricht exakt der Farbauflösung des vollen `HAM06` im Delta-Modus ohne Anker-Overhead!
+
+2. **`ham6delta` (6 Bit pro Pixel, genutzt in `FORMAT 18` `HAM12 12_686_DELTA`):**
+   * **Bits `[5:4]` (2-Bit Turboturbo `turbo[1:0]`):**
+     `00` = $1\times$ (Feinstufe), `01` = $4\times$ (Standard), `10` = $8\times$ (Turbo), `11` = $16\times$ (Super-Turbo).
+   * **Bit `[3]` (`dr`):** 1 Bit für Rot ($1 = +1, 0 = -1$).
+   * **Bits `[2:1]` (`dg`):** 2 Bits für Grün (`two_delta`: -2, -1, +1, +2).
+   * **Bit `[0]` (`db`):** 1 Bit für Blau ($1 = +1, 0 = -1$).
+
+3. **`ham8delta` (8 Bit pro Pixel, genutzt in `FORMAT 18` und `FORMAT 19` `HAM08_DELTA`):**
+   * **Bits `[7:6]` (2-Bit Turboturbo `turbo[1:0]`):**
+     `00` = $1\times$, `01` = $4\times$, `10` = $8\times$, `11` = $16\times$.
+   * **Bits `[5:4]` (`dr`):** 2 Bits für Rot (`two_delta`: -2, -1, +1, +2).
+   * **Bits `[3:2]` (`dg`):** 2 Bits für Grün (`two_delta`: -2, -1, +1, +2).
+   * **Bits `[1:0]` (`db`):** 2 Bits für Blau (`two_delta`: -2, -1, +1, +2).
+   * Ermöglicht 4-stufige Turbosprünge bei gleichzeitiger 2-Bit-Präzision auf allen 3 Farbkanälen.
 
 ---
 
