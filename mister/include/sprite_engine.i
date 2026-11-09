@@ -1,45 +1,28 @@
 * =========================================================================
 * NanoMig / Minimig-AGA 32/64-Bit HAM, ARGB & HighColor Sprite Engine
 * Motorola 68000 Assembly Include File (vasm / PhxAss / ASM-One)
-* Architecture Spec Revision 4
+* Architecture Spec Revision 4.1
+* Native VBlank Pointer Latching (Amiga Standard: NULL = OFF)
 * =========================================================================
 
 * -------------------------------------------------------------------------
 * 1. Hardware Custom Register Offsets (relative to $DFF000 / CUSTOM Base)
 * -------------------------------------------------------------------------
-SPR_LIST_PTR    EQU $580    ; Long: Fast-RAM 32-byte-aligned Descriptor List Pointer
+SPR_LIST_PTR    EQU $580    ; Long: W = Pending VBlank pointer; R = Active rendering pointer
 SPR_LIST_PTR_H  EQU $580    ; Word: High 16 bits of Descriptor Pointer
 SPR_LIST_PTR_L  EQU $582    ; Word: Low 16 bits of Descriptor Pointer
-SPR_CTRL        EQU $584    ; Word: Engine Control (Enable, Auto-Scan, Reset)
+SPR_CTRL        EQU $584    ; Word: Engine Control (Bit 2: Reset)
 SPR_PAL_ADDR    EQU $586    ; Word: Palette RAM Address (0..255)
 SPR_PAL_DATA_H  EQU $588    ; Word: Palette Data High: Red [7:0]
 SPR_PAL_DATA_L  EQU $58A    ; Word: Palette Data Low: Green [15:8], Blue [7:0]
-SPR_RESERVED    EQU $58C    ; Word: Formerly SPR_STEP_RGB, now fixed=4 in HW
-SPR_COMMIT      EQU $58E    ; Word: Commit Handshake (Bit 0: REQ, Bit 1: ACK, Bit 2: BANK, Bit 3: BUSY)
 SPR_MAX_BUSY    EQU $590    ; Word: Diagnostic: Max decoder busy cycles on a line
 SPR_DMA_STALL   EQU $592    ; Word: Diagnostic: Total DMA memory wait cycles
 SPR_OVERRUN_CNT EQU $594    ; Word: Diagnostic: Line budget overrun/timeout counter
 SPR_CUR_Y       EQU $596    ; Word: Diagnostic: Current raster line in hardware
 
 * Bits in SPR_CTRL ($DFF584)
-SPRB_ENABLE     EQU 0       ; Enable Sprite Engine rendering
-SPRB_AUTO_SCAN  EQU 1       ; Automatic Y-list traversal per scanline
 SPRB_RESET      EQU 2       ; Reset pipeline and prefetch FIFOs
-
-SPRF_ENABLE     EQU (1<<0)
-SPRF_AUTO_SCAN  EQU (1<<1)
 SPRF_RESET      EQU (1<<2)
-
-* Bits in SPR_COMMIT ($DFF58E)
-SPRB_COMMIT_REQ EQU 0       ; CPU request bit: commit shadow configuration
-SPRB_COMMIT_ACK EQU 1       ; Hardware status bit: commit completed before line 0 & old bank drained
-SPRB_ACTIVE_BNK EQU 2       ; Hardware status bit: active bank (0=Bank A, 1=Bank B)
-SPRB_OLD_BUSY   EQU 3       ; Hardware status bit: 1=old bank draining, 0=old bank idle/safe
-
-SPRF_COMMIT_REQ EQU (1<<0)
-SPRF_COMMIT_ACK EQU (1<<1)
-SPRF_ACTIVE_BNK EQU (1<<2)
-SPRF_OLD_BUSY   EQU (1<<3)
 
 * -------------------------------------------------------------------------
 * 2. 16-Byte Sprite Descriptor Offsets (DESC_REV = 4)
@@ -107,19 +90,3 @@ SPR_SET_PALETTE MACRO
                 SWAP    \3                      ; Restore: low word is $GGBB
                 MOVE.W  \3,SPR_PAL_DATA_L(\1)   ; Write Green [15:8] and Blue [7:0]
                 ENDM
-
-* -------------------------------------------------------------------------
-* 4. Helper Routine: Atomic VBlank Bank-Commit Handshake
-* In: A5 = $DFF000 (Custom Base)
-* Note: Keeps A6 intact for AmigaOS Library calls!
-* -------------------------------------------------------------------------
-SprCommitBank:
-                MOVE.W  #SPRF_COMMIT_REQ,SPR_COMMIT(A5) ; Request bank commit
-.wait_ack:
-                BTST    #SPRB_COMMIT_ACK,SPR_COMMIT+1(A5) ; Test ACK bit in low byte
-                BEQ.S   .wait_ack                       ; Wait until hardware signals ACK (old_bank_safe)
-                CLR.W   SPR_COMMIT(A5)                  ; Clear REQ bit
-.wait_rearm:
-                BTST    #SPRB_COMMIT_ACK,SPR_COMMIT+1(A5)
-                BNE.S   .wait_rearm                     ; Wait until hardware clears ACK (rearmed)
-                RTS

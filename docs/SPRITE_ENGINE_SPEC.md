@@ -264,29 +264,29 @@ Alle 16-Bit- und 32-Bit-Felder sind zu 100 % natürlich auf geraden Adressen aus
 3. **Diagnosezähler:**  
    Wurde ein Sprite wegen Erreichen von `line_budget_eof` vorzeitig abgebrochen oder eine Zeile wegen Drain-Timeout ausgelassen, inkrementiert die Hardware den 16-Bit-Zähler **`SPR_OVERRUN_CNT`** (`$DFF594`). Bereits in den Zeilenbuffer geschriebene Pixel bleiben sichtbar.
 
-### 7.3 Bank-Commit, Shadow-Register & VBlank-Kopplung (Review #8 Handshake-Vertrag)
-1. **Register-Schnittstelle (`$DFF58E SPR_COMMIT`):**
-   * Bit 0: **`SPR_COMMIT_REQ`** (CPU-Schreibzugriff: `1` = Schattenkonfiguration zur Übernahme anfordern).
-   * Bit 1: **`SPR_COMMIT_ACK`** (Hardware-Status: `1` = Übernahme vor Zeile 0 atomar erfolgt UND Altbank vollständig gedraint).
-   * Bit 2: **`SPR_ACTIVE_BANK`** (Hardware-Status: `0` = Bank 0 aktiv, `1` = Bank 1 aktiv).
-   * Bit 3: **`SPR_OLD_BANK_BUSY`** (Hardware-Status: `1` = Vorherige Bank hat noch ausstehende Prefetches/Responses, `0` = vollständig frei).
-2. **Atomarer Bank-Commit Handshake (Single-Shot Edge-Trigger & Altbank-Sicherheit):**  
-   * **Strikter Single-Shot Schutz:** Die Hardware reagiert ausschließlich auf die positive Flanke `0 -> 1` von `SPR_COMMIT_REQ`. Verbleibt `SPR_COMMIT_REQ == 1` über mehrere VBlanks (oder Framewechsel), erfolgt **genau eine einzige** Bank-Umschaltung. Eine erneute Umschaltung erfordert zwingend das Zurücksetzen (`REQ = 0`) und das Bestätigen des Handshakes (`REQ = 0 && ACK = 0`).
-   * **Altbank-Freigabe vor ACK (`ACK => old_bank_safe`):** Am Frame-Start bei aktivem VBlank (`vblank_active && next_y == 0`) wartet die Commit-Logik, bis sämtliche ausstehenden Prefetches/In-Flight-Beats der bisher aktiven Bank vollständig gedraint sind (`in_flight_beats == 0`, `SPR_OLD_BANK_BUSY == 0`). Erst danach toggelt die Hardware `SPR_ACTIVE_BANK` und setzt im selben Takt `SPR_COMMIT_ACK = 1`.
-   * **Garantie für die 68000-CPU:** Sobald die CPU `SPR_COMMIT_ACK == 1` liest, ist die inaktive Altbank zu 100 % frei von DMA-Zugriffen und darf gefahrlos mit neuen Deskriptoren oder Palettendaten beschrieben werden.
-   * **4-Phasen-Handshake Ablauf:**
-     1. CPU schreibt Deskriptoren in inaktive Bank und setzt `SPR_COMMIT_REQ = 1`.
-     2. Hardware registriert die Flanke und wartet auf VBlank + Drain (`in_flight_beats == 0`).
-     3. Hardware toggelt `ACTIVE_BANK` und setzt `SPR_COMMIT_ACK = 1`.
-     4. CPU erkennt `ACK == 1`, nimmt `SPR_COMMIT_REQ = 0` zurück.
-     5. Hardware setzt `SPR_COMMIT_ACK = 0` zurück und ist wieder scharfgeschaltet (`ARMED`).
-   * **Register-Isolation:** `$DFF58E` (`SPR_COMMIT`) ist ein dezidiertes Steuerregister und wird weder durch Clear-on-Read noch durch VBlank-Diagnose-Resets gelöscht.
-3. **Buffer Ownership:**  
+### 7.3 Native Amiga-VBlank-Pointer-Übernahme (Revision 4.1)
+Anstelle komplexer Schattenbank-Handshakes mit asynchronen Flanken-Triggern folgt die Sprite-Engine der klassischen, bewährten **Amiga-Hardware-Architektur** (analog zu Copper `COP1LC`, Bitplanes `BPL1PT` und Denise-Sprites `SPR0PT`):
+
+1. **Register-Schnittstelle (`$DFF580 SPR_LIST_PTR`):**
+   * **Schreibzugriff (CPU / Copper):** Schreibt den 32-Bit-Zeiger auf das Descriptor-Array im Fast-RAM in das Schattenregister `spr_list_ptr_shadow`.
+   * **Lesezugriff (CPU):** Liefert den *aktuell von der Hardware dargestellten* Zeiger `spr_list_ptr_active` zurück. So weiß die CPU mit einem einzigen `MOVE.L $DFF580, D0`, welcher Puffer gerade aktiv ist.
+2. **Atomare VBlank-Übernahme & Nullpointer-Abschaltung:**
+   * Am Frame-Start bei Beginn des vertikalen Austastintervalls (`vblank_start`) übernimmt die Hardware den Schattenzeiger atomar:
+     $$\text{spr\_list\_ptr\_active} \le \text{spr\_list\_ptr\_shadow}$$
+   * **Nullpointer (`NULL / 32'd0`):** Ist `spr_list_ptr_active == 0`, ist die Sprite-Engine **vollständig deaktiviert**. Es finden keinerlei DMA-Zugriffe statt (0 % Speicherbandbreite, 0 ALMs Buslast).
+   * **Gültiger Pointer (`!= 0`):** Ist `spr_list_ptr_active != 0`, startet die Engine ab Scanline 0 den geordneten Descriptor-Vorabruf.
+3. **Natives Double-/Triple-Buffering im Fast-RAM:**
+   * Der Entwickler allokiert zwei Descriptor-Puffer (`Buffer_A`, `Buffer_B`) im Fast-RAM.
+   * Während die Hardware aus `Buffer_A` rendert, baut die 68000-CPU den nächsten Frame in `Buffer_B` auf.
+   * Am Frame-Ende schreibt die Software einfach `MOVE.L #Buffer_B, SPR_LIST_PTR(A5)`.
+   * Beim nächsten VBlank erfolgt die Umschaltung automatisch, deterministisch und gloriös ohne jeden Handshake-Wartezyklus!
+   * **Copper-Listen-Kompatibilität:** Da es sich um ein normales Longword-Register handelt, kann auch eine Copper-Liste den Zeiger per `CMOVE` umschalten.
+4. **Buffer Ownership:**  
    Zeilenbuffer A und B tauschen ihre Rollen deterministisch am Zeilensynchronisationspunkt (`line_sync`). Während Denise Buffer A ausliest und per Clear-on-Read leert, schreibt die Engine exklusiv in Buffer B.
 
 ---
 
-## 8. Diagnose-Metriken & Reproduzierbare Test-Suite (Review #5, #6 & #7)
+## 8. Diagnose-Metriken & Reproduzierbare Test-Suite
 
 ### 8.1 Klarstellung der Zeilenlast-Metriken & Diagnose-Register
 Die im HUD angezeigte Zeilenlast ist als **`Decoder-Operationsschätzung ohne DMA/Clear/Ausgabe`** definiert. Für detaillierte Hardware-Analysen stellt die Engine getrennte Zähler bereit:
@@ -295,7 +295,11 @@ Die im HUD angezeigte Zeilenlast ist als **`Decoder-Operationsschätzung ohne DM
 * **`skip_words`:** Anzahl der per 1-Takt Zero-Word-Skip übersprungenen 64-Bit-Worte.
 * **`descriptors_scanned`:** Anzahl der im Frame ausgewerteten Descriptoren.
 * **Hardware-Register (Clear-on-Read / VBlank-Reset):**
-  * `$DFF58E`: `SPR_COMMIT` (REQ/ACK Handshake & Bank-Select).
+  * `$DFF580`: `SPR_LIST_PTR` (W: Pending VBlank Pointer, R: Active Rendering Pointer; `0` = Engine OFF).
+  * `$DFF584`: `SPR_CTRL` (Bit 2: Reset).
+  * `$DFF586`: `SPR_PAL_ADDR` (Paletten-Slot 0..255).
+  * `$DFF588`: `SPR_PAL_DATA_H` (Paletten-Rot [7:0]).
+  * `$DFF58A`: `SPR_PAL_DATA_L` (Paletten-Grün [15:8], Blau [7:0]).
   * `$DFF590`: `SPR_MAX_BUSY` (Maximale Decoder-Busy-Takte einer Zeile).
   * `$DFF592`: `SPR_DMA_STALL` (Wartezyklen auf Speicherdaten).
   * `$DFF594`: `SPR_OVERRUN_CNT` (Anzahl unvollständiger Zeilenbudgets / Drain-Timeouts).

@@ -227,42 +227,30 @@ class SpriteEnginePipelineSim:
         }
 
 
-class BankCommitStateMachine:
+class VBlankPointerLatchingModel:
     """
-    Simulates the atomic 4-phase Bank-Commit Handshake logic ($DFF58E SPR_COMMIT).
-    Enforces Review #8 integration contracts:
-      1. Single-Shot edge trigger: REQ remaining high across multiple VBlanks triggers exactly 1 bank toggle.
-      2. Altbank Drain Guarantee: ACK is withheld until all pending in-flight beats of the old bank reach 0 (old_bank_safe).
-      3. Dedicated register isolation: not reset by Clear-on-Read or diagnostic counters.
+    Simulates the native Amiga VBlank Pointer Latching architecture ($DFF580 SPR_LIST_PTR).
+    Revision 4.1:
+      - Writing SPR_LIST_PTR sets pending pointer in shadow register.
+      - Reading SPR_LIST_PTR returns currently active rendering pointer.
+      - At VBlank start, hardware latches shadow -> active.
+      - If active == 0 (NULL pointer): engine is completely dormant (0 DMA requests).
+      - If active != 0: engine is active.
     """
     def __init__(self):
-        self.req = False
-        self.ack = False
-        self.active_bank = 0
-        self.old_bank_busy = False
-        self.pending_armed = False
-        self.toggle_count = 0
+        self.shadow_ptr = 0
+        self.active_ptr = 0
+        self.engine_active = False
 
-    def cpu_write_req(self, val: bool) -> None:
-        if val and not self.req and not self.ack:
-            # Rising edge 0 -> 1 arms the request
-            self.pending_armed = True
-        elif not val:
-            # Falling edge 1 -> 0 acknowledges ACK and re-arms
-            if self.ack:
-                self.ack = False
-            self.pending_armed = False
-        self.req = val
+    def cpu_write_ptr(self, ptr: int) -> None:
+        self.shadow_ptr = ptr & 0xFFFFFFFF
 
-    def vblank_tick(self, in_flight_beats: int) -> None:
-        """Called once at the start of each VBlank frame."""
-        self.old_bank_busy = (in_flight_beats > 0)
-        if self.pending_armed and not self.old_bank_busy:
-            # Single-shot atomic swap only when old bank has completely drained!
-            self.active_bank ^= 1
-            self.toggle_count += 1
-            self.ack = True
-            self.pending_armed = False  # Disarm so subsequent VBlanks do NOT re-toggle!
+    def cpu_read_ptr(self) -> int:
+        return self.active_ptr
+
+    def vblank_tick(self) -> None:
+        self.active_ptr = self.shadow_ptr
+        self.engine_active = (self.active_ptr != 0)
 
 
 def run_timing_verification() -> None:
@@ -330,46 +318,38 @@ def run_timing_verification() -> None:
     print(f"[TEST 4 PASS] Write-Forwarding: {stats1['forwarding_hits']} consecutive column hits resolved via bypass.")
 
     # -------------------------------------------------------------------------
-    # TEST 5: Single-Shot Latch across Multiple VBlanks (Review #8 Item 2)
+    # TEST 5: Native Amiga VBlank Pointer Latching ($DFF580 SPR_LIST_PTR)
     # -------------------------------------------------------------------------
-    sm5 = BankCommitStateMachine()
-    assert sm5.active_bank == 0
-    sm5.cpu_write_req(True)  # CPU requests commit
-    assert sm5.pending_armed is True
-    # Simulate Frame 1 VBlank
-    sm5.vblank_tick(in_flight_beats=0)
-    assert sm5.active_bank == 1, "Bank did not toggle to 1 on first VBlank"
-    assert sm5.ack is True, "ACK was not asserted on swap"
-    assert sm5.toggle_count == 1
+    pl = VBlankPointerLatchingModel()
+    assert pl.engine_active is False and pl.active_ptr == 0
+    # CPU writes pointer for Frame 1
+    pl.cpu_write_ptr(0x00200000)
+    assert pl.cpu_read_ptr() == 0, "Active pointer changed before VBlank!"
+    assert pl.engine_active is False
 
-    # CPU holds REQ=1 across subsequent VBlanks (Frame 2 and Frame 3)
-    sm5.vblank_tick(in_flight_beats=0)
-    sm5.vblank_tick(in_flight_beats=0)
-    assert sm5.active_bank == 1, "Bank erroneously toggled again while REQ was still high!"
-    assert sm5.toggle_count == 1, "Single-shot violated: multiple toggles occurred!"
+    # VBlank arrives
+    pl.vblank_tick()
+    assert pl.cpu_read_ptr() == 0x00200000
+    assert pl.engine_active is True
 
-    # CPU lowers REQ=0: hardware must lower ACK and rearm
-    sm5.cpu_write_req(False)
-    assert sm5.ack is False, "ACK was not deasserted when CPU cleared REQ"
-    print("[TEST 5 PASS] Single-Shot Latch: REQ held across 3 VBlanks toggled bank strictly ONCE.")
+    # CPU sets NULL pointer for Frame 2 (Disable)
+    pl.cpu_write_ptr(0)
+    assert pl.cpu_read_ptr() == 0x00200000, "Active pointer changed prematurely!"
+    pl.vblank_tick()
+    assert pl.cpu_read_ptr() == 0
+    assert pl.engine_active is False, "Engine not dormant on NULL pointer!"
+    print("[TEST 5 PASS] Native VBlank Pointer Latching: Nullpointer disables engine (0 DMA), pointer switches atomar at VBlank.")
 
     # -------------------------------------------------------------------------
-    # TEST 6: Altbank Drain Guarantee before ACK (Review #8 Item 1: ACK => old_bank_safe)
+    # TEST 6: Double-Buffering Swap (Buffer A vs Buffer B)
     # -------------------------------------------------------------------------
-    sm6 = BankCommitStateMachine()
-    sm6.cpu_write_req(True)
-    # VBlank arrives while old bank still has 4 in-flight beats!
-    sm6.vblank_tick(in_flight_beats=4)
-    assert sm6.ack is False, "ACK was asserted before old bank finished draining!"
-    assert sm6.active_bank == 0, "Bank swapped while old bank was still active!"
-    assert sm6.old_bank_busy is True, "OLD_BANK_BUSY flag not set during drain!"
-
-    # Next tick: in_flight_beats drains to 0
-    sm6.vblank_tick(in_flight_beats=0)
-    assert sm6.ack is True, "ACK was not asserted after drain completed"
-    assert sm6.active_bank == 1, "Bank did not swap after drain"
-    assert sm6.old_bank_busy is False, "OLD_BANK_BUSY flag not cleared!"
-    print("[TEST 6 PASS] Altbank Drain Handshake: ACK withheld until in-flight beats == 0 (old_bank_safe verified).")
+    pl.cpu_write_ptr(0x00100000)  # Buffer A
+    pl.vblank_tick()
+    assert pl.cpu_read_ptr() == 0x00100000
+    pl.cpu_write_ptr(0x00200000)  # Buffer B
+    pl.vblank_tick()
+    assert pl.cpu_read_ptr() == 0x00200000
+    print("[TEST 6 PASS] Double-Buffering Swap: Zero-latency atomic pointer handoff at VBlank.")
 
     # -------------------------------------------------------------------------
     # TEST 7: Delayed Responses over 4 Lines without Epoch Alias

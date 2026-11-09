@@ -1,10 +1,11 @@
 /**
  * NanoMig / Minimig-AGA 32/64-Bit HAM, ARGB & HighColor Sprite Engine
  * C/C++ Hardware Header & API (AmigaOS / m68k-amigaos-gcc)
- * Architecture Spec Revision 4
+ * Architecture Spec Revision 4.1
  *
  * All registers and memory structures follow Motorola 68000 Big-Endian conventions.
  * 16-Byte Sprite Descriptors are naturally word- and long-aligned in Fast-RAM.
+ * Native VBlank Pointer Latching: Pass NULL (0) to disable; write pointer to enable!
  */
 
 #ifndef SPRITE_ENGINE_H
@@ -22,30 +23,20 @@ extern "C" {
  * ========================================================================= */
 #define CUSTOM_BASE             0x00DFF000
 
-#define REG_SPR_LIST_PTR        (*(volatile uint32_t*)(CUSTOM_BASE + 0x580))
+#define REG_SPR_LIST_PTR        (*(volatile uint32_t*)(CUSTOM_BASE + 0x580)) /* W: Pending VBlank ptr; R: Active rendering ptr */
 #define REG_SPR_LIST_PTR_H      (*(volatile uint16_t*)(CUSTOM_BASE + 0x580))
 #define REG_SPR_LIST_PTR_L      (*(volatile uint16_t*)(CUSTOM_BASE + 0x582))
-#define REG_SPR_CTRL            (*(volatile uint16_t*)(CUSTOM_BASE + 0x584))
+#define REG_SPR_CTRL            (*(volatile uint16_t*)(CUSTOM_BASE + 0x584)) /* Bit 2: Reset */
 #define REG_SPR_PAL_ADDR        (*(volatile uint16_t*)(CUSTOM_BASE + 0x586))
 #define REG_SPR_PAL_DATA_H      (*(volatile uint16_t*)(CUSTOM_BASE + 0x588)) /* Red [7:0] */
 #define REG_SPR_PAL_DATA_L      (*(volatile uint16_t*)(CUSTOM_BASE + 0x58A)) /* Green [15:8], Blue [7:0] */
-#define REG_SPR_RESERVED_58C    (*(volatile uint16_t*)(CUSTOM_BASE + 0x58C)) /* Formerly STEP_RGB, now fixed=4 in HW */
-#define REG_SPR_COMMIT          (*(volatile uint16_t*)(CUSTOM_BASE + 0x58E)) /* Bit 0: REQ, Bit 1: ACK, Bit 2: BANK, Bit 3: BUSY */
 #define REG_SPR_MAX_BUSY        (*(volatile uint16_t*)(CUSTOM_BASE + 0x590)) /* Max line busy cycles */
 #define REG_SPR_DMA_STALL       (*(volatile uint16_t*)(CUSTOM_BASE + 0x592)) /* DMA wait cycles */
 #define REG_SPR_OVERRUN_CNT     (*(volatile uint16_t*)(CUSTOM_BASE + 0x594)) /* Line budget overruns */
 #define REG_SPR_CUR_Y           (*(volatile uint16_t*)(CUSTOM_BASE + 0x596)) /* Current raster scanline */
 
 /* Bits in SPR_CTRL ($DFF584) */
-#define SPR_CTRL_ENABLE         (1u << 0)  /* Enable Sprite Engine */
-#define SPR_CTRL_AUTO_SCAN      (1u << 1)  /* Automatic Y-list traversal */
 #define SPR_CTRL_RESET          (1u << 2)  /* Reset engine pipeline & FIFOs */
-
-/* Bits in SPR_COMMIT ($DFF58E) */
-#define SPR_COMMIT_REQ          (1u << 0)  /* CPU request: commit shadow config */
-#define SPR_COMMIT_ACK          (1u << 1)  /* HW status: commit completed before line 0 & old bank drained */
-#define SPR_COMMIT_ACTIVE_BANK  (1u << 2)  /* HW status: active bank (0=Bank A, 1=Bank B) */
-#define SPR_COMMIT_OLD_BUSY     (1u << 3)  /* HW status: 1=old bank still draining, 0=old bank idle/safe */
 
 /* =========================================================================
  * 2. Supported Formats (FORMAT 0..16)
@@ -144,20 +135,26 @@ static inline void SprSetPalette(uint8_t slot, uint8_t r, uint8_t g, uint8_t b) 
 }
 
 /**
- * Performs an atomic VBlank Bank-Commit 4-phase handshake.
- * Sets SPR_COMMIT_REQ, waits for hardware SPR_COMMIT_ACK (guaranteeing
- * old bank is fully drained and safe to modify), then clears REQ and
- * waits for HW to drop ACK, rearming the single-shot latch.
+ * Sets the pending 32-bit Sprite Descriptor List Pointer ($DFF580).
+ * Hardware automatically latches this pointer at the start of each VBlank.
+ * Passing NULL (0) disables the sprite engine completely (0 DMA requests).
  */
-static inline void SprCommitConfig(void) {
-    REG_SPR_COMMIT = SPR_COMMIT_REQ;
-    while (!(REG_SPR_COMMIT & SPR_COMMIT_ACK)) {
-        /* Busy wait until hardware confirms commit before line 0 and old bank drained */
-    }
-    REG_SPR_COMMIT = 0; /* Clear REQ to complete handshake */
-    while (REG_SPR_COMMIT & SPR_COMMIT_ACK) {
-        /* Wait for HW to drop ACK and return to ARMED state */
-    }
+static inline void SprSetListPtr(const SpriteDesc_t* desc_list) {
+    REG_SPR_LIST_PTR = (uint32_t)desc_list;
+}
+
+/**
+ * Returns the currently active (rendering) Sprite Descriptor List Pointer.
+ */
+static inline uint32_t SprGetActiveListPtr(void) {
+    return REG_SPR_LIST_PTR;
+}
+
+/**
+ * Disables the Sprite Engine (0 DMA requests, completely dormant).
+ */
+static inline void SprDisable(void) {
+    REG_SPR_LIST_PTR = 0;
 }
 
 #ifdef __cplusplus
