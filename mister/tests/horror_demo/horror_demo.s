@@ -5,33 +5,13 @@
 ; Target: Motorola 68000 / 68020 on MiSTer DE10-Nano
 ; Kickstart 1.3 / 3.x CLI compatible (clean OS takeover & full CLI restoration)
 ;
-; Showcases ALL Hardware Audio & Video Features in 5 Seamless Acts:
-;   ACT I:   "DIE SCHRITTE IM LANGEN FLUR"
-;            - Ominous footsteps approaching down an endless stone corridor
-;            - Multi-tap corridor reflections via Hardware Start-Delay ($DFF41C)
-;            - Biquad IIR Lowpass wall absorption on echo taps
-;            - 16-Bit Big-Endian PCM & 4-Bit ADPCM dungeon water drops
-;   ACT II:  "DAS GEHEULE DURCH DIE LANGEN FLURE"
-;            - Howling gale & ghost shrieks echoing through castle vaults
-;            - 24 dB/oct Cascaded Moog Low-Pass Filter Sweeps (CTRL_SRC_POST)
-;            - Hardware Ringmodulation (CTRL_MOD_RING: metallic phantom shrieks)
-;            - Vampire in Gothic hallway, glowing pulsing red eyes
-;   ACT III: "DER SCHWARM DER 32 FLEDERMÄUSE"
-;            - Vampire dissolves into 32 animated bats scattering across screen
-;            - ALL 32 HARDWARE VOICES simultaneously active (1 voice per bat!)
-;            - Hardware AM / Tremolo (wing flutter) + Biquad HP (ultrasonic chirps)
-;            - Dynamic 3D stereo panning tracked to each bat's (x, y) position
-;            - 22-Bit Master Mixer + 48-kHz True-Peak AGC Limiter (0 clipping)
-;   ACT IV:  "DAS LACHENDE SKELETT"
-;            - Macabre skeleton revealed in the castle archway
-;            - Animated jaw opening and closing in sync with demonic laughter
-;            - Polyphonic vocal formant synthesis ("MWA-HA-HA-HA!")
-;            - Hardware Ringmodulation for demonic rasp + sub-bass heartbeat
-;            - Hallway echo reflections carrying the laughter down the corridors
-;   ACT V:   "EPILOG & DIAGNOSTIK"
-;            - Smooth fadeout, clean OS restoration, AmigaDOS Return Code 0
-;
-; Abort anytime with Left Mouse Button ($BFE001 Bit 6).
+; Fixes applied for Kickstart 1.3 verification:
+;   1. Copper: Complete DIWSTRT ($2C81), DIWSTOP ($F4C1), DDFSTRT ($0038), DDFSTOP ($00D0)
+;   2. Copper: Cleared all 8 sprite pointers (eliminates left vertical bars & stripes)
+;   3. Bats: Guaranteed even word-aligned addresses (eliminates 68000 odd address error)
+;   4. Skull/Jaw: Fixed register collisions and separate plane indexing
+;   5. Timing: Bulletproof line-256 VBL sync + strictly bounded frame loops (~18s total)
+;   6. Diagnostics: Live step markers printed to CLI for each act
 ; ==============================================================================
 
 CUSTOM          EQU $DFF000
@@ -120,6 +100,10 @@ gb_copinit      EQU 38
 Main:
         MOVEM.L D2-D7/A2-A6,-(SP)
 
+        ; Save initial OS DMA control state
+        LEA     CUSTOM,A6
+        MOVE.W  DMACONR(A6),Saved_DMACON
+
         ; --------------------------------------------------------------
         ; 1. AmigaOS Library Initialization (Strict Lesson 12 via A6)
         ; --------------------------------------------------------------
@@ -140,6 +124,11 @@ Main:
         MOVEQ   #0,D0
         JSR     _LVOOpenLibrary(A6)
         MOVE.L  D0,IntuiBase
+
+        ; Grab standard output handle once
+        MOVE.L  DOSBase(PC),A6
+        JSR     _LVOOutput(A6)
+        MOVE.L  D0,StdoutHandle
 
         ; Print Intro Banner to CLI
         LEA     MsgBanner(PC),A0
@@ -165,13 +154,14 @@ Main:
         LEA     MsgAct1(PC),A0
         BSR     PrintStr
         MOVE.W  #1,CurrentAct
+        CLR.W   FootstepCount
 
-        ; 6 Footsteps echoing down the long stone corridor
-        MOVEQ   #5,D7                   ; 6 steps (0..5)
+        ; 5 Footsteps echoing down the long stone corridor (~4.0s total)
+        MOVEQ   #4,D7                   ; 5 steps (0..4)
 .footstep_loop:
         BSR     Trigger_Corridor_Footstep
-        ; Wait ~35 frames (~0.7s) between footsteps
-        MOVEQ   #34,D6
+        ; Wait 35 frames (~0.7s) between footsteps
+        MOVEQ   #35-1,D6
 .foot_vbl:
         BSR     Wait_VBL
         BSR     Update_Horror_Visuals
@@ -180,14 +170,8 @@ Main:
         DBRA    D6,.foot_vbl
         DBRA    D7,.footstep_loop
 
-        ; Brief suspense pause
-        MOVEQ   #30,D6
-.pause1:
-        BSR     Wait_VBL
-        BSR     Update_Horror_Visuals
-        BTST    #6,$BFE001
-        BEQ     .AbortDemo
-        DBRA    D6,.pause1
+        LEA     MsgAct1Done(PC),A0
+        BSR     PrintStr
 
         ; ==============================================================
         ; ACT II: "DAS GEHEULE DURCH DIE LANGEN FLURE" (Howling Wind & Moans)
@@ -198,8 +182,8 @@ Main:
 
         BSR     Start_Howling_Moog_And_Ringmod
 
-        ; Run howling wind and moans for 300 frames (6.0 seconds)
-        MOVE.W  #300-1,D6
+        ; Run howling wind and moans for 200 frames (~4.0 seconds)
+        MOVE.W  #200-1,D6
         MOVEQ   #0,D5                   ; LFO phase
 .howl_vbl:
         BSR     Wait_VBL
@@ -210,6 +194,10 @@ Main:
         ADDQ.W  #1,D5
         DBRA    D6,.howl_vbl
 
+        BSR     Silence_All_Voices
+        LEA     MsgAct2Done(PC),A0
+        BSR     PrintStr
+
         ; ==============================================================
         ; ACT III: "DER SCHWARM DER 32 FLEDERMÄUSE" (32 Bats Swarm Out)
         ; ==============================================================
@@ -217,15 +205,13 @@ Main:
         BSR     PrintStr
         MOVE.W  #3,CurrentAct
 
-        ; Stop previous howling voices
-        BSR     Silence_All_Voices
-        ; Erase central vampire silhouette so bats appear to explode out
+        ; Erase central vampire silhouette so bats explode outward
         BSR     Clear_Vampire_Center
         ; Initialize 32 bat positions, velocities, and audio voices
         BSR     Init_32_Bats_And_Voices
 
-        ; Run bat swarm for 350 frames (7.0 seconds)
-        MOVE.W  #350-1,D6
+        ; Run bat swarm for 250 frames (~5.0 seconds)
+        MOVE.W  #250-1,D6
 .bats_vbl:
         BSR     Wait_VBL
         BSR     Update_32_Bats_Movement_And_Audio
@@ -234,6 +220,10 @@ Main:
         BEQ     .AbortDemo
         DBRA    D6,.bats_vbl
 
+        BSR     Silence_All_Voices
+        LEA     MsgAct3Done(PC),A0
+        BSR     PrintStr
+
         ; ==============================================================
         ; ACT IV: "DAS LACHENDE SKELETT" (The Demonic Laughing Skeleton)
         ; ==============================================================
@@ -241,14 +231,12 @@ Main:
         BSR     PrintStr
         MOVE.W  #4,CurrentAct
 
-        BSR     Silence_All_Voices
         ; Draw the laughing skeleton skull in the archway
         BSR     Draw_Skeleton_Skull
 
-        ; Run laughing skeleton for 350 frames (7.0 seconds)
-        ; 5 distinct laughter bursts ("MWA - HA - HA - HA - HA!")
-        MOVE.W  #350-1,D6
-        MOVEQ   #0,D5                   ; Laughter timer
+        ; Run laughing skeleton for 220 frames (~4.4 seconds)
+        MOVE.W  #220-1,D6
+        MOVEQ   #0,D5                   ; Laughter frame timer
 .laugh_vbl:
         BSR     Wait_VBL
         BSR     Update_Laughing_Skeleton_Audio_And_Jaw
@@ -258,6 +246,10 @@ Main:
         ADDQ.W  #1,D5
         DBRA    D6,.laugh_vbl
 
+        BSR     Silence_All_Voices
+        LEA     MsgAct4Done(PC),A0
+        BSR     PrintStr
+
         ; ==============================================================
         ; ACT V: "EPILOG & FADEOUT"
         ; ==============================================================
@@ -265,8 +257,8 @@ Main:
         BSR     PrintStr
         MOVE.W  #5,CurrentAct
 
-        ; Smooth 50-frame volume fadeout
-        MOVEQ   #50-1,D6
+        ; Smooth 40-frame volume fadeout (~0.8s)
+        MOVEQ   #40-1,D6
 .fade_vbl:
         BSR     Wait_VBL
         BSR     Apply_Epilog_Fade
@@ -321,11 +313,10 @@ Main:
 Trigger_Corridor_Footstep:
         MOVEM.L D0-D4/A0-A2,-(SP)
 
-        ; Footstep counter (0..5) determines approaching volume and panning
         MOVE.W  FootstepCount(PC),D2
         ADDQ.W  #1,FootstepCount
 
-        ; Base volume scales up as steps approach: 60, 90, 130, 170, 210, 255
+        ; Base volume scales up as steps approach
         LEA     FootstepVolTab(PC),A0
         MOVE.W  D2,D0
         ADD.W   D0,D0
@@ -355,13 +346,11 @@ Trigger_Corridor_Footstep:
         MOVE.W  D0,AUD_PTRL(A1)
         MOVE.W  #0,AUD_LENH(A1)
         MOVE.W  #HORROR_FOOT_LEN,AUD_LENL(A1)
-        ; Tap 1 volume: ~60% of primary, panned slightly opposite
         MOVE.W  D3,D0
         LSR.W   #1,D0
         MOVE.W  D0,AUD_VOL(A1)
         MOVE.W  #HORROR_PER_24K,AUD_PER(A1)
         MOVE.W  #4915,AUD_DELAY(A1)     ; Hardware Start-Delay
-        ; Set Biquad Lowpass Tap 1
         LEA     Flt_Hallway_Tap1(PC),A2
         MOVE.W  (A2)+,AUD_BQ_B0(A1)
         MOVE.W  (A2)+,AUD_BQ_B1(A1)
@@ -380,7 +369,6 @@ Trigger_Corridor_Footstep:
         MOVE.W  D0,AUD_PTRL(A1)
         MOVE.W  #0,AUD_LENH(A1)
         MOVE.W  #HORROR_FOOT_LEN,AUD_LENL(A1)
-        ; Tap 2 volume: ~35% of primary
         MOVE.W  D3,D0
         LSR.W   #2,D0
         MOVE.W  D0,AUD_VOL(A1)
@@ -404,7 +392,6 @@ Trigger_Corridor_Footstep:
         MOVE.W  D0,AUD_PTRL(A1)
         MOVE.W  #0,AUD_LENH(A1)
         MOVE.W  #HORROR_FOOT_LEN,AUD_LENL(A1)
-        ; Tap 3 volume: ~20% of primary
         MOVE.W  D3,D0
         LSR.W   #3,D0
         MOVE.W  D0,AUD_VOL(A1)
@@ -422,14 +409,12 @@ Trigger_Corridor_Footstep:
         MOVEM.L (SP)+,D0-D4/A0-A2
         RTS
 
-; Approaching footstep volumes (Left << 8 | Right)
 FootstepVolTab:
         DC.W    $4020           ; Step 1: Distant left
         DC.W    $3060           ; Step 2: Distant right
         DC.W    $8050           ; Step 3: Medium left-center
         DC.W    $60A0           ; Step 4: Medium right-center
-        DC.W    $D0A0           ; Step 5: Close left
-        DC.W    $FFE0           ; Step 6: Right in front!
+        DC.W    $D0D0           ; Step 5: Close center!
 
 ; ==============================================================================
 ; ACT II PROCEDURES: 24 dB MOOG HOWLING CASCADE & RINGMODULATION
@@ -449,26 +434,22 @@ Start_Howling_Moog_And_Ringmod:
         MOVE.W  #$B0B0,AUD_VOL(A0)
         MOVE.W  #HORROR_PER_24K,AUD_PER(A0)
         MOVE.W  #0,AUD_DELAY(A0)
-        ; Mute in master mix so only post-cascade output is heard!
         MOVE.W  #CTRL_PCM16|CTRL_LOOP|CTRL_MUTE_MIX,AUD_CTRL(A0)
         MOVE.W  #1,AUD_CMD(A0)
 
         ; --- (B) Voice 7: Cascaded 24 dB Moog Low-Pass Filter ---
         LEA     AUDIO_EXT_BASE+VOICE_STRIDE*7,A1
-        ; Chained voice: LEN=0, 0% extra DMA!
         MOVE.W  #0,AUD_LENH(A1)
         MOVE.W  #0,AUD_LENL(A1)
         MOVE.W  #$C0C0,AUD_VOL(A1)
         MOVE.W  #HORROR_PER_24K,AUD_PER(A1)
         MOVE.W  #0,AUD_DELAY(A1)
-        ; Initial filter setting: Step 0
         LEA     MoogHowlTable(PC),A2
         MOVE.W  (A2)+,AUD_BQ_B0(A1)
         MOVE.W  (A2)+,AUD_BQ_B1(A1)
         MOVE.W  (A2)+,AUD_BQ_B2(A1)
         MOVE.W  (A2)+,AUD_BQ_A1(A1)
         MOVE.W  (A2)+,AUD_BQ_A2(A1)
-        ; Chained from voice 6 (POST-filter cascade), stereo filter enabled
         MOVE.W  #CTRL_PCM16|CTRL_LOOP|CTRL_SRC_POST|CTRL_FLT_STEREO,AUD_CTRL(A1)
         MOVE.W  #1,AUD_CMD(A1)
 
@@ -497,9 +478,8 @@ Start_Howling_Moog_And_Ringmod:
         MOVE.W  #0,AUD_LENH(A1)
         MOVE.W  #HORROR_GHOST_LEN,AUD_LENL(A1)
         MOVE.W  #$A0A0,AUD_VOL(A1)
-        MOVE.W  #HORROR_PER_12K,AUD_PER(A1) ; Detuned frequency for metallic discord
+        MOVE.W  #HORROR_PER_12K,AUD_PER(A1)
         MOVE.W  #0,AUD_DELAY(A1)
-        ; Hardware Ringmodulation enabled!
         MOVE.W  #CTRL_PCM16|CTRL_LOOP|CTRL_MOD_RING,AUD_CTRL(A1)
         MOVE.W  #1,AUD_CMD(A1)
 
@@ -507,7 +487,6 @@ Start_Howling_Moog_And_Ringmod:
         RTS
 
 Update_Howling_Sweep:
-        ; Smoothly sweep Moog cutoff back and forth across 32 steps
         MOVEM.L D0-D3/A0-A2,-(SP)
         MOVE.W  HowlStep(PC),D0
         MOVE.W  HowlDir(PC),D1
@@ -515,18 +494,17 @@ Update_Howling_Sweep:
         CMPI.W  #31,D0
         BLT.S   .chk_low
         MOVE.W  #31,D0
-        NEG.W   D1                      ; Reverse direction (down)
+        NEG.W   D1
         BRA.S   .store_dir
 .chk_low:
         TST.W   D0
         BGT.S   .store_dir
         MOVEQ   #0,D0
-        NEG.W   D1                      ; Reverse direction (up)
+        NEG.W   D1
 .store_dir:
         MOVE.W  D0,HowlStep
         MOVE.W  D1,HowlDir
 
-        ; Write Biquad coefficients to Voice 7 (10 bytes = 5 words per step)
         MULU.W  #10,D0
         LEA     MoogHowlTable(PC),A0
         ADDA.W  D0,A0
@@ -538,7 +516,7 @@ Update_Howling_Sweep:
         MOVE.W  (A0)+,AUD_BQ_A1(A1)
         MOVE.W  (A0)+,AUD_BQ_A2(A1)
 
-        ; Also slightly modulate Voice 9 pitch for eerie weeping vibrato
+        ; Modulate Voice 9 pitch for eerie weeping vibrato
         MOVE.W  D5,D2
         ANDI.W  #$000F,D2
         LEA     AUDIO_EXT_BASE+VOICE_STRIDE*9,A2
@@ -565,9 +543,7 @@ Init_32_Bats_And_Voices:
         MOVE.W  #160,(A0)+              ; Pos X
         MOVE.W  #100,(A0)+              ; Pos Y
 
-        ; Compute radial velocity based on voice index
-        MOVE.W  D7,D0
-        MULU.W  #8,D0                   ; Angle step
+        ; Compute velocity from table
         LEA     BatVelTable(PC),A3
         MOVE.W  D7,D1
         LSL.W   #2,D1
@@ -583,8 +559,7 @@ Init_32_Bats_And_Voices:
         MOVE.W  D0,AUD_PTRL(A1)
         MOVE.W  #0,AUD_LENH(A1)
         MOVE.W  #HORROR_BAT_LEN,AUD_LENL(A1)
-        MOVE.W  #$8080,AUD_VOL(A1)      ; Centered initial volume
-        ; Detuned period for each bat (around 16..24 kHz)
+        MOVE.W  #$8080,AUD_VOL(A1)
         MOVE.W  #HORROR_PER_16K,D2
         MOVE.W  D7,D3
         LSL.W   #3,D3
@@ -592,16 +567,16 @@ Init_32_Bats_And_Voices:
         MOVE.W  D2,AUD_PER(A1)
         MOVE.W  #0,AUD_DELAY(A1)
 
-        ; Set Ultrasonic Highpass Filter
+        ; Ultrasonic Highpass Filter
         MOVE.W  (A2),AUD_BQ_B0(A1)
         MOVE.W  2(A2),AUD_BQ_B1(A1)
         MOVE.W  4(A2),AUD_BQ_B2(A1)
         MOVE.W  6(A2),AUD_BQ_A1(A1)
         MOVE.W  8(A2),AUD_BQ_A2(A1)
 
-        ; Enable Loop + Hardware AM Tremolo + Highpass Biquad Filter
+        ; Enable Loop + Hardware AM Tremolo + Highpass Filter
         MOVE.W  #CTRL_PCM16|CTRL_LOOP|CTRL_MOD_AM|CTRL_FLT_STEREO,AUD_CTRL(A1)
-        MOVE.W  #1,AUD_CMD(A1)          ; Start voice!
+        MOVE.W  #1,AUD_CMD(A1)
 
         LEA     VOICE_STRIDE(A1),A1
         DBRA    D7,.init_bat_loop
@@ -614,24 +589,22 @@ Update_32_Bats_Movement_And_Audio:
 
         LEA     BatTable,A0
         LEA     AUDIO_EXT_BASE,A1
-        LEA     ScreenPlanes,A2
 
         MOVEQ   #31,D7                  ; 32 bats (0..31)
 .bat_update_loop:
-        ; 1. Read position and velocity
         MOVE.W  (A0),D1                 ; X (0..319)
         MOVE.W  2(A0),D2                ; Y (0..199)
         MOVE.W  4(A0),D3                ; VX
         MOVE.W  6(A0),D4                ; VY
 
-        ; Erase bat from old position (simple unplot if on screen)
+        ; Erase bat from old position (guaranteed even word-aligned)
         BSR     Plot_Bat_Erase
 
         ; Update position
         ADD.W   D3,D1
         ADD.W   D4,D2
 
-        ; Screen boundary wrap / bounce
+        ; Screen boundary wrap
         CMPI.W  #10,D1
         BGE.S   .x_not_low
         MOVE.W  #300,D1
@@ -656,12 +629,10 @@ Update_32_Bats_Movement_And_Audio:
         EORI.W  #1,D5
         MOVE.W  D5,8(A0)
 
-        ; Draw bat at new position
+        ; Draw bat at new position (guaranteed even word-aligned)
         BSR     Plot_Bat_Draw
 
-        ; 2. Dynamic 3D Stereo Volume Panning (0..255)
-        ; Left Vol  = (320 - X) * 200 / 320 + 20
-        ; Right Vol = X * 200 / 320 + 20
+        ; Dynamic 3D Stereo Volume Panning (0..255)
         MOVE.W  D1,D0
         CMPI.W  #319,D0
         BLE.S   .x_ok
@@ -669,24 +640,23 @@ Update_32_Bats_Movement_And_Audio:
 .x_ok:
         LSR.W   #1,D0                   ; 0..159
         MOVE.W  #160,D6
-        SUB.W   D0,D6                   ; Left factor
+        SUB.W   D0,D6
         ADD.W   D6,D6                   ; 0..255 Left Vol
         ADD.W   D0,D0                   ; 0..255 Right Vol
 
         ANDI.W  #$00FF,D6
         ANDI.W  #$00FF,D0
         LSL.W   #8,D6
-        OR.W    D0,D6                   ; D6 = (Left << 8) | Right
-        MOVE.W  D6,AUD_VOL(A1)          ; Update Hardware Stereo Volume!
+        OR.W    D0,D6
+        MOVE.W  D6,AUD_VOL(A1)
 
-        LEA     10(A0),A0               ; Next bat structure (10 bytes)
-        LEA     VOICE_STRIDE(A1),A1     ; Next voice
+        LEA     10(A0),A0
+        LEA     VOICE_STRIDE(A1),A1
         DBRA    D7,.bat_update_loop
 
         MOVEM.L (SP)+,D0-D7/A0-A4
         RTS
 
-; 32 Bat Velocity vectors (VX, VY) scattering radially outwards
 BatVelTable:
         DC.W    3,0,   3,1,   2,2,   1,3
         DC.W    0,3,  -1,3,  -2,2,  -3,1
@@ -703,39 +673,30 @@ BatVelTable:
 Update_Laughing_Skeleton_Audio_And_Jaw:
         MOVEM.L D0-D4/A0-A2,-(SP)
 
-        ; Laughter cadence: Laugh bursts trigger at specific intervals
-        ; Burst 1: Frame 20  ("MWA-")
-        ; Burst 2: Frame 70  ("-HA!")
-        ; Burst 3: Frame 120 ("-HA!")
-        ; Burst 4: Frame 170 ("-HA!")
-        ; Burst 5: Frame 220 ("-HA-HA-HA!")
         MOVE.W  D5,D0
 
         CMPI.W  #20,D0
         BEQ.S   .trig_mwa
-        CMPI.W  #70,D0
+        CMPI.W  #60,D0
         BEQ.S   .trig_ha
-        CMPI.W  #120,D0
+        CMPI.W  #100,D0
         BEQ.S   .trig_ha
-        CMPI.W  #170,D0
+        CMPI.W  #140,D0
         BEQ.S   .trig_ha
-        CMPI.W  #220,D0
+        CMPI.W  #180,D0
         BEQ.S   .trig_ha
         BRA.S   .animate_jaw
 
 .trig_mwa:
-        ; Trigger deep "MWA-" burst
         BSR     Trigger_Laugh_Burst_Mwa
-        MOVE.W  #18,JawOpenTimer        ; Open jaw for 18 frames
+        MOVE.W  #18,JawOpenTimer
         BRA.S   .animate_jaw
 
 .trig_ha:
-        ; Trigger sharp "-HA!" burst
         BSR     Trigger_Laugh_Burst_Ha
-        MOVE.W  #14,JawOpenTimer        ; Open jaw for 14 frames
+        MOVE.W  #14,JawOpenTimer
 
 .animate_jaw:
-        ; Update jaw animation (Open vs. Closed)
         TST.W   JawOpenTimer
         BEQ.S   .jaw_closed
         SUBQ.W  #1,JawOpenTimer
@@ -759,7 +720,7 @@ Trigger_Laugh_Burst_Mwa:
         MOVE.W  #0,AUD_LENH(A0)
         MOVE.W  #HORROR_LAUGH_LEN,AUD_LENL(A0)
         MOVE.W  #$E0E0,AUD_VOL(A0)
-        MOVE.W  #HORROR_PER_8K,AUD_PER(A0) ; Deep pitch
+        MOVE.W  #HORROR_PER_8K,AUD_PER(A0)
         MOVE.W  #0,AUD_DELAY(A0)
         LEA     Flt_Laugh_Formant(PC),A2
         MOVE.W  (A2)+,AUD_BQ_B0(A0)
@@ -806,14 +767,13 @@ Trigger_Laugh_Burst_Mwa:
         MOVE.W  D0,AUD_PTRL(A1)
         MOVE.W  #0,AUD_LENH(A1)
         MOVE.W  #HORROR_HEART_LEN,AUD_LENL(A1)
-        MOVE.W  #$FFFF,AUD_VOL(A1)      ; Full power sub-bass!
+        MOVE.W  #$FFFF,AUD_VOL(A1)
         MOVE.W  #HORROR_PER_8K,AUD_PER(A1)
         MOVE.W  #CTRL_PCM16|CTRL_ONESHOT,AUD_CTRL(A1)
         MOVE.W  #1,AUD_CMD(A1)
         RTS
 
 Trigger_Laugh_Burst_Ha:
-        ; Sharp "-HA!" laughter burst
         LEA     AUDIO_EXT_BASE,A0
         MOVE.L  #HorrorLaughData,D0
         SWAP    D0
@@ -823,7 +783,7 @@ Trigger_Laugh_Burst_Ha:
         MOVE.W  #0,AUD_LENH(A0)
         MOVE.W  #HORROR_LAUGH_LEN,AUD_LENL(A0)
         MOVE.W  #$F0F0,AUD_VOL(A0)
-        MOVE.W  #HORROR_PER_12K,AUD_PER(A0) ; Higher pitch
+        MOVE.W  #HORROR_PER_12K,AUD_PER(A0)
         MOVE.W  #0,AUD_DELAY(A0)
         LEA     Flt_Laugh_Formant(PC),A2
         MOVE.W  (A2)+,AUD_BQ_B0(A0)
@@ -845,13 +805,13 @@ Trigger_Laugh_Burst_Ha:
         MOVE.W  #HORROR_LAUGH_LEN,AUD_LENL(A1)
         MOVE.W  #$8060,AUD_VOL(A1)
         MOVE.W  #HORROR_PER_12K,AUD_PER(A1)
-        MOVE.W  #5000,AUD_DELAY(A1)     ; ~150 ms Delay
+        MOVE.W  #5000,AUD_DELAY(A1)
         MOVE.W  #CTRL_PCM16|CTRL_ONESHOT|CTRL_FLT_STEREO,AUD_CTRL(A1)
         MOVE.W  #1,AUD_CMD(A1)
         RTS
 
 ; ==============================================================================
-; GRAPHICS & SCREEN ROUTINES (GOTHIC VAMPIRE HALLWAY, BATS & SKELETON)
+; GRAPHICS & SCREEN ROUTINES
 ; ==============================================================================
 Init_Screen_Planes:
         ; 1. Patch Bitplane pointers into HorrorCopperList
@@ -885,18 +845,17 @@ Draw_Castle_Hallway_And_Vampire:
         LEA     BPL_SIZE(A1),A2                 ; Plane 2
         LEA     BPL_SIZE(A2),A3                 ; Plane 3
 
-        ; (A) Draw Stone Archway Pillars on Left (Cols 0..5) and Right (Cols 34..39)
+        ; Draw Stone Archway Pillars on Left (Cols 0..5) and Right (Cols 34..39)
         MOVE.W  #SCR_HEIGHT-1,D7                ; 200 lines
 .arch_y:
         ; Left Pillar (Bytes 0..5): Pattern with stone brick mortar
-        MOVE.B  #$FF,(A0)                       ; Brick body (Stone color 1)
+        MOVE.B  #$FF,(A0)
         MOVE.B  #$55,1(A0)
         MOVE.B  #$AA,2(A0)
         MOVE.B  #$33,3(A0)
         MOVE.B  #$CC,4(A0)
         MOVE.B  #$FF,5(A0)
 
-        ; Plane 1 stone texture
         MOVE.B  #$AA,(A1)
         MOVE.B  #$FF,1(A1)
         MOVE.B  #$55,2(A1)
@@ -925,7 +884,7 @@ Draw_Castle_Hallway_And_Vampire:
         LEA     SCR_WIDTH_B(A3),A3
         DBRA    D7,.arch_y
 
-        ; (B) Draw Vampire Silhouette in Center Arch (Lines 50..160, Cols 16..23)
+        ; Draw Vampire Silhouette in Center Arch (Lines 60..160)
         BSR     Draw_Vampire_Figure
 
         MOVEM.L (SP)+,D0-D7/A0-A4
@@ -938,34 +897,32 @@ Draw_Vampire_Figure:
         LEA     BPL_SIZE(A1),A2
         LEA     BPL_SIZE(A2),A3
 
-        ; Offset to line 60, col 18 (Center of screen)
         MOVE.L  #(60*SCR_WIDTH_B)+18,D0
         ADDA.L  D0,A0
         ADDA.L  D0,A1
         ADDA.L  D0,A2
         ADDA.L  D0,A3
 
-        ; 1. Vampire Pale Face (Lines 0..19, 4 bytes wide)
+        ; 1. Vampire Pale Face (Lines 0..19, 2 words wide)
         MOVEQ   #19,D7
 .face_loop:
-        ; Face shape in Plane 0, 1, 3 (Color 11 = Vampire Flesh Pale)
         MOVE.W  #$07E0,(A0)
         MOVE.W  #$07E0,(A1)
         CLR.W   (A2)
         MOVE.W  #$07E0,(A3)
 
-        ; Eyes on Line 8: Glowing Red (Color 15 = 1,1,1,1)
-        CMPI.W  #11,D7                  ; (19 - 8 = 11)
+        ; Eyes on Line 8: Glowing Red (Color 15)
+        CMPI.W  #11,D7
         BNE.S   .not_eyes
         MOVE.W  #$0240,(A0)
         MOVE.W  #$0240,(A1)
         MOVE.W  #$0240,(A2)
-        MOVE.W  #$0240,(A3)             ; Bright red eyes!
+        MOVE.W  #$0240,(A3)
 .not_eyes:
-        ; Fangs on Line 15: White highlight (Color 4 = Plane 2)
-        CMPI.W  #4,D7                   ; (19 - 15 = 4)
+        ; Fangs on Line 15: White highlight (Color 4)
+        CMPI.W  #4,D7
         BNE.S   .not_fangs
-        MOVE.W  #$0180,(A2)             ; White fangs
+        MOVE.W  #$0180,(A2)
 .not_fangs:
         LEA     SCR_WIDTH_B(A0),A0
         LEA     SCR_WIDTH_B(A1),A1
@@ -973,16 +930,11 @@ Draw_Vampire_Figure:
         LEA     SCR_WIDTH_B(A3),A3
         DBRA    D7,.face_loop
 
-        ; 2. Vampire Cape & High Collar (Lines 80..160, flared black cloak with red lining)
+        ; 2. Vampire Cape & High Collar (Lines 80..160)
         MOVEQ   #80-1,D7
 .cape_loop:
-        ; Cloak widens towards the floor
-        MOVE.W  D7,D1
-        LSR.W   #3,D1                   ; Flare factor
-        ; Red inner lining (Color 6 = Plane 1 + Plane 2)
         MOVE.W  #$1FF8,(A1)
         MOVE.W  #$1FF8,(A2)
-        ; Black outer silhouette (Color 12 = Plane 2 + Plane 3)
         MOVE.W  #$3FFC,(A3)
         CLR.W   (A0)
 
@@ -996,7 +948,6 @@ Draw_Vampire_Figure:
         RTS
 
 Clear_Vampire_Center:
-        ; Clears the central vampire area (Lines 50..170, Cols 14..25)
         MOVEM.L D0-D2/A0-A3,-(SP)
         LEA     ScreenPlanes,A0
         LEA     BPL_SIZE(A0),A1
@@ -1030,28 +981,32 @@ Clear_Vampire_Center:
         MOVEM.L (SP)+,D0-D2/A0-A3
         RTS
 
+; ------------------------------------------------------------------------------
+; Bat Plotting Routines with STRICT WORD ALIGNMENT (No Odd Address Violations!)
+; ------------------------------------------------------------------------------
 Plot_Bat_Draw:
-        ; Plots 16x16 bat at (D1, D2) with animation frame D5
         MOVEM.L D0-D4/A1-A3,-(SP)
-        CMPI.W  #1,D1
+        CMPI.W  #10,D1
         BLT.S   .bat_out
-        CMPI.W  #300,D1
+        CMPI.W  #290,D1
         BGT.S   .bat_out
-        CMPI.W  #1,D2
+        CMPI.W  #10,D2
         BLT.S   .bat_out
-        CMPI.W  #183,D2
+        CMPI.W  #180,D2
         BGT.S   .bat_out
 
-        ; Screen address = ScreenPlanes + (Y * SCR_WIDTH_B) + (X / 8)
-        MULU.W  #SCR_WIDTH_B,D2
+        ; Convert X (D1) to strictly even word offset: (X / 16) * 2
         MOVE.W  D1,D0
-        LSR.W   #3,D0                   ; X byte offset
-        ADD.W   D0,D2
-        LEA     ScreenPlanes,A1
-        ADDA.L  D2,A1
-        LEA     BPL_SIZE(A1),A2         ; Plane 1
+        LSR.W   #4,D0                   ; 0..19 words
+        LSL.W   #1,D0                   ; 0..38 bytes (ALWAYS EVEN!)
 
-        ; Choose frame source
+        MULU.W  #SCR_WIDTH_B,D2
+        ADD.W   D0,D2                   ; Total offset (ALWAYS EVEN!)
+
+        LEA     ScreenPlanes,A1
+        ADDA.L  D2,A1                   ; Guaranteed even address
+        LEA     BPL_SIZE(A1),A2         ; Plane 1 (guaranteed even address)
+
         TST.W   D5
         BNE.S   .use_f1
         LEA     BatFrame0_Plane0(PC),A3
@@ -1062,8 +1017,8 @@ Plot_Bat_Draw:
         MOVEQ   #15,D4                  ; 16 lines
 .plot_line:
         MOVE.W  (A3)+,D0
-        OR.W    D0,(A1)                 ; Draw into plane 0
-        OR.W    D0,(A2)                 ; Draw into plane 1
+        OR.W    D0,(A1)                 ; Safe word write
+        OR.W    D0,(A2)                 ; Safe word write
         LEA     SCR_WIDTH_B(A1),A1
         LEA     SCR_WIDTH_B(A2),A2
         DBRA    D4,.plot_line
@@ -1073,76 +1028,83 @@ Plot_Bat_Draw:
         RTS
 
 Plot_Bat_Erase:
-        ; Erases 16x16 bat from (D1, D2)
-        MOVEM.L D0-D4/A1-A3,-(SP)
-        CMPI.W  #1,D1
+        MOVEM.L D0-D4/A1-A2,-(SP)
+        CMPI.W  #10,D1
         BLT.S   .erase_out
-        CMPI.W  #300,D1
+        CMPI.W  #290,D1
         BGT.S   .erase_out
-        CMPI.W  #1,D2
+        CMPI.W  #10,D2
         BLT.S   .erase_out
-        CMPI.W  #183,D2
+        CMPI.W  #180,D2
         BGT.S   .erase_out
 
-        MULU.W  #SCR_WIDTH_B,D2
+        ; Convert X (D1) to strictly even word offset
         MOVE.W  D1,D0
-        LSR.W   #3,D0
+        LSR.W   #4,D0
+        LSL.W   #1,D0
+
+        MULU.W  #SCR_WIDTH_B,D2
         ADD.W   D0,D2
+
         LEA     ScreenPlanes,A1
         ADDA.L  D2,A1
         LEA     BPL_SIZE(A1),A2
 
         MOVEQ   #15,D4
 .erase_line:
-        CLR.W   (A1)
+        CLR.W   (A1)                    ; Safe word clear
         CLR.W   (A2)
         LEA     SCR_WIDTH_B(A1),A1
         LEA     SCR_WIDTH_B(A2),A2
         DBRA    D4,.erase_line
 
 .erase_out:
-        MOVEM.L (SP)+,D0-D4/A1-A3
+        MOVEM.L (SP)+,D0-D4/A1-A2
         RTS
 
+; ------------------------------------------------------------------------------
+; Skull & Jaw Rendering (Clean Registers, Zero Overruns)
+; ------------------------------------------------------------------------------
 Draw_Skeleton_Skull:
-        ; Draws the 32x32 Skull into center arch (Lines 70..101, Cols 18..21)
-        MOVEM.L D0-D7/A0-A4,-(SP)
+        MOVEM.L D0-D7/A0-A6,-(SP)
         LEA     ScreenPlanes,A0
         LEA     BPL_SIZE(A0),A1
         LEA     BPL_SIZE(A1),A2
-        LEA     BPL_SIZE(A2),A3
 
         MOVE.L  #(70*SCR_WIDTH_B)+18,D0
         ADDA.L  D0,A0
         ADDA.L  D0,A1
         ADDA.L  D0,A2
-        ADDA.L  D0,A3
 
         LEA     Skull_Plane0(PC),A4
         LEA     Skull_Plane1(PC),A5
         LEA     Skull_Plane2(PC),A6
-        LEA     Skull_Plane3(PC),A1
 
         MOVEQ   #31,D7                  ; 32 scanlines
 .skull_loop:
         MOVE.L  (A4)+,(A0)
         MOVE.L  (A5)+,(A1)
         MOVE.L  (A6)+,(A2)
-        MOVE.L  (A1)+,(A3)
 
         LEA     SCR_WIDTH_B(A0),A0
         LEA     SCR_WIDTH_B(A1),A1
         LEA     SCR_WIDTH_B(A2),A2
-        LEA     SCR_WIDTH_B(A3),A3
         DBRA    D7,.skull_loop
 
-        MOVEM.L (SP)+,D0-D7/A0-A4
+        ; Plane 3: Glowing Eye Embers
+        LEA     ScreenPlanes+(BPL_SIZE*3)+(70*SCR_WIDTH_B)+18,A3
+        LEA     Skull_Plane3(PC),A4
+        MOVEQ   #31,D7
+.skull_p3:
+        MOVE.L  (A4)+,(A3)
+        LEA     SCR_WIDTH_B(A3),A3
+        DBRA    D7,.skull_p3
+
+        MOVEM.L (SP)+,D0-D7/A0-A6
         RTS
 
 Draw_Jaw_Open:
-        ; Draws lower jaw in OPEN position (Offset down by 6 lines: Lines 108..115)
-        MOVEM.L D0-D3/A0-A4,-(SP)
-        ; First clear closed position (Lines 102..107)
+        MOVEM.L D0-D7/A0-A4,-(SP)
         BSR     Clear_Jaw_Area
 
         LEA     ScreenPlanes,A0
@@ -1156,25 +1118,25 @@ Draw_Jaw_Open:
         ADDA.L  D0,A2
         ADDA.L  D0,A3
 
-        LEA     Jaw_Plane0(PC),A4
+        LEA     Jaw_Plane1(PC),A4
         MOVEQ   #7,D7
 .open_loop:
-        MOVE.L  (A4)+,(A0)
-        MOVE.L  (A4)+,(A1)
-        MOVE.L  (A4)+,(A2)
-        MOVE.L  (A4)+,(A3)
+        CLR.L   (A0)
+        MOVE.L  (A4)+,D0
+        MOVE.L  D0,(A1)
+        MOVE.L  D0,(A2)
+        MOVE.L  D0,(A3)
         LEA     SCR_WIDTH_B(A0),A0
         LEA     SCR_WIDTH_B(A1),A1
         LEA     SCR_WIDTH_B(A2),A2
         LEA     SCR_WIDTH_B(A3),A3
         DBRA    D7,.open_loop
 
-        MOVEM.L (SP)+,D0-D3/A0-A4
+        MOVEM.L (SP)+,D0-D7/A0-A4
         RTS
 
 Draw_Jaw_Closed:
-        ; Draws lower jaw in CLOSED position (Directly beneath skull: Lines 102..109)
-        MOVEM.L D0-D3/A0-A4,-(SP)
+        MOVEM.L D0-D7/A0-A4,-(SP)
         BSR     Clear_Jaw_Area
 
         LEA     ScreenPlanes,A0
@@ -1188,24 +1150,24 @@ Draw_Jaw_Closed:
         ADDA.L  D0,A2
         ADDA.L  D0,A3
 
-        LEA     Jaw_Plane0(PC),A4
+        LEA     Jaw_Plane1(PC),A4
         MOVEQ   #7,D7
 .closed_loop:
-        MOVE.L  (A4)+,(A0)
-        MOVE.L  (A4)+,(A1)
-        MOVE.L  (A4)+,(A2)
-        MOVE.L  (A4)+,(A3)
+        CLR.L   (A0)
+        MOVE.L  (A4)+,D0
+        MOVE.L  D0,(A1)
+        MOVE.L  D0,(A2)
+        MOVE.L  D0,(A3)
         LEA     SCR_WIDTH_B(A0),A0
         LEA     SCR_WIDTH_B(A1),A1
         LEA     SCR_WIDTH_B(A2),A2
         LEA     SCR_WIDTH_B(A3),A3
         DBRA    D7,.closed_loop
 
-        MOVEM.L (SP)+,D0-D3/A0-A4
+        MOVEM.L (SP)+,D0-D7/A0-A4
         RTS
 
 Clear_Jaw_Area:
-        ; Clears lines 102..118, cols 18..21
         MOVEM.L D0-D2/A0-A3,-(SP)
         LEA     ScreenPlanes,A0
         LEA     BPL_SIZE(A0),A1
@@ -1235,7 +1197,6 @@ Clear_Jaw_Area:
         RTS
 
 Update_Horror_Visuals:
-        ; Animates flickering torchlight in Gothic corridor via Copper Palette
         MOVEM.L D0-D2/A0-A1,-(SP)
         ADDQ.W  #1,FlickerTimer
         MOVE.W  FlickerTimer(PC),D0
@@ -1243,9 +1204,8 @@ Update_Horror_Visuals:
         ANDI.W  #$0007,D0
         ADD.W   D0,D0
         LEA     TorchFlickerTab(PC),A0
-        MOVE.W  (A0,D0.W),D1            ; Flickering torch flame color
+        MOVE.W  (A0,D0.W),D1
 
-        ; Modulate COLOR08 (Torch Flame Bright) in Copper list
         LEA     CopColor08,A1
         MOVE.W  D1,(A1)
 
@@ -1256,24 +1216,20 @@ TorchFlickerTab:
         DC.W    $0F90, $0EA0, $0F80, $0EB0, $0FA0, $0E90, $0F90, $0DA0
 
 ; ==============================================================================
-; SYSTEM HELPER ROUTINES
+; SYSTEM HELPER ROUTINES (Proven Bulletproof Kickstart 1.3 Synchronization)
 ; ==============================================================================
 Wait_VBL:
-        MOVEM.L D0/A6,-(SP)
         LEA     CUSTOM,A6
-.wait1:
+.wait_on:
         MOVE.L  VPOSR(A6),D0
         ANDI.L  #$0001FF00,D0
-        LSR.L   #8,D0
-        CMPI.W  #250,D0
-        BNE.S   .wait1
-.wait2:
+        CMPI.L  #$00010000,D0
+        BNE.S   .wait_on
+.wait_off:
         MOVE.L  VPOSR(A6),D0
         ANDI.L  #$0001FF00,D0
-        LSR.L   #8,D0
-        CMPI.W  #250,D0
-        BEQ.S   .wait2
-        MOVEM.L (SP)+,D0/A6
+        CMPI.L  #$00010000,D0
+        BEQ.S   .wait_off
         RTS
 
 Silence_All_Voices:
@@ -1281,31 +1237,30 @@ Silence_All_Voices:
         LEA     AUDIO_EXT_BASE,A0
         MOVEQ   #31,D0
 .silence_loop:
-        MOVE.W  #2,AUD_CMD(A0)          ; CMD=2 (Stop Voice)
-        MOVE.W  #0,AUD_VOL(A0)          ; Volume=0
-        MOVE.W  #0,AUD_DELAY(A0)        ; Clear Delay
-        MOVE.W  #0,AUD_CTRL(A0)         ; Clear Control
+        MOVE.W  #2,AUD_CMD(A0)          ; Stop Voice
+        MOVE.W  #0,AUD_VOL(A0)
+        MOVE.W  #0,AUD_DELAY(A0)
+        MOVE.W  #0,AUD_CTRL(A0)
         LEA     VOICE_STRIDE(A0),A0
         DBRA    D0,.silence_loop
         MOVEM.L (SP)+,D0/A0
         RTS
 
 Apply_Epilog_Fade:
-        ; Fades volume on all 32 voices smoothly
         MOVEM.L D0-D2/A0,-(SP)
         LEA     AUDIO_EXT_BASE,A0
         MOVEQ   #31,D0
 .fade_all:
         MOVE.W  AUD_VOL(A0),D1
         MOVE.W  D1,D2
-        LSR.W   #8,D1                   ; Left (0..255)
-        ANDI.W  #$00FF,D2               ; Right (0..255)
+        LSR.W   #8,D1
+        ANDI.W  #$00FF,D2
 
-        SUBQ.W  #6,D1
+        SUBQ.W  #8,D1
         BPL.S   .l_ok
         MOVEQ   #0,D1
 .l_ok:
-        SUBQ.W  #6,D2
+        SUBQ.W  #8,D2
         BPL.S   .r_ok
         MOVEQ   #0,D2
 .r_ok:
@@ -1329,7 +1284,7 @@ Takeover_Display:
         JSR     _LVOWaitTOF(A6)
 .direct_cop:
         LEA     CUSTOM,A6
-        MOVE.W  #$002F,DMACON(A6)       ; Disable Paula DMA & Sprites
+        MOVE.W  #$002F,DMACON(A6)       ; Disable Paula DMA ($000F) & Sprites ($0020)
         MOVE.L  #HorrorCopperList,COP1LCH(A6)
         MOVE.W  #0,COPJMP1(A6)
         MOVE.W  #$8380,DMACON(A6)       ; Bitplane + Copper DMA enabled
@@ -1339,11 +1294,13 @@ Takeover_Display:
 Restore_Display:
         MOVEM.L D2-D7/A2-A6,-(SP)
         LEA     CUSTOM,A6
+        MOVE.W  #HAM_RESET_VAL,HAM_CONTROL
         MOVE.W  #$0000,BPLCON1(A6)
         MOVE.W  #$0024,BPLCON2(A6)
         MOVE.W  #$0C00,BPLCON3(A6)
         MOVE.W  #$0000,BPL1MOD(A6)
         MOVE.W  #$0000,BPL2MOD(A6)
+        MOVE.W  #$0000,FMODE(A6)
 
         MOVE.L  GfxBase(PC),D0
         BEQ.S   .no_gfx
@@ -1360,30 +1317,32 @@ Restore_Display:
         MOVE.L  D0,A6
         JSR     _LVORethinkDisplay(A6)
 .no_intui:
-        MOVE.W  #$83E0,CUSTOM+DMACON    ; Restore standard DMA
+        MOVE.W  Saved_DMACON(PC),D0     ; Restore original OS DMA state cleanly
+        ANDI.W  #$07FF,D0
+        OR.W    #$8000,D0
+        MOVE.W  D0,CUSTOM+DMACON
         MOVEM.L (SP)+,D2-D7/A2-A6
         RTS
 
 PrintStr:
-        MOVEM.L D2-D3/A0-A1/A6,-(SP)
+        MOVEM.L D0-D3/A0-A1/A6,-(SP)
+        MOVE.L  DOSBase(PC),D0
+        BEQ.S   .p_exit
+        MOVE.L  StdoutHandle(PC),D1
+        BEQ.S   .p_exit
+        MOVE.L  D0,A6
         MOVE.L  A0,A1
         MOVEQ   #0,D3
-.len_loop:
+.p_len:
         TST.B   (A1)+
-        BEQ.S   .len_done
+        BEQ.S   .p_write
         ADDQ.L  #1,D3
-        BRA.S   .len_loop
-.len_done:
-        MOVE.L  DOSBase(PC),D0
-        BEQ.S   .no_dos
-        MOVE.L  D0,A6
-        JSR     _LVOOutput(A6)
-        MOVE.L  D0,D1
-        BEQ.S   .no_dos
+        BRA.S   .p_len
+.p_write:
         MOVE.L  A0,D2
         JSR     _LVOWrite(A6)
-.no_dos:
-        MOVEM.L (SP)+,D2-D3/A0-A1/A6
+.p_exit:
+        MOVEM.L (SP)+,D0-D3/A0-A1/A6
         RTS
 
 ; ==============================================================================
@@ -1403,12 +1362,24 @@ MsgBanner:
 
 MsgAct1:
         DC.B    "[*] ACT I: Footsteps down long castle corridor (Hardware Start-Delay + Biquad)...",10,0
+MsgAct1Done:
+        DC.B    "[+] ACT I completed cleanly.",10,0
+
 MsgAct2:
         DC.B    "[*] ACT II: Howling gale & ghost moans (24 dB Moog Cascade + Ringmodulation)...",10,0
+MsgAct2Done:
+        DC.B    "[+] ACT II completed cleanly.",10,0
+
 MsgAct3:
         DC.B    "[*] ACT III: Swarm of 32 Bats (All 32 Voices Active + Hardware AM Tremolo)...",10,0
+MsgAct3Done:
+        DC.B    "[+] ACT III completed cleanly.",10,0
+
 MsgAct4:
         DC.B    "[*] ACT IV: Demonic Laughing Skeleton (Vocal Formants + Ringmod + Heartbeat)...",10,0
+MsgAct4Done:
+        DC.B    "[+] ACT IV completed cleanly.",10,0
+
 MsgAct5:
         DC.B    "[*] ACT V: Epilog & Harmonic Fadeout...",10,0
 
@@ -1429,7 +1400,9 @@ MsgSummary:
 GfxBase:        DC.L    0
 DOSBase:        DC.L    0
 IntuiBase:      DC.L    0
+StdoutHandle:   DC.L    0
 Saved_ActiView: DC.L    0
+Saved_DMACON:   DC.W    0
 
 CurrentAct:     DC.W    0
 FootstepCount:  DC.W    0
@@ -1448,6 +1421,16 @@ BatTable:       DS.W    32*5
         SECTION HorrorCopper,DATA_C
         CNOP    0,4
 HorrorCopperList:
+        ; Reset AGA display registers cleanly
+        DC.W    FMODE,   $0000
+        DC.W    BPLCON3, $0C00
+
+        ; Standard PAL Display Window: 320x200
+        DC.W    $008E,   $2C81          ; DIWSTRT
+        DC.W    $0090,   $F4C1          ; DIWSTOP
+        DC.W    $0092,   $0038          ; DDFSTRT
+        DC.W    $0094,   $00D0          ; DDFSTOP
+
         ; Video control: 4 bitplanes, 320x200 lowres
         DC.W    BPLCON0, $4200          ; 4 planes, COLOR enabled
         DC.W    BPLCON1, $0000
@@ -1461,6 +1444,17 @@ CopBplPtrs:
         DC.W    $00E4, 0, $00E6, 0      ; BPL2
         DC.W    $00E8, 0, $00EA, 0      ; BPL3
         DC.W    $00EC, 0, $00EE, 0      ; BPL4
+
+        ; Clear All 8 Sprite Pointers to dummy (eliminates left garbage bars & stripes!)
+CopSpritePtrs:
+        DC.W    $0120, 0, $0122, 0      ; Sprite 0
+        DC.W    $0124, 0, $0126, 0      ; Sprite 1
+        DC.W    $0128, 0, $012A, 0      ; Sprite 2
+        DC.W    $012C, 0, $012E, 0      ; Sprite 3
+        DC.W    $0130, 0, $0132, 0      ; Sprite 4
+        DC.W    $0134, 0, $0136, 0      ; Sprite 5
+        DC.W    $0138, 0, $013A, 0      ; Sprite 6
+        DC.W    $013C, 0, $013E, 0      ; Sprite 7
 
         ; 16-Color Gothic Palette
         DC.W    COLOR00, $0001          ; 0: Midnight Dark Blue
