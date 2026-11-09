@@ -57,8 +57,8 @@ def check_updates():
         cid = c.get('id', 0)
         user = c.get('user', {}).get('login')
         issue_url = c.get('issue_url', '')
-        # Monitor strictly Issue #9 (Audio Extension)
-        if cid > last_id and user == 'toby01019' and issue_url.endswith('/issues/9'):
+        # Monitor Issue #9 and Issue #10
+        if cid > last_id and user == 'toby01019' and (issue_url.endswith('/issues/9') or issue_url.endswith('/issues/10')):
             new_comments.append(c)
             
     if not new_comments:
