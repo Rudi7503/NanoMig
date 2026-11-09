@@ -556,12 +556,8 @@ def render_scanline(
                         mb = (p0.b + p1.b) >> 1
                         ma = (p0.alpha + p1.alpha) >> 1
                         scaled_pixels.append(DecodedPixel(True, mr, mg, mb, ma, p0.has_per_pixel_alpha or p1.has_per_pixel_alpha))
-                    elif p0.opaque:
-                        scaled_pixels.append(p0)
-                    elif p1.opaque:
-                        scaled_pixels.append(p1)
                     else:
-                        scaled_pixels.append(DecodedPixel(False, 0, 0, 0, 0, False))
+                        scaled_pixels.append(p0)
                 else:
                     scaled_pixels.append(p0)
         elif x_sc == 2:  # 4x Zoom
@@ -590,12 +586,8 @@ def render_scanline(
                         b3 = (mb + p1.b) >> 1
                         a3 = (ma + p1.alpha) >> 1
                         scaled_pixels.append(DecodedPixel(True, r3, g3, b3, a3, has_ppa))
-                    elif p0.opaque:
-                        scaled_pixels.extend([p0, p0, p0])
-                    elif p1.opaque:
-                        scaled_pixels.extend([p1, p1, p1])
                     else:
-                        scaled_pixels.extend([DecodedPixel(False, 0, 0, 0, 0, False)] * 3)
+                        scaled_pixels.extend([p0, p0, p0])
                 else:
                     scaled_pixels.extend([p0, p0, p0])
         elif x_sc == 3:  # 1/2 Half Shrink
@@ -762,6 +754,23 @@ def run_self_tests() -> None:
     # E) HAM04 code 8 delta
     _, _, _, _, dr, dg, db, _, _ = precompute_ham_stage1(8, 4, 8, 0)
     assert (dr, dg, db) == (-8, -8, -8), f"Expected (-8,-8,-8) for HAM04 code 8, got {(dr, dg, db)}"
+
+    # 6. Review 12 Smooth Shrink & Edge Verifications:
+    def helper_ram(codes):
+        v = 0
+        for x in codes + [0] * (8 - len(codes)):
+            v = (v << 32) | x
+        return {0x1000 + idx * 8: (v >> shift) & ((1 << 64) - 1) for idx, shift in enumerate((192, 128, 64, 0))}
+
+    def helper_render(codes, scale):
+        d = SpriteDescriptor(0, 0, 0x1000, 1, 1, 16, 195, 255, scale | (1 << 8) | (3 << 9))
+        return [f"{v:08x}" for v in render_scanline(0, [d], helper_ram(codes), [0] * 256, 32)[:8]]
+
+    assert helper_render([0xffff0000, 0xff0000ff, 0xff00ff00, 0xffffffff], 4)[0] == "c37f7f7f"
+    assert helper_render([0xffff0000, 0xff0000ff], 3)[0] == "c37f007f"
+    assert helper_render([0, 0x90112233], 1)[:4] == ["00000000", "00000000", "c309131c", "c309131c"]
+    assert helper_render([0, 0x90112233], 2)[:8] == ["00000000", "00000000", "00000000", "00000000", "c309131c", "c309131c", "c309131c", "c309131c"]
+    print("[PASS] All Review 12 Smooth Shrink & Edge Verifications satisfied!")
 
     print("[PASS] All Review 10 Regression Verifications satisfied!")
 
