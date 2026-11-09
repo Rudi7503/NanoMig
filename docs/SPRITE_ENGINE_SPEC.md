@@ -188,6 +188,10 @@ $$\underbrace{\text{BUF\_PRIO [31:24]}}_{\text{8-Bit Priorität (`0` = leer)}} \
   $$\text{eff\_old\_prio} = (\text{last\_wr\_valid} \land (\text{dst\_x} == \text{last\_wr\_x})) \;?\; \text{last\_wr\_prio} : \text{ram\_old\_prio}$$
   $$\text{eff\_old\_rgb} = (\text{last\_wr\_valid} \land (\text{dst\_x} == \text{last\_wr\_x})) \;?\; \text{last\_wr\_rgb} : \text{ram\_old\_rgb}$$
 
+* **Deterministisches Löschen (Clear-on-Read & Line-Switch Sweep):**  
+  - Während Denise den aktiven Zeilenbuffer synchron zum Videostrahl mit `clk_sys` ausliest (`col = 0 .. CLIP_XMAX - 1`), wird jeder gelesene 32-Bit-Eintrag im selben Lesezyklus auf `32'h00000000` zurückgesetzt (**Clear-on-Read**).
+  - Der über `CLIP_XMAX` hinausgehende Pufferbereich bis Spalte 2047 (sowie ungenutzte Pixel im Overscan/HBlank) wird beim Pufferwechsel (`line_sync`) durch einen synchronen Hardware-Sweep im schnellen `clk_114`-Taktbereich deterministisch auf 0 gesetzt, sodass bei Folgezeilen niemals Alt-Daten im Speicher stehen.
+
 ### 5.2 Die 4 Hardware-Blend-Modi (`BLEND_MODE[1:0]`)
 Beim Schreiben in den Zeilenbuffer liest die Hardware die Zielfarbe $D = \{R_d, G_d, B_d\}$ und berechnet aus dem Quellpixel $S = \{R_s, G_s, B_s\}$ die Ausgabefarbe:
 
@@ -196,12 +200,19 @@ Beim Schreiben in den Zeilenbuffer liest die Hardware die Zielfarbe $D = \{R_d, 
 | **`00`** | **Normal / Opak** | $C_{\text{out}} = S$ | 0 ALMs | Standard-Sprites, HUD-Elemente, Kanten |
 | **`01`** | **Additive Blending** | $C_{\text{out}} = \min(255, S + D)$ | ~15 ALMs, 0 DSPs | **Triebwerksflammen**, Laser, Explosionen |
 | **`10`** | **50/50 Translucent** | $C_{\text{out}} = (S + D) \gg 1$ | ~8 ALMs, 0 DSPs | **Cockpit-Kanzelglas**, Schatten, Rauch |
-| **`11`** | **Full 8-Bit Alpha** | $C_{\text{out}} = D + \frac{\alpha \cdot (S - D)}{256}$ | ~55 ALMs *(oder 1 DSP)* | **Stufenloses Ein-/Ausblenden**, Anti-Aliasing |
+| **`11`** | **Full 8-Bit Alpha** | $C_{\text{out}} = D + \lfloor \frac{\alpha \cdot (S - D)}{256} \rfloor$ | ~55 ALMs *(oder 1 DSP)* | **Stufenloses Ein-/Ausblenden**, Anti-Aliasing |
 
-* **Herkunft des Alpha-Werts ($\alpha$):**
-  * Bei **`FORMAT 18` (`ARGB8888`)**: Direkt per Pixel aus `code[31:24]` (echtes Per-Pixel-Alpha).
-  * Bei **`FORMAT 13..17`**: Aus dem Feld `SPR_ALPHA[7:0]` (Descriptor-Byte 7 `+$07`, das bei palettenfreien Formaten frei ist).
-  * Ist der Zeilenbuffer an `dst_x` noch leer (`eff_old_prio == 0`), schreibt Mode `11` das Quellpixel skaliert mit Alpha, Mode `01` und `10` schreiben $S$ direkt.
+* **Verbindliche Semantik des Blending & Transparenz (Intra-Sprite Linebuffer Compositing):**
+  * **Reichweite des Blending:** Das Hardware-Blending findet ausschließlich **intra-sprite** innerhalb des 32-Bit-Zeilenbuffers (`clk_114`) statt (Mischen von Vordergrund-Sprites mit bereits gerenderten Hintergrund-Sprites oder TrueColor-Kacheln). Der Zeilenbuffer speichert 24-Bit RGB und 8-Bit Priorität, aber kein Per-Pixel-Alpha.
+  * **Transparenz-Semantik bei Alpha 0 (`BLEND_MODE == 11` und $\alpha == 0$):** Quellpixel mit effektivem Alpha von 0 sind vollständig transparent. Die Schreibstufe deaktiviert das Schreibsignal (**`WE = 0`**); es wird weder `BUF_RGB` noch `BUF_PRIO` in den Zeilenbuffer geschrieben. Darunterliegende Sprite-Pixel oder Amiga-Bitplanes bleiben zu 100 % unverändert (kein versehentliches Tiefschwarz oder Ausstanzen von Löchern).
+  * **Leerer Puffer (`eff_old_prio == 0`):**
+    * Modi `01` (Additiv) und `10` (50/50 Translucent) schreiben das Quellpixel $S$ direkt mit `BUF_PRIO = SPR_PRIO`.
+    * Modus `11` (Alpha): Schreibt $C_{\text{out}} = \lfloor \frac{\alpha \cdot S}{256} \rfloor$ (bzw. bei $\alpha = 255$ gesättigt exakt $S$). Ist $\alpha = 0$, gilt `WE = 0`.
+  * **Endpunkt-Sättigung bei $\alpha = 255$:** Wenn $\alpha == 255$, wird ohne Rundungsverlust exakt $S$ geschrieben ($C_{\text{out}} = S$).
+  * **Herkunft des Alpha-Werts ($\alpha$):**
+    * Bei **`FORMAT 18` (`ARGB8888`)**: Direkt per Pixel aus `code[31:24]` (echtes Per-Pixel-Alpha).
+    * Bei **`FORMAT 15..17`**: Aus dem Feld `SPR_ALPHA[7:0]` (Descriptor-Byte 7 `+$07`, das bei palettenfreien Formaten frei ist).
+    * Bei **`FORMAT 0..14`**: Enthalten Palettenanker (`PAL_OFFSET` liegt auf Byte 7). Für diese Formate ist Byte 7 als `PAL_OFFSET` reserviert; Modus `11` verwendet für diese Formate den Standardwert $\alpha = 255$ (oder ein globales Register).
 
 ### 5.3 Mischen NACH dem fertigen 24-Bit-Amiga-Bild (4 Ebenen über `PRIO[7:6]`)
 Das Mischen erfolgt **ganz am Ende von [`denise.v`](../mister/rtl/denise.v#L532)** nach dem fertigen 24-Bit-Amiga-Bild (`amiga_rgb[23:0]`):
@@ -231,7 +242,7 @@ Ein einzelner **`4 × 64 Bit`-DDR3-Burst (`BURSTCNT = 4` = 32 Bytes)** lädt gle
 | `+$04` | `[31:24]` | `uint8` | **`Y_HEIGHT_LO`** | Untere 8 Bit der Quellhöhe; zusammen mit `DATA_PTR[2:0]` als `Y_HEIGHT[10:8]` ergibt sich **`uint11 Y_HEIGHT = {DATA_PTR[2:0], Y_HEIGHT_LO}` (`1 .. 2047` Quellzeilen)**. **Wichtig:** Das Listen-Sentinel ist **`Y_HEIGHT[10:0] == 11'd0`** |
 | `+$05` | `[23:16]` | `uint8` | **`X_WIDTH256`** | Breite in **`4 × 64 Bit` (256-Bit / 32-Byte) Burst-Blöcken** (`1 .. 64` Bursts = **8 bis 4.096 Quellpixel**; `0` = No-Op; Werte `> 64` werden auf `64` geklemmt) |
 | `+$06` | `[15:8]` | `uint8` | **`PRIO`** | 8-Bit Priorität (`0` = dieses Sprite überspringen/unsichtbar; `1 .. 255` = aktiv) |
-| `+$07` | `[7:0]` | `uint8` | **`PAL_OFFSET` / `SPR_ALPHA`** | Für Formate `0..12`: Paletten-Offset (`(PAL_OFFSET + raw_code) & 8'hFF`).<br>Für palettenfreie Formate `13..18`: Globaler Alpha-Wert **`SPR_ALPHA[7:0]`** (`0..255`) für `BLEND_MODE = 11`. |
+| `+$07` | `[7:0]` | `uint8` | **`PAL_OFFSET` / `SPR_ALPHA`** | Für Formate `0..14`: Paletten-Offset (`(PAL_OFFSET + raw_code) & 8'hFF`). Wichtig: Formate 13 (`12_6_8_6`) und 14 (`12_5555`) nutzen `PAL_OFFSET` für die nachfolgenden 6-/8-/5-Bit-Palettenanker!<br>Für palettenfreie Formate `15..17`: Globaler Alpha-Wert **`SPR_ALPHA[7:0]`** (`0..255`) für `BLEND_MODE = 11`.<br>Für Format `18` (`ARGB8888`): Per-Pixel-Alpha im Datenwort `code[31:24]` (Byte 7 reserviert/ignoriert). |
 
 ### 64-Bit Wort 1 (Offset `+$08 .. +$0F`): Datenzeiger, Format, Skalierung & Blend-Steuerung
 | Offset | Bits | Typ | Feldname | Beschreibung |
@@ -245,7 +256,7 @@ Ein einzelner **`4 × 64 Bit`-DDR3-Burst (`BURSTCNT = 4` = 32 Bytes)** lädt gle
 
 ---
 
-## 7. Verbindliche Verträge: DMA, Epochs, Handshake & Bank-Commit (Review #5 Punkt 3)
+## 7. Verbindliche Verträge: DMA, Epochs, Handshake & Bank-Commit (Review #5 Punkt 3 & Review #6 Punkt 6)
 
 ### 7.1 DMA-Anforderungs- und Annahme-Bedingung (`ddram_ctrl.v`)
 1. **Handshake-Vertrag:**  
@@ -254,25 +265,28 @@ Ein einzelner **`4 × 64 Bit`-DDR3-Burst (`BURSTCNT = 4` = 32 Bytes)** lädt gle
    Die DMA-Steuerung führt einen Zähler `in_flight_beats` (`0..64`). Jede angenommene Anforderung addiert `+4`. Jeder eintreffende Datenbeat (`spr_dma_valid == 1`) dekrementiert `-1`. Eine neue Anforderung darf nur gestellt werden, wenn:
    $$\text{fifo\_count} + \text{in\_flight\_beats} \le 60$$
 3. **Audio-Priorität & Latenz-Garantie:**  
-   Sprite-DMA hat strikt niedrigere Priorität als Audio-DMA (Port 2) und Video-Refresh. Da DDR3-Bursts atomare 4er-Beats sind, beträgt die maximale Verzögerung, die Audio durch einen laufenden Sprite-Burst erfahren kann, exakt **4 Takte bei 114 MHz (~35 ns)**. Da das Audio-FIFO 16 Samples (~330 µs) Puffer hält, ist diese Latenz vernachlässigbar (< 0,01 % des Audiopuffers).
+   Sprite-DMA hat strikt niedrigere Priorität als Audio-DMA (Port 2) und Video-Refresh. Bei 4er-Bursts (`BURSTCNT = 4`) beträgt die reine Busbelegung 4 Takte (~35 ns bei 114 MHz). Einschließlich Controller-Arbitrierung, Refresh-Zyklen und Worst-Case-Waitstates ist die Latenz am Audio-Port im DDR3-Controller auf maximal 16 Takte begrenzt. Da das Audio-FIFO 16 Samples (~330 µs) Puffer hält, ist diese Latenz vernachlässigbar (< 0,01 % des Audiopuffers).
 
-### 7.2 Dynamisches Zeilenbudget, Epoch-Tags & Drain-Mechanismus
+### 7.2 Dynamisches Zeilenbudget, Epoch-Tags, Drain-Mechanismus & 4-Zeilen-Wrap-Schutz
 1. **Zeilenbudget-Ende (`line_budget_eof`):**  
    Genau 16 Takte vor Zeilenende sperrt die Engine neue Burst-Requests (`spr_dma_req <= 0`).
-2. **Epoch-Tagging & Drain:**  
-   Jeder Request wird mit einem 2-Bit Zeilen-Epoch-Tag `cur_epoch` markiert. Eintreffende Beats, deren Epoch nicht mehr zur aktuellen Zeile gehört, werden nicht in das Prefetch-FIFO geschrieben, sondern in eine Discard-Senke verworfen (`drain_beats`). Das Prefetch-FIFO wird vor Beginn der Folgezeile deterministisch geleert (`fifo_clear = 1`), sodass niemals Reste in die nächste Bildschirmzeile verschleppt werden.
+2. **Epoch-Tagging, Drain & Schutz vor 4-Zeilen-Wrap-Around:**  
+   Jeder Request wird mit einem 2-Bit Zeilen-Epoch-Tag `cur_epoch` (`00`, `01`, `10`, `11`) markiert, der zeilenweise rotiert. Eintreffende Beats, deren Epoch nicht mehr zur aktuellen Zeile gehört, werden nicht in das Prefetch-FIFO geschrieben, sondern in eine Discard-Senke verworfen (`drain_beats`).  
+   **Schutz vor Wiederverwendung nach 4 Zeilen:** Am Zeilenende wartet die Hardware in einem definierten Drain-State, bis alle offenen Anforderungen bedient wurden (`in_flight_beats == 0`). Erst nach vollständigem Drain (`drain_complete`) wird die nächste Bildschirmzeile für neue DMA-Bursts freigegeben. Das Prefetch-FIFO wird vor Beginn der Folgezeile deterministisch geleert (`fifo_clear = 1`). Dadurch ist mathematisch ausgeschlossen, dass verzögerte Beats aus Zeile $Y$ in Zeile $Y+4$ eintreffen können!
 3. **Diagnosezähler:**  
    Wurde ein Sprite wegen Erreichen von `line_budget_eof` vorzeitig abgebrochen, inkrementiert die Hardware den 16-Bit-Zähler **`SPR_OVERRUN_CNT`** (`$DFF594`). Bereits in den Zeilenbuffer geschriebene Pixel bleiben sichtbar.
 
-### 7.3 Bank-Commit & VBlank-Kopplung
-1. **VBlank-Kopplung:**  
-   Die Übernahme des CPU-Zeigers `SPR_LIST_PTR` in den aktiven `active_list_ptr` erfolgt ausschließlich bei **aktivem VBlank am Frame-Start (`next_y == 0 && vblank_active`)**. `next_y == 0` allein reicht nicht aus, um Kollisionen bei vertikalem Overscan zu verhindern.
-2. **Buffer Ownership:**  
-   Zeilenbuffer A und B tauschen ihre Rollen deterministisch am Zeilensynchronisationspunkt (`line_sync`). Während Denise Buffer A ausliest und löscht, schreibt die Engine exklusiv in Buffer B.
+### 7.3 Bank-Commit, Shadow-Register & VBlank-Kopplung
+1. **Shadow-Register & CPU-Ownership:**  
+   Inaktive Descriptor-Listen, Paletten und HAM-Steps werden von der CPU in separaten inaktiven Speicherregionen / Schattenregistern vorbereitet. Bis zur Übernahme verbleiben alle Daten unter exklusiver CPU-Ownership.
+2. **Atomarer Bank-Commit:**  
+   Der Wechsel auf die neue Konfiguration wird durch das CPU-Bit `SPR_COMMIT_REQ` signalisiert. Die Übernahme in den aktiven Satz (`active_list_ptr`, aktive Palette/Steps) erfolgt ausschließlich bei **aktivem VBlank am Frame-Start (`next_y == 0 && vblank_active`)**. Nach erfolgreicher Übernahme setzt die Engine das Status-Bit `SPR_COMMIT_ACK`. Erst ab diesem ACK darf die CPU die alte Speicherbank für den nächsten Frame überschreiben.
+3. **Buffer Ownership:**  
+   Zeilenbuffer A und B tauschen ihre Rollen deterministisch am Zeilensynchronisationspunkt (`line_sync`). Während Denise Buffer A ausliest und per Clear-on-Read leert, schreibt die Engine exklusiv in Buffer B.
 
 ---
 
-## 8. Diagnose-Metriken & Reproduzierbare Test-Suite (Review #5 Punkte 1 & 2)
+## 8. Diagnose-Metriken & Reproduzierbare Test-Suite (Review #5 & Review #6)
 
 ### 8.1 Klarstellung der Zeilenlast-Metriken & Diagnose-Register
 Die im HUD angezeigte Zeilenlast ist als **`Decoder-Operationsschätzung ohne DMA/Clear/Ausgabe`** definiert. Für detaillierte Hardware-Analysen stellt die Engine getrennte Zähler bereit:
@@ -288,21 +302,22 @@ Die im HUD angezeigte Zeilenlast ist als **`Decoder-Operationsschätzung ohne DM
 ### 8.2 Offizielle Versionierte Test-Suite (`fixtures/sprite_engine_fixtures_v3.json`)
 Zur dauerhaften Qualitätssicherung und für Cross-Renderer-Vergleiche zwischen Python, Browser-JS und FPGA-Simulatoren liegt die versionierte Test-Suite vor:
 * **Pfad:** [`NanoMig/mister/tests/sprite_engine/fixtures/sprite_engine_fixtures_v3.json`](../mister/tests/sprite_engine/fixtures/sprite_engine_fixtures_v3.json)
-* **Validierungsskript:** [`NanoMig/mister/tests/sprite_engine/verify_fixtures.py`](../mister/tests/sprite_engine/verify_fixtures.py)
+* **Validierungsskript:** [`NanoMig/mister/tests/sprite_engine/verify_fixtures.py`](../mister/tests/sprite_engine/verify_fixtures.py) – führt jeden Testfall dynamisch über `render_scanline()` aus und vergleicht alle Pixel bitgenau.
 * **Gegenprüfungen:**
   1. Raw 16-Byte Descriptor Pack/Unpack Roundtrip ohne Bypasses.
   2. Negative Koordinaten (`X_POS = -8, Y_POS = -10`) und horizontales/vertikales Clipping.
   3. Skalierungs-Grenzfälle (`Scale 16, 63, 65, 255`).
   4. Gleichheits-Arbitrierung (`PRIO_GE = 0` vs. `PRIO_GE = 1`).
   5. Opaque Schwarz-Semantik (`RGB555 $8000`, HAM12 `$800`, HAM16 `$8000`) vs. Transparenz (`$0000`).
-  6. 4 Hardware-Blend-Modi (`00` Opak, `01` Additiv, `10` 50/50, `11` Alpha).
+  6. 4 Hardware-Blend-Modi (`00` Opak, `01` Additiv, `10` 50/50, `11` Alpha) mit Alpha 0-Transparenz (`WE = 0`) und Endpunkt-Sättigung bei Alpha 255.
   7. `FORMAT 18` (`ARGB8888`) mit Per-Pixel-Alpha und Zero-Word-Skip.
 
 ---
 
 ## 9. Ressourcen-Bilanz (Cyclone V `5CSEBA6U23I7`)
 
-Freie Ressourcen im Minimig-AGA Core (Stand Quartus Fit vom 08.11.2026): **5.144 ALMs**, **224 M10K-Blöcke**, **35 DSPs**.
+Freie Ressourcen im Minimig-AGA Core (Stand Quartus Fit vom 08.11.2026): **5.144 ALMs**, **224 M10K-Blöcke**, **35 DSPs**.  
+*(Hinweis: ALM- und DSP-Werte sind fundierte Architektur-Schätzungen vor Verilog-Synthese und TimeQuest STA; ein zyklusgenaues Taktmodell mit Stalls, Clear und Blend-Forwarding wird nach Freigabe der Spezifikation realisiert).*
 
 | Modul / Teilblock | ALMs | M10K-Blöcke | DSPs |
 | :--- | :---: | :---: | :---: |

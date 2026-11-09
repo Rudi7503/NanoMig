@@ -178,7 +178,7 @@ def encode_ham_row_fmt(
             n_anc = 1 << (bw - 1)
             lst = []
             for d_code in range(n_anc, 1 << bw):
-                _, _, _, _, _, dr, dg, db, _ = precompute_ham_stage1(
+                _, _, _, _, _, dr, dg, db, _, _ = precompute_ham_stage1(
                     d_code, bw, False, pal_offset, sr, sg, sb
                 )
                 lst.append((d_code, dr, dg, db))
@@ -880,7 +880,7 @@ function renderFrame() {{
 
   for (let y = 0; y < H; y++) {{
     linePrio.fill(0);
-    lineRgb.fill(0x0A0D12);
+    lineRgb.fill(0);
     lineSkip.fill(0);
     let lineCycles = 0;
 
@@ -1034,20 +1034,22 @@ function renderFrame() {{
             const oldRgb = lineRgb[dstX];
             if (d.prio > oldPrio) {{
               let outR = r, outG = g, outB = b;
-              if (d.blend_mode === 1) {{ // Additive Blending (flames)
-                const dr = (oldRgb >> 16) & 0xFF;
-                const dg = (oldRgb >> 8) & 0xFF;
-                const db = oldRgb & 0xFF;
-                outR = Math.min(255, dr + r);
-                outG = Math.min(255, dg + g);
-                outB = Math.min(255, db + b);
-              }} else if (d.blend_mode === 2) {{ // 50/50 Translucent (canopy glass)
-                const dr = (oldRgb >> 16) & 0xFF;
-                const dg = (oldRgb >> 8) & 0xFF;
-                const db = oldRgb & 0xFF;
-                outR = (dr + r) >> 1;
-                outG = (dg + g) >> 1;
-                outB = (db + b) >> 1;
+              if (oldPrio > 0) {{
+                if (d.blend_mode === 1) {{ // Additive Blending (flames)
+                  const dr = (oldRgb >> 16) & 0xFF;
+                  const dg = (oldRgb >> 8) & 0xFF;
+                  const db = oldRgb & 0xFF;
+                  outR = Math.min(255, dr + r);
+                  outG = Math.min(255, dg + g);
+                  outB = Math.min(255, db + b);
+                }} else if (d.blend_mode === 2) {{ // 50/50 Translucent (canopy glass)
+                  const dr = (oldRgb >> 16) & 0xFF;
+                  const dg = (oldRgb >> 8) & 0xFF;
+                  const db = oldRgb & 0xFF;
+                  outR = (dr + r) >> 1;
+                  outG = (dg + g) >> 1;
+                  outB = (db + b) >> 1;
+                }}
               }}
               linePrio[dstX] = d.prio;
               lineRgb[dstX]  = (outR << 16) | (outG << 8) | outB;
@@ -1066,9 +1068,9 @@ function renderFrame() {{
 
     const rowBase = y * W;
     for (let x = 0; x < W; x++) {{
-      let col = lineRgb[x];
+      const p = linePrio[x];
+      let col = (p === 0) ? 0x0A0D12 : lineRgb[x];
       if (heatmapMode) {{
-        const p = linePrio[x];
         if (p >= 180) col = 0xF59E0B;
         else if (p >= 160) col = 0x3B82F6;
         else if (p >= 150) col = 0x10B981;
