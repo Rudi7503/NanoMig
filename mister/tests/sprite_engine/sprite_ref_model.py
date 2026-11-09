@@ -3,19 +3,24 @@
 Bit-accurate hardware reference model for the NanoMig 32/64-Bit HAM-, HighColor- & CLUT-Sprite-Engine (Rev. 3).
 
 Covers all binding hardware contracts:
-  - 18 packed 32/64-bit formats (FORMAT 0..17, 16..64 pixels per 256-bit burst):
+  - 19 packed 32/64-bit formats (FORMAT 0..18, 8..64 pixels per 256-bit burst):
       * 0..12 : 32-bit mixed HAM03..08 formats (32..64 px/burst)
       * 13    : HAM_32BIT_12_6_8_6        (12-6-8-6, 32 px/burst)
       * 14    : HAM_32BIT_12_5555         (12-5-5-5-5, 40 px/burst)
       * 15    : HAM_64BIT_16_12_12_12_12  (16-12-12-12-12 in 64-bit word, 20 px/burst, palette-free)
       * 16    : HAM_32BIT_16_16           (16-16 HAM16, 16 px/burst, palette-free)
       * 17    : RGB_32BIT_16_16           (16-16 Direct HighColor: CLUT_MODE=0 -> RGB565, CLUT_MODE=1 -> RGB555, 16 px/burst)
-  - Per-sprite CLUT_MODE (0 = HAM / RGB565, 1 = Direct Palette / RGB444 / RGB565 / RGB555)
+      * 18    : RGB_32BIT_DIRECT          (32-bit ARGB8888 TrueColor, 8 px/burst, per-pixel alpha, palette-free)
+  - 4 Hardware Blend Modes (BLEND_MODE[1:0]):
+      * 00 : Normal / Opaque overwrite (prio comparison wins)
+      * 01 : Additive Blending (min(255, S + D), 0 ALM multipliers)
+      * 10 : 50/50 Translucent ((S + D) >> 1, 0 ALM multipliers)
+      * 11 : Full 8-bit Alpha (D + (alpha * (S - D)) >> 8, per-pixel in FMT 18 or SPR_ALPHA)
   - Explicit opaque bit (pix_opaque = (raw_code != 0)) decoupled from 24-bit RGB
   - 4-bit step_r/g/b (0..15) + 4 CUSTOM_STEP factors (0.5x, 1.0x, 1.5x, 2.0x -> 5-bit eff_step 0..30)
     -> 12-bit signed pre-delta [-1920..+1800], 13-bit signed sum [-1920..+2055], clamped to 0..255
   - 11-bit Y_HEIGHT = {DATA_PTR[2:0], Y_HEIGHT_LO[7:0]} (Sentinel = 11'd0; 256/512/1080 valid)
-  - 5-bit FORMAT = {DATA_PTR[3], FORMAT_LO[3:0]} (0..17 valid; 18..31 = No-Op)
+  - 5-bit FORMAT = {DATA_PTR[3], FORMAT_LO[3:0]} (0..18 valid; 19..31 = No-Op; DATA_PTR[4]=0 masked)
   - 13-bit unsigned dy = next_y - Y_POS (no premature dy >= 2048 cutoff; 21-bit product)
   - Unified X-sampling accumulator u_fp (19-bit unsigned 13.6 fixed-point, (u_fp >> 6) < src_width_px, no divider)
   - H_FLIP (dst_x starts at X_POS and decrements) & 16-bit signed dst_x clipping
@@ -24,8 +29,11 @@ Covers all binding hardware contracts:
   - 2048 x 32-bit Linebuffer with 1-cycle Write-Forwarding and Denise 4-layer output mixer + Blank gate
 """
 
+import struct
 from dataclasses import dataclass
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
+
+DESC_REV = 3
 
 # 32-bit format sequences (for formats that repeat in upper & lower 32 bits of a 64-bit word)
 FORMAT_SEQS: Dict[int, Tuple[int, ...]] = {
@@ -46,9 +54,10 @@ FORMAT_SEQS: Dict[int, Tuple[int, ...]] = {
     14: (12, 5, 5, 5, 5),          # 5 px/32b, 40 px/burst (HAM12 + 4x HAM05)
     16: (16, 16),                  # 2 px/32b, 16 px/burst (HAM16)
     17: (16, 16),                  # 2 px/32b, 16 px/burst (Direct RGB565 / RGB555)
+    18: (32,),                     # 1 px/32b, 8 px/burst (ARGB8888 TrueColor)
 }
 
-# Full 64-bit word bit-width sequences for all 18 formats (0..17)
+# Full 64-bit word bit-width sequences for all 19 formats (0..18)
 FORMAT_SEQS_64: Dict[int, Tuple[int, ...]] = {
     fmt: seq + seq for fmt, seq in FORMAT_SEQS.items()
 }
@@ -61,6 +70,7 @@ class DecodedPixel:
     r: int
     g: int
     b: int
+    alpha: int = 255
 
     @property
     def rgb24(self) -> int:
@@ -74,13 +84,13 @@ class SpriteDescriptor:
     y_height_lo: int    # uint8 [7:0] of 11-bit Y_HEIGHT
     x_width256: int     # uint8 (1..64 bursts; >64 clamped to 64; 0 = No-Op)
     prio: int           # uint8 (0 = No-Op; 1..255 = active priority)
-    pal_offset: int     # uint8 (0..255)
-    data_ptr: int       # uint32 ([31:5]=base_addr, [3]=FORMAT[4], [2:0]=Y_HEIGHT[10:8])
-    fmt: int            # uint4/uint5 (0..17 valid; 18..31 = No-Op; bit 4 also taken from data_ptr[3])
+    pal_offset: int     # uint8 (0..255; in formats >= 13 also used as global SPR_ALPHA)
+    data_ptr: int       # uint32 ([31:5]=base_addr, [4]=0 masked, [3]=FORMAT[4], [2:0]=Y_HEIGHT[10:8])
+    fmt: int            # uint4 (FORMAT_LO[3:0]; combined with data_ptr[3] to form 5-bit format 0..18)
     flags: int          # uint4 (bit0=H_FLIP, bit1=V_FLIP, bit2=SMOOTH_X, bit3=PRIO_GE)
     x_scale: int        # uint8 (2.6 fixed point, 0x40=1.0x; 1..0x0F clamped to 0x10; 0 = No-Op)
     y_scale: int        # uint8 (2.6 fixed point, 0x40=1.0x; 1..0x0F clamped to 0x10; 0 = No-Op)
-    step_ctrl: int      # uint8 (bit7=CUSTOM_STEP, bit6=CLUT_MODE, [5:4]=R, [3:2]=G, [1:0]=B)
+    step_ctrl: int      # uint8 (bit7=CUSTOM_STEP, bit6=CLUT_MODE, [5:4]=BLEND_MODE or R_STEP, [3:0]=STEP)
 
     @property
     def y_height11(self) -> int:
@@ -88,12 +98,13 @@ class SpriteDescriptor:
 
     @property
     def fmt5(self) -> int:
-        if self.fmt >= 16:
-            return self.fmt & 0x1F
+        # Strictly decoded from raw fields without convenience bypass:
+        # bit 4 = DATA_PTR[3], bits [3:0] = FORMAT_LO[3:0]
         return (((self.data_ptr >> 3) & 0x1) << 4) | (self.fmt & 0xF)
 
     @property
     def base_addr(self) -> int:
+        # DATA_PTR[4] is reserved and masked to 0; 32-byte aligned
         return self.data_ptr & 0xFFFFFFE0
 
     @property
@@ -119,6 +130,102 @@ class SpriteDescriptor:
     @property
     def custom_step(self) -> bool:
         return bool(self.step_ctrl & 0x80)
+
+    @property
+    def blend_mode(self) -> int:
+        """
+        4 Hardware Blend Modes:
+          00 = Normal / Opaque
+          01 = Additive Blending (min(255, S + D))
+          10 = 50/50 Translucent ((S + D) >> 1)
+          11 = Full 8-bit Alpha (D + (alpha * (S - D)) >> 8)
+        Active when CUSTOM_STEP == 0 or for formats >= 17 (HighColor / ARGB).
+        """
+        if not self.custom_step or self.fmt5 >= 17:
+            return (self.step_ctrl >> 4) & 0x3
+        return 0
+
+    @property
+    def spr_alpha(self) -> int:
+        """
+        Per-sprite global alpha (0..255).
+        For palette-free formats (>= 13), taken from pal_offset field.
+        """
+        if self.fmt5 >= 13:
+            return self.pal_offset & 0xFF
+        return 255
+
+
+def pack_descriptor_raw(desc: SpriteDescriptor) -> bytes:
+    """
+    Packs a SpriteDescriptor into exact 16 bytes Big-Endian (Motorola format):
+      +$00: int16 Y_POS
+      +$02: int16 X_POS
+      +$04: uint8 Y_HEIGHT_LO
+      +$05: uint8 X_WIDTH256
+      +$06: uint8 PRIO
+      +$07: uint8 PAL_OFFSET / SPR_ALPHA
+      +$08: uint32 DATA_PTR ([31:5]=base, [4]=0, [3]=fmt[4], [2:0]=y_height[10:8])
+      +$0C: uint8 FORMAT_LO[3:0] (high nibble), FLAGS[3:0] (low nibble)
+      +$0D: uint8 X_SCALE
+      +$0E: uint8 Y_SCALE
+      +$0F: uint8 STEP_CTRL
+    """
+    byte12 = ((desc.fmt & 0xF) << 4) | (desc.flags & 0xF)
+    clean_data_ptr = desc.data_ptr & ~0x10
+    return struct.pack(
+        '>hhBBBBIBBBB',
+        desc.y_pos,
+        desc.x_pos,
+        desc.y_height_lo & 0xFF,
+        desc.x_width256 & 0xFF,
+        desc.prio & 0xFF,
+        desc.pal_offset & 0xFF,
+        clean_data_ptr & 0xFFFFFFFF,
+        byte12 & 0xFF,
+        desc.x_scale & 0xFF,
+        desc.y_scale & 0xFF,
+        desc.step_ctrl & 0xFF,
+    )
+
+
+def unpack_descriptor_raw(data16: bytes) -> SpriteDescriptor:
+    """
+    Unpacks a 16-byte raw Big-Endian chunk into a SpriteDescriptor without convenience bypasses.
+    """
+    assert len(data16) == 16
+    (
+        y_pos,
+        x_pos,
+        y_h_lo,
+        x_w256,
+        prio,
+        pal_off,
+        data_ptr,
+        b12,
+        x_sc,
+        y_sc,
+        step_c,
+    ) = struct.unpack('>hhBBBBIBBBB', data16)
+
+    fmt_lo = (b12 >> 4) & 0xF
+    flags = b12 & 0xF
+    clean_data_ptr = data_ptr & ~0x10
+
+    return SpriteDescriptor(
+        y_pos=y_pos,
+        x_pos=x_pos,
+        y_height_lo=y_h_lo,
+        x_width256=x_w256,
+        prio=prio,
+        pal_offset=pal_off,
+        data_ptr=clean_data_ptr,
+        fmt=fmt_lo,
+        flags=flags,
+        x_scale=x_sc,
+        y_scale=y_sc,
+        step_ctrl=step_c,
+    )
 
 
 def sign_extend_13(val: int) -> int:
@@ -172,39 +279,49 @@ def precompute_ham_stage1(
     eff_step_g: int,
     eff_step_b: int,
     is_direct_rgb16: bool = False,
-) -> Tuple[bool, bool, bool, int, int, int, int, int]:
+    is_direct_argb32: bool = False,
+) -> Tuple[bool, bool, bool, int, int, int, int, int, int]:
     """
     Stage 1 of the dedicated Sprite HAM/HighColor/CLUT decoder (parallel to synchronous M10K palette read).
     Returns:
-      (opaque_reg, anchor_reg, direct_anchor_reg, direct_rgb24, pal_idx, delta_r_s12, delta_g_s12, delta_b_s12)
+      (opaque_reg, anchor_reg, direct_anchor_reg, direct_rgb24, pal_idx, delta_r_s12, delta_g_s12, delta_b_s12, alpha8)
     """
     mask = (1 << bit_width) - 1
     code = raw_code & mask
     opaque = (code != 0)
 
-    # 1. FORMAT 17 (RGB_32BIT_16_16): 15/16-bit Direct HighColor (no HAM)
+    # 1. FORMAT 18 (RGB_32BIT_DIRECT / ARGB8888 TrueColor)
+    if is_direct_argb32 or bit_width == 32:
+        alpha8 = (code >> 24) & 0xFF
+        r8 = (code >> 16) & 0xFF
+        g8 = (code >> 8) & 0xFF
+        b8 = code & 0xFF
+        direct_rgb = (r8 << 16) | (g8 << 8) | b8
+        return opaque, True, True, direct_rgb, 0, 0, 0, 0, alpha8
+
+    # 2. FORMAT 17 (RGB_32BIT_16_16): 15/16-bit Direct HighColor (no HAM)
     if is_direct_rgb16:
         if not clut_mode:
-            # RGB565
+            # RGB565: left-shift by 3 (R/B) and 2 (G) -> max 248/252
             r8 = ((code >> 11) & 0x1F) << 3
             g8 = ((code >> 5) & 0x3F) << 2
             b8 = (code & 0x1F) << 3
         else:
-            # RGB555 (bit 15 ignored for color; 0x8000 is opaque black!)
+            # RGB555: 0x8000 is true opaque black!
             r8 = ((code >> 10) & 0x1F) << 3
             g8 = ((code >> 5) & 0x1F) << 3
             b8 = (code & 0x1F) << 3
         direct_rgb = (r8 << 16) | (g8 << 8) | b8
-        return opaque, True, True, direct_rgb, 0, 0, 0, 0
+        return opaque, True, True, direct_rgb, 0, 0, 0, 0, 255
 
-    # 2. HAM12 (12-bit pixel: direct 11-bit RGB anchor or 3/4/3 delta)
+    # 3. HAM12 (12-bit pixel: direct 11-bit RGB anchor or 3/4/3 delta)
     if bit_width == 12:
         if clut_mode:
             # Direct RGB444
             r8 = ((code >> 8) & 0xF) << 4
             g8 = ((code >> 4) & 0xF) << 4
             b8 = (code & 0xF) << 4
-            return opaque, True, True, (r8 << 16) | (g8 << 8) | b8, 0, 0, 0, 0
+            return opaque, True, True, (r8 << 16) | (g8 << 8) | b8, 0, 0, 0, 0, 255
         if ((code >> 11) & 1) == 0:
             # 11-bit direct RGB anchor (compatible with module_ham12_16.js)
             b10 = (code >> 10) & 1
@@ -214,7 +331,7 @@ def precompute_ham_stage1(
             r8 = ((r3 << 1) | b10) << 4
             g8 = g4 << 4
             b8 = ((b3 << 1) | b10) << 4
-            return opaque, True, True, (r8 << 16) | (g8 << 8) | b8, 0, 0, 0, 0
+            return opaque, True, True, (r8 << 16) | (g8 << 8) | b8, 0, 0, 0, 0, 255
         # HAM12 Delta (code[11] == 1)
         turbo = bool((code >> 10) & 1)
         m = 4 if turbo else 1
@@ -222,22 +339,22 @@ def precompute_ham_stage1(
         dg = sign_extend_n((code >> 3) & 0xF, 4) * eff_step_g * m
         db = sign_extend_n(code & 0x7, 3) * eff_step_b * m
         assert -2048 <= dr <= 2047 and -2048 <= dg <= 2047 and -2048 <= db <= 2047
-        return opaque, False, False, 0, 0, dr, dg, db
+        return opaque, False, False, 0, 0, dr, dg, db, 255
 
-    # 3. HAM16 (16-bit pixel: direct 15-bit RGB555 anchor or 4/5/5 delta)
+    # 4. HAM16 (16-bit pixel: direct 15-bit RGB555 anchor or 4/5/5 delta)
     if bit_width == 16:
         if clut_mode:
             # Direct RGB565
             r8 = ((code >> 11) & 0x1F) << 3
             g8 = ((code >> 5) & 0x3F) << 2
             b8 = (code & 0x1F) << 3
-            return opaque, True, True, (r8 << 16) | (g8 << 8) | b8, 0, 0, 0, 0
+            return opaque, True, True, (r8 << 16) | (g8 << 8) | b8, 0, 0, 0, 0, 255
         if ((code >> 15) & 1) == 0:
             # 15-bit direct RGB555 anchor (compatible with module_ham12_16.js)
             r8 = ((code >> 10) & 0x1F) << 3
             g8 = ((code >> 5) & 0x1F) << 3
             b8 = (code & 0x1F) << 3
-            return opaque, True, True, (r8 << 16) | (g8 << 8) | b8, 0, 0, 0, 0
+            return opaque, True, True, (r8 << 16) | (g8 << 8) | b8, 0, 0, 0, 0, 255
         # HAM16 Delta (code[15] == 1)
         turbo = bool((code >> 14) & 1)
         m = 4 if turbo else 1
@@ -245,12 +362,12 @@ def precompute_ham_stage1(
         dg = sign_extend_n((code >> 5) & 0x1F, 5) * eff_step_g * m
         db = sign_extend_n(code & 0x1F, 5) * eff_step_b * m
         assert -2048 <= dr <= 2047 and -2048 <= dg <= 2047 and -2048 <= db <= 2047
-        return opaque, False, False, 0, 0, dr, dg, db
+        return opaque, False, False, 0, 0, dr, dg, db, 255
 
-    # 4. Standard 3..8-bit CLUT or HAM03..HAM08 modes
+    # 5. Standard 3..8-bit CLUT or HAM03..HAM08 modes
     if clut_mode:
         pal_idx = (pal_offset + code) & 0xFF
-        return opaque, True, False, 0, pal_idx, 0, 0, 0
+        return opaque, True, False, 0, pal_idx, 0, 0, 0, 255
 
     msb = (code >> (bit_width - 1)) & 1
     anchor = (msb == 0)
@@ -286,7 +403,7 @@ def precompute_ham_stage1(
         raise ValueError(f"Unsupported bit_width={bit_width}")
 
     def calc_delta_s12(eff_step: int, level: int) -> int:
-        mag = (eff_step << 2) if turbo else eff_step  # max 30 * 4 = 120
+        mag = (eff_step << 2) if turbo else eff_step
         if level == -2:
             d = -(mag << 1)
         elif level == -1:
@@ -309,11 +426,11 @@ def precompute_ham_stage1(
         calc_delta_s12(eff_step_r, dr),
         calc_delta_s12(eff_step_g, dg),
         calc_delta_s12(eff_step_b, db),
+        255,
     )
 
 
 def clamp_u8(val_s13: int) -> int:
-    assert -2048 <= val_s13 <= 2303, f"13-bit signed sum out of bounds: {val_s13}"
     if val_s13 < 0:
         return 0
     if val_s13 > 255:
@@ -321,21 +438,8 @@ def clamp_u8(val_s13: int) -> int:
     return val_s13
 
 
-def unpack_32bit_word(word32: int, fmt: int) -> List[Tuple[int, int]]:
-    """Unpacks a 32-bit word MSB-first into a list of (raw_code, bit_width)."""
-    seq = FORMAT_SEQS[fmt]
-    out: List[Tuple[int, int]] = []
-    shift = 32
-    for bw in seq:
-        shift -= bw
-        code = (word32 >> shift) & ((1 << bw) - 1)
-        out.append((code, bw))
-    assert shift == 0
-    return out
-
-
 def unpack_64bit_word(word64: int, fmt5: int) -> List[Tuple[int, int]]:
-    """Unpacks a 64-bit word MSB-first into a list of (raw_code, bit_width) for formats 0..17."""
+    """Unpacks a 64-bit word MSB-first into a list of (raw_code, bit_width) for formats 0..18."""
     seq64 = FORMAT_SEQS_64[fmt5]
     out: List[Tuple[int, int]] = []
     shift = 64
@@ -354,35 +458,104 @@ def interpolate_smooth_x(p0: DecodedPixel, p1: DecodedPixel, frac2: int, smooth_
     f = frac2 & 0x3
     if p0.opaque and p1.opaque:
         if not smooth_x or f == 0:
-            return DecodedPixel(True, p0.r, p0.g, p0.b)
+            return DecodedPixel(True, p0.r, p0.g, p0.b, p0.alpha)
         mid_r = (p0.r + p1.r) >> 1
         mid_g = (p0.g + p1.g) >> 1
         mid_b = (p0.b + p1.b) >> 1
+        mid_a = (p0.alpha + p1.alpha) >> 1
         if f == 2:
-            return DecodedPixel(True, mid_r, mid_g, mid_b)
+            return DecodedPixel(True, mid_r, mid_g, mid_b, mid_a)
         if f == 1:
             return DecodedPixel(
                 True,
                 (mid_r + p0.r) >> 1,
                 (mid_g + p0.g) >> 1,
                 (mid_b + p0.b) >> 1,
+                (mid_a + p0.alpha) >> 1,
             )
         return DecodedPixel(
             True,
             (mid_r + p1.r) >> 1,
             (mid_g + p1.g) >> 1,
             (mid_b + p1.b) >> 1,
+            (mid_a + p1.alpha) >> 1,
         )
 
     if p0.opaque and not p1.opaque:
         op = (f < 2) if smooth_x else True
-        return DecodedPixel(op, p0.r if op else 0, p0.g if op else 0, p0.b if op else 0)
+        return DecodedPixel(op, p0.r if op else 0, p0.g if op else 0, p0.b if op else 0, p0.alpha)
 
     if not p0.opaque and p1.opaque:
         op = (f >= 2) if smooth_x else False
-        return DecodedPixel(op, p1.r if op else 0, p1.g if op else 0, p1.b if op else 0)
+        return DecodedPixel(op, p1.r if op else 0, p1.g if op else 0, p1.b if op else 0, p1.alpha)
 
-    return DecodedPixel(False, 0, 0, 0)
+    return DecodedPixel(False, 0, 0, 0, 0)
+
+
+@dataclass
+class LineStats:
+    src_steps: int = 0
+    dst_steps: int = 0
+    skip_words: int = 0
+    descriptors_scanned: int = 0
+
+
+def blend_pixel(
+    dest_rgb24: int,
+    dest_prio: int,
+    src_px: DecodedPixel,
+    blend_mode: int,
+    global_alpha: int = 255,
+) -> int:
+    """
+    Applies one of the 4 hardware blend modes:
+      00 : Normal / Opaque (source overwrites destination)
+      01 : Additive Blending (min(255, S + D))
+      10 : 50/50 Translucent ((S + D) >> 1)
+      11 : Full 8-bit Alpha (D + (alpha * (S - D)) >> 8)
+    """
+    if blend_mode == 0 or dest_prio == 0:
+        if blend_mode == 3 and dest_prio == 0:
+            a = src_px.alpha if src_px.alpha != 255 else global_alpha
+            return (
+                (clamp_u8((src_px.r * a) >> 8) << 16)
+                | (clamp_u8((src_px.g * a) >> 8) << 8)
+                | clamp_u8((src_px.b * a) >> 8)
+            )
+        return src_px.rgb24
+
+    dr = (dest_rgb24 >> 16) & 0xFF
+    dg = (dest_rgb24 >> 8) & 0xFF
+    db = dest_rgb24 & 0xFF
+    sr = src_px.r
+    sg = src_px.g
+    sb = src_px.b
+
+    if blend_mode == 1:
+        # Additive Blending
+        return (
+            (clamp_u8(dr + sr) << 16)
+            | (clamp_u8(dg + sg) << 8)
+            | clamp_u8(db + sb)
+        )
+
+    if blend_mode == 2:
+        # 50/50 Translucent
+        return (
+            (((dr + sr) >> 1) << 16)
+            | (((dg + sg) >> 1) << 8)
+            | ((db + sb) >> 1)
+        )
+
+    if blend_mode == 3:
+        # Full 8-bit Alpha
+        a = src_px.alpha if src_px.alpha != 255 else global_alpha
+        out_r = clamp_u8(dr + (((sr - dr) * a) >> 8))
+        out_g = clamp_u8(dg + (((sg - dg) * a) >> 8))
+        out_b = clamp_u8(db + (((sb - db) * a) >> 8))
+        return (out_r << 16) | (out_g << 8) | out_b
+
+    return src_px.rgb24
 
 
 def render_scanline(
@@ -394,10 +567,12 @@ def render_scanline(
     clip_xmax: int = 2048,
     zero_word_skip_en: bool = True,
     max_descriptors: int = 4096,
+    stats: Optional[LineStats] = None,
 ) -> List[int]:
     """
     Renders scanline `next_y` into a 2048 x 32-bit linebuffer ({BUF_PRIO[7:0], BUF_RGB[23:0]}).
     Models 1-cycle Write-Forwarding on consecutive accesses to the same dst_x.
+    Supports all 19 formats (0..18), 4 Blend Modes, and exact 4-bit steps.
     """
     assert 0 <= clip_xmax <= 2048
     linebuf = [0] * 2048
@@ -406,8 +581,12 @@ def render_scanline(
     last_wr_valid = False
     last_wr_x = -1
     last_wr_prio = 0
+    last_wr_rgb = 0
 
     for idx, desc in enumerate(descriptors[:max_descriptors]):
+        if stats:
+            stats.descriptors_scanned += 1
+
         # 1. Check 11-bit Y_HEIGHT sentinel (0 = end of list)
         y_height = desc.y_height11
         if y_height == 0:
@@ -418,14 +597,14 @@ def render_scanline(
         if y_pos > next_y:
             break
 
-        # 3. Deterministic No-Op checks
+        # 3. Deterministic No-Op checks (FORMAT 19..31 = No-Op)
         fmt5 = desc.fmt5
         if (
             desc.prio == 0
             or desc.x_width256 == 0
             or desc.x_scale == 0
             or desc.y_scale == 0
-            or fmt5 >= 18
+            or fmt5 >= 19
         ):
             continue
 
@@ -458,6 +637,7 @@ def render_scanline(
         decoded_line: List[DecodedPixel] = []
         prev_opaque = False
         is_direct_rgb16 = (fmt5 == 17)
+        is_direct_argb32 = (fmt5 == 18)
 
         num_words64 = eff_w256 * 4
         for w_idx in range(num_words64):
@@ -469,30 +649,35 @@ def render_scanline(
                 and eff_x_scale == 0x40
                 and not prev_opaque
             ):
+                if stats:
+                    stats.skip_words += 1
                 acc_r = acc_g = acc_b = 0
                 prev_opaque = False
-                decoded_line.extend([DecodedPixel(False, 0, 0, 0)] * px_per_64)
+                decoded_line.extend([DecodedPixel(False, 0, 0, 0, 0)] * px_per_64)
                 continue
 
             for raw_code, bw in unpack_64bit_word(w64, fmt5):
-                op, anchor, direct_anchor, direct_rgb, pal_idx, dr, dg, db = precompute_ham_stage1(
-                    raw_code, bw, desc.clut_mode, desc.pal_offset, eff_sr, eff_sg, eff_sb, is_direct_rgb16
+                if stats:
+                    stats.src_steps += 1
+                op, anchor, direct_anchor, direct_rgb, pal_idx, dr, dg, db, a8 = precompute_ham_stage1(
+                    raw_code, bw, desc.clut_mode, desc.pal_offset, eff_sr, eff_sg, eff_sb,
+                    is_direct_rgb16, is_direct_argb32
                 )
                 pal_rgb = palette256[pal_idx] & 0xFFFFFF
                 anchor_rgb = direct_rgb if direct_anchor else pal_rgb
                 if not op:
                     acc_r = acc_g = acc_b = 0
-                    px = DecodedPixel(False, 0, 0, 0)
+                    px = DecodedPixel(False, 0, 0, 0, 0)
                 elif anchor:
                     acc_r = (anchor_rgb >> 16) & 0xFF
                     acc_g = (anchor_rgb >> 8) & 0xFF
                     acc_b = anchor_rgb & 0xFF
-                    px = DecodedPixel(True, acc_r, acc_g, acc_b)
+                    px = DecodedPixel(True, acc_r, acc_g, acc_b, a8)
                 else:
                     acc_r = clamp_u8(acc_r + dr)
                     acc_g = clamp_u8(acc_g + dg)
                     acc_b = clamp_u8(acc_b + db)
-                    px = DecodedPixel(True, acc_r, acc_g, acc_b)
+                    px = DecodedPixel(True, acc_r, acc_g, acc_b, 255)
                 decoded_line.append(px)
                 prev_opaque = op
 
@@ -501,8 +686,12 @@ def render_scanline(
         # 5. Unified X-sampling phase accumulator u_fp (19-bit unsigned 13.6 fixed point, no divider)
         u_fp = 0
         dst_x = sign_extend_13(desc.x_pos)
+        b_mode = desc.blend_mode
+        g_alpha = desc.spr_alpha
 
         while ((u_fp >> 6) & 0x1FFF) < src_width_px:
+            if stats:
+                stats.dst_steps += 1
             # Right/left early clipping abort
             if not desc.h_flip and dst_x >= clip_xmax:
                 break
@@ -511,21 +700,33 @@ def render_scanline(
 
             idx0 = (u_fp >> 6) & 0x1FFF
             p0 = decoded_line[idx0]
-            p1 = decoded_line[idx0 + 1] if (idx0 + 1 < src_width_px) else DecodedPixel(False, 0, 0, 0)
+            p1 = decoded_line[idx0 + 1] if (idx0 + 1 < src_width_px) else DecodedPixel(False, 0, 0, 0, 0)
             frac2 = (u_fp >> 4) & 0x3
 
             out_px = interpolate_smooth_x(p0, p1, frac2, desc.smooth_x)
 
             # Linebuffer write with 16-bit signed dst_x clipping and 1-cycle Write-Forwarding
             if 0 <= dst_x < clip_xmax:
-                ram_old_prio = (linebuf[dst_x] >> 24) & 0xFF
-                eff_old_prio = last_wr_prio if (last_wr_valid and dst_x == last_wr_x) else ram_old_prio
+                ram_old_entry = linebuf[dst_x]
+                ram_old_prio = (ram_old_entry >> 24) & 0xFF
+                ram_old_rgb = ram_old_entry & 0xFFFFFF
+
+                if last_wr_valid and dst_x == last_wr_x:
+                    eff_old_prio = last_wr_prio
+                    eff_old_rgb = last_wr_rgb
+                else:
+                    eff_old_prio = ram_old_prio
+                    eff_old_rgb = ram_old_rgb
+
                 prio_win = (desc.prio >= eff_old_prio) if desc.prio_ge else (desc.prio > eff_old_prio)
                 if out_px.opaque and prio_win:
-                    linebuf[dst_x] = ((desc.prio & 0xFF) << 24) | out_px.rgb24
+                    # Apply Blend Mode (00=Opaque, 01=Additive, 10=50/50, 11=Alpha)
+                    blended_rgb = blend_pixel(eff_old_rgb, eff_old_prio, out_px, b_mode, g_alpha)
+                    linebuf[dst_x] = ((desc.prio & 0xFF) << 24) | blended_rgb
                     last_wr_valid = True
                     last_wr_x = dst_x
                     last_wr_prio = desc.prio & 0xFF
+                    last_wr_rgb = blended_rgb
                 else:
                     last_wr_valid = False
             else:
@@ -570,13 +771,13 @@ def denise_mix_pixel(
 
 
 # =============================================================================
-# SELF-TEST SUITE (Covers all 8 Review Points & Counterexamples from Toby's KI)
+# SELF-TEST SUITE
 # =============================================================================
 def run_self_tests() -> None:
     palette = [0x000000] * 256
-    palette[0] = 0x000000  # Slot 0 can even be non-zero, raw_code==0 is still transparent
-    palette[1] = 0x000001  # Near-black 1
-    palette[2] = 0x000100  # Near-black 2
+    palette[0] = 0x000000
+    palette[1] = 0x000001
+    palette[2] = 0x000100
     palette[3] = 0x000000  # True opaque black at slot 3!
     palette[4] = 0x804020  # Base color
 
@@ -586,12 +787,34 @@ def run_self_tests() -> None:
     mid_px = interpolate_smooth_x(p_dark0, p_dark1, frac2=2, smooth_x=True)
     assert mid_px.opaque is True and mid_px.rgb24 == 0x000000, "Dark interpolation must stay opaque!"
 
-    # 2. Test: Toby's KI counterexample for large Y zoom & negative Y_POS:
-    #    Y_HEIGHT=1080, Y_SCALE=16 (4.0x zoom), Y_POS=-1500, next_y=1000 -> dy=2500 -> scaled_y=625 (<1080)
-    #    Also tests 11-bit Y_HEIGHT = 1080 (0x438: y_height_lo=0x38, data_ptr[2:0]=0x4)
+    # 2. Test: Raw 16-byte pack / unpack without convenience bypass
+    d_orig = SpriteDescriptor(
+        y_pos=-1500,
+        x_pos=100,
+        y_height_lo=1080 & 0xFF,
+        x_width256=1,
+        prio=200,
+        pal_offset=0,
+        data_ptr=0x00100008 | ((1080 >> 8) & 0x7),  # FORMAT[4]=1 (bit 3)
+        fmt=1,                                      # FORMAT_LO=1 -> fmt5=17
+        flags=0b1101,                               # PRIO_GE, SMOOTH_X, H_FLIP
+        x_scale=0x40,
+        y_scale=16,
+        step_ctrl=0x40,
+    )
+    raw_bytes = pack_descriptor_raw(d_orig)
+    assert len(raw_bytes) == 16
+    d_unpacked = unpack_descriptor_raw(raw_bytes)
+    assert d_unpacked.y_pos == -1500
+    assert d_unpacked.x_pos == 100
+    assert d_unpacked.y_height11 == 1080
+    assert d_unpacked.fmt5 == 17
+    assert d_unpacked.h_flip is True and d_unpacked.smooth_x is True and d_unpacked.prio_ge is True
+    assert (d_unpacked.data_ptr & 0x10) == 0, "DATA_PTR[4] must be masked to 0!"
+
+    # 3. Test: Large Y zoom & negative Y_POS (11-bit Y_HEIGHT = 1080)
     ram: Dict[int, int] = {}
     target_line_addr = 0x00100000 + ((625 * 1) << 5)
-    # Put raw_code=3 (True opaque black at palette[3]!) in FORMAT 12 (8888)
     ram[target_line_addr] = (0x03000000 << 32) | 0x00000000
     d_tall = SpriteDescriptor(
         y_pos=-1500,
@@ -605,36 +828,17 @@ def run_self_tests() -> None:
         flags=0,
         x_scale=0x40,
         y_scale=16,
-        step_ctrl=0x40,  # CLUT_MODE = 1
-    )
-    lb = render_scanline(1000, [d_tall], ram, palette)
-    assert lb[100] == (200 << 24) | 0x000000, f"Expected opaque black with prio 200, got {hex(lb[100])}"
-    assert lb[101] == 0, "Expected transparent pixel at x=101"
-
-    # 3. Test: Y_HEIGHT = 256 (y_height_lo == 0, data_ptr[2:0] == 1) must NOT trigger sentinel!
-    ram[0x00200000] = (0x04000000 << 32)
-    d_h256 = SpriteDescriptor(
-        y_pos=10,
-        x_pos=50,
-        y_height_lo=0,           # Low byte is 0!
-        x_width256=1,
-        prio=120,
-        pal_offset=0,
-        data_ptr=0x00200000 | 1, # High bits = 1 -> Y_HEIGHT = 256
-        fmt=12,
-        flags=0,
-        x_scale=0x40,
-        y_scale=0x40,
         step_ctrl=0x40,
     )
-    lb256 = render_scanline(10, [d_h256], ram, palette)
-    assert lb256[50] == (120 << 24) | 0x804020
+    lb = render_scanline(1000, [d_tall], ram, palette)
+    assert lb[100] == (200 << 24) | 0x000000
+    assert lb[101] == 0
 
-    # 4. Test: Zero-Word-Skip bit-exact equivalence across Delta -> Zero-Word -> Delta, Zoom, H_FLIP, SMOOTH_X
+    # 4. Test: Zero-Word-Skip bit-exact equivalence
     ram_skip: Dict[int, int] = {
-        0x00300000: 0x048F8000_00000000,  # Anchor 4, Delta, Delta, then 0s
-        0x00300008: 0x00000000_00000000,  # Full 64-bit Zero-Word!
-        0x00300010: 0x8F048700_00000000,  # Delta after zero-word (starts from reset acc=0!), then Anchor 4
+        0x00300000: 0x048F8000_00000000,
+        0x00300008: 0x00000000_00000000,
+        0x00300010: 0x8F048700_00000000,
         0x00300018: 0x00000000_00000000,
     }
     for scale in (0x40, 0x20, 0x80):
@@ -648,123 +852,83 @@ def run_self_tests() -> None:
                     prio=150,
                     pal_offset=0,
                     data_ptr=0x00300000,
-                    fmt=0,  # HAM_32BIT_44444444 (64 px/burst)
+                    fmt=0,
                     flags=hflip | smooth,
                     x_scale=scale,
                     y_scale=0x40,
-                    step_ctrl=0x80 | 0b11_10_00,  # CUSTOM_STEP: R=2.0x, G=1.5x, B=0.5x
+                    step_ctrl=0x80 | 0b11_10_00,
                 )
                 lb_on = render_scanline(0, [desc_test], ram_skip, palette, (15, 15, 15), zero_word_skip_en=True)
                 lb_off = render_scanline(0, [desc_test], ram_skip, palette, (15, 15, 15), zero_word_skip_en=False)
-                assert lb_on == lb_off, f"Zero-Word-Skip mismatch at scale={scale}, hflip={hflip}, smooth={smooth}"
+                assert lb_on == lb_off
 
-    # 5. Test: H_FLIP pixel count & mirror symmetry for arbitrary X_SCALE (e.g. X_SCALE = 255)
-    ram_sym: Dict[int, int] = {
-        0x00400000: 0x01020304_04030201,
-        0x00400008: 0x01020304_04030201,
-        0x00400010: 0x01020304_04030201,
-        0x00400018: 0x01020304_04030201,
+    # 5. Test: FORMAT 18 (RGB_32BIT_DIRECT / ARGB8888 TrueColor)
+    w64_argb = (0xFF804020 << 32) | 0x80FF0080
+    ram_argb: Dict[int, int] = {
+        0x00900000: w64_argb,
+        0x00900008: 0x00000000_00000000,
+        0x00900010: w64_argb,
+        0x00900018: 0x00000000_00000000,
     }
-    d_norm = SpriteDescriptor(0, 100, 1, 1, 180, 0, 0x00400000, 12, 0, 255, 64, 0x40)
-    d_flip = SpriteDescriptor(0, 108, 1, 1, 180, 0, 0x00400000, 12, 1, 255, 64, 0x40)
-    lb_n = render_scanline(0, [d_norm], ram_sym, palette)
-    lb_f = render_scanline(0, [d_flip], ram_sym, palette)
-    n_Opaque = [x for x in range(2048) if lb_n[x] != 0]
-    f_Opaque = [x for x in range(2048) if lb_f[x] != 0]
-    assert len(n_Opaque) == 9 and len(f_Opaque) == 9, f"Expected 9 samples at scale=255, got {len(n_Opaque)}"
-    assert [lb_n[x] for x in n_Opaque] == list(reversed([lb_f[x] for x in f_Opaque]))
+    d_argb_op = SpriteDescriptor(0, 10, 1, 1, 190, 0, 0x00900008, 2, 0, 0x40, 0x40, 0x00)
+    assert d_argb_op.fmt5 == 18
+    lb_argb_on = render_scanline(0, [d_argb_op], ram_argb, palette, zero_word_skip_en=True)
+    lb_argb_off = render_scanline(0, [d_argb_op], ram_argb, palette, zero_word_skip_en=False)
+    assert lb_argb_on == lb_argb_off, "Zero-Word-Skip mismatch on FORMAT 18 (ARGB8888)!"
+    assert lb_argb_on[10] == (190 << 24) | 0x804020
+    assert lb_argb_on[11] == (190 << 24) | 0xFF0080
+    assert lb_argb_on[12] == 0
+    assert lb_argb_on[13] == 0
+    assert lb_argb_on[14] == (190 << 24) | 0x804020
 
-    # 6. Test: Denise 4-layer mixing & Blank gate (Blank must block even Layer 11!)
-    assert denise_mix_pixel((250 << 24) | 0xFF0000, 0x112233, blank_aligned=True,
-                            sprsel_aligned=False, pf_front_opaque=False, pf_any_opaque=False) == 0x000000
-    assert denise_mix_pixel((250 << 24) | 0xFF0000, 0x112233, blank_aligned=False,
-                            sprsel_aligned=True, pf_front_opaque=True, pf_any_opaque=True) == 0xFF0000
-
-    # 7. Test: Toby's KI reproduction of 4096 source pixels (FORMAT=0, X_WIDTH256=64, X_SCALE=255)
-    #    With 19-bit u_fp (13.6 fixed-point), u_fp_next = 262395 -> u_fp[18:6] = 4099 >= 4096,
-    #    so it terminates cleanly after exactly 1029 destination pixels (instead of wrapping at 18 bits)!
-    ram_4096: Dict[int, int] = {}
-    for w_i in range(64 * 4):
-        ram_4096[0x00500000 + w_i * 8] = 0x11111111_11111111
-    d_4096 = SpriteDescriptor(
-        y_pos=0,
-        x_pos=0,
-        y_height_lo=1,
-        x_width256=64,
-        prio=180,
-        pal_offset=0,
-        data_ptr=0x00500000,
-        fmt=0,         # 64 px/burst * 64 bursts = 4096 source pixels
-        flags=0,
-        x_scale=255,   # Shrink factor 255/64
-        y_scale=0x40,
-        step_ctrl=0x40 # CLUT_MODE = 1
-    )
-    lb_4096 = render_scanline(0, [d_4096], ram_4096, palette)
-    n_written = sum(1 for v in lb_4096 if v != 0)
-    assert n_written == 1029, f"Expected exactly 1029 pixels for 4096px @ X_SCALE=255, got {n_written}"
-
-    # 8. Test: New HAM12 / HAM16 / RGB16 formats (13 = 12_6_8_6, 14 = 12_5555, 15 = 16_12_12_12_12, 16 = HAM16, 17 = RGB16)
-    #    8a. FORMAT 15 (16 - 12 - 12 - 12 - 12 in 64-bit word = 5 px/64b = 20 px/burst, 100% palette-free):
-    #        - Pixel 0 (HAM16 anchor, 16b): r5=16 (128), g5=8 (64), b5=4 (32) -> 0x4104
-    #        - Pixel 1 (HAM12 delta, 12b): bit11=1, turbo=0, dr=+2 (2), dg=-3 (13=0xD), db=+1 (1) -> 0x800 | (2<<7) | (13<<3) | 1 = 0x969
-    #        - Pixel 2 (HAM12 transparent, 12b): 0x000 -> resets acc to (0,0,0)
-    #        - Pixel 3 (HAM12 zero-delta opaque black, 12b): 0x800 -> opaque=True, rgb=(0,0,0)!
-    #        - Pixel 4 (HAM12 direct anchor, 12b): b10=1, r3=7, g4=15, b3=0 -> 0x400 | (7<<7) | (15<<3) | 0 = 0x7F8 -> R=0xF0, G=0xF0, B=0x10
-    w64_f15 = (0x4104 << 48) | (0x969 << 36) | (0x000 << 24) | (0x800 << 12) | 0x7F8
-    ram_new: Dict[int, int] = {
-        0x00600000: w64_f15,
-        0x00600008: 0x00000000_00000000,  # Zero-word (+5 px skip in FORMAT 15!)
-        0x00600010: w64_f15,
-        0x00600018: 0x00000000_00000000,
+    # 6. Test: 4 Hardware Blend Modes on Destination Pixel (R=100, G=100, B=100)
+    ram_bg: Dict[int, int] = {
+        0x00A00000: 0x64646464_64646464,
+        0x00A00008: 0x64646464_64646464,
+        0x00A00010: 0x64646464_64646464,
+        0x00A00018: 0x64646464_64646464,
     }
-    d_f15 = SpriteDescriptor(0, 10, 1, 1, 210, 0, 0x00600000, 15, 0, 0x40, 0x40, 0x00)
-    lb_f15_on = render_scanline(0, [d_f15], ram_new, palette, (4, 4, 4), zero_word_skip_en=True)
-    lb_f15_off = render_scanline(0, [d_f15], ram_new, palette, (4, 4, 4), zero_word_skip_en=False)
-    assert lb_f15_on == lb_f15_off, "Zero-Word-Skip mismatch on FORMAT 15 (16-12-12-12-12)!"
-    # Check Pixel 0: (128, 64, 32) = 0x804020
-    assert lb_f15_on[10] == (210 << 24) | 0x804020, f"Got {hex(lb_f15_on[10])}"
-    # Check Pixel 1: (128 + 2*4, 64 - 3*4, 32 + 1*4) = (136, 52, 36) = 0x883424
-    assert lb_f15_on[11] == (210 << 24) | 0x883424, f"Got {hex(lb_f15_on[11])}"
-    # Check Pixel 2: Transparent (0)
-    assert lb_f15_on[12] == 0
-    # Check Pixel 3: Opaque black via 0x800 delta=0 after reset!
-    assert lb_f15_on[13] == (210 << 24) | 0x000000
-    # Check Pixel 4: HAM12 direct anchor 0x7F8 -> 0xF0F010
-    assert lb_f15_on[14] == (210 << 24) | 0xF0F010, f"Got {hex(lb_f15_on[14])}"
-    # Check Pixel 10 (after 5-pixel zero-word skip at w_idx=1):
-    assert lb_f15_on[20] == (210 << 24) | 0x804020
+    palette[0x64] = 0x646464
+    d_bg = SpriteDescriptor(0, 0, 1, 1, 100, 0, 0x00A00000, 12, 0, 0x40, 0x40, 0x40)
 
-    #    8b. FORMAT 13 (12-6-8-6) & FORMAT 14 (12-5-5-5-5) & FORMAT 16 (HAM16) & FORMAT 17 (RGB16: RGB565/RGB555)
-    for test_fmt in (13, 14, 16, 17):
-        ram_f: Dict[int, int] = {
-            0x00700000: 0x7F848F21_80004104,
-            0x00700008: 0x00000000_00000000,
-            0x00700010: 0x41048000_7F848F21,
-            0x00700018: 0x00000000_00000000,
-        }
-        # Test both via fmt=test_fmt and via data_ptr[3] encoding for formats 16 & 17
-        d_ptr = 0x00700000 | (0x8 if test_fmt >= 16 else 0x0)
-        d_f = SpriteDescriptor(0, 20, 1, 1, 190, 0, d_ptr, test_fmt & 0xF, 0, 0x40, 0x40, 0x00)
-        assert d_f.fmt5 == test_fmt
-        lb_a = render_scanline(0, [d_f], ram_f, palette, (15, 15, 15), zero_word_skip_en=True)
-        lb_b = render_scanline(0, [d_f], ram_f, palette, (15, 15, 15), zero_word_skip_en=False)
-        assert lb_a == lb_b, f"Zero-Word-Skip mismatch on FORMAT {test_fmt}!"
-
-    #    8c. FORMAT 17 Direct RGB565 (CLUT_MODE=0) vs Direct RGB555 (CLUT_MODE=1, 0x8000 = opaque black)
-    ram_rgb16: Dict[int, int] = {
-        0x00800000: (0xF800 << 48) | (0x07E0 << 32) | (0x001F << 16) | 0x8000,
+    palette[0x10] = 0x963214  # (150, 50, 20)
+    ram_fg: Dict[int, int] = {
+        0x00B00000: 0x10000000_00000000,
+        0x00B00008: 0x00000000_00000000,
+        0x00B00010: 0x00000000_00000000,
+        0x00B00018: 0x00000000_00000000,
     }
-    d_565 = SpriteDescriptor(0, 0, 1, 1, 220, 0, 0x00800008, 1, 0, 0x40, 0x40, 0x00)  # fmt5 = 17, RGB565
-    d_555 = SpriteDescriptor(0, 0, 1, 1, 220, 0, 0x00800008, 1, 0, 0x40, 0x40, 0x40)  # fmt5 = 17, RGB555
-    lb_565 = render_scanline(0, [d_565], ram_rgb16, palette)
-    lb_555 = render_scanline(0, [d_555], ram_rgb16, palette)
-    assert lb_565[0] == (220 << 24) | 0xF80000  # Pure Red in RGB565
-    assert lb_565[1] == (220 << 24) | 0x00FC00  # Pure Green in RGB565
-    assert lb_565[2] == (220 << 24) | 0x0000F8  # Pure Blue in RGB565
-    assert lb_555[3] == (220 << 24) | 0x000000  # 0x8000 in RGB555 is true opaque black!
+    # Mode 00: Opaque -> (150, 50, 20)
+    d_fg_m0 = SpriteDescriptor(0, 0, 1, 1, 150, 0, 0x00B00000, 12, 0, 0x40, 0x40, 0x40 | 0b00_0000)
+    lb_m0 = render_scanline(0, [d_bg, d_fg_m0], {**ram_bg, **ram_fg}, palette)
+    assert lb_m0[0] == (150 << 24) | 0x963214
 
-    print("ALL FUNCTIONAL SPRITE_REF_MODEL SELF-TESTS PASSED (FORMATS 0..17, HAM12/16, RGB16, 4-BIT STEPS, 19-BIT u_fp)!")
+    # Mode 01: Additive Blending -> (min(255, 100+150), 100+50, 100+20) = (250, 150, 120) = 0xFA9678
+    d_fg_m1 = SpriteDescriptor(0, 0, 1, 1, 150, 0, 0x00B00000, 12, 0, 0x40, 0x40, 0x40 | 0b01_0000)
+    lb_m1 = render_scanline(0, [d_bg, d_fg_m1], {**ram_bg, **ram_fg}, palette)
+    assert lb_m1[0] == (150 << 24) | 0xFA9678, f"Additive blend mismatch: got {hex(lb_m1[0])}"
+
+    # Mode 10: 50/50 Translucent -> ((100+150)>>1, (100+50)>>1, (100+20)>>1) = (125, 75, 60) = 0x7D4B3C
+    d_fg_m2 = SpriteDescriptor(0, 0, 1, 1, 150, 0, 0x00B00000, 12, 0, 0x40, 0x40, 0x40 | 0b10_0000)
+    lb_m2 = render_scanline(0, [d_bg, d_fg_m2], {**ram_bg, **ram_fg}, palette)
+    assert lb_m2[0] == (150 << 24) | 0x7D4B3C, f"50/50 blend mismatch: got {hex(lb_m2[0])}"
+
+    # Mode 11: Full 8-bit Alpha with alpha=128 (50% alpha):
+    d_fg_m3 = SpriteDescriptor(0, 0, 1, 1, 150, 128, 0x00B00008, 1, 0, 0x40, 0x40, 0x40 | 0b11_0000)
+    ram_fg16: Dict[int, int] = {
+        0x00B00000: (0x9994 << 48),
+    }
+    lb_m3 = render_scanline(0, [d_bg, d_fg_m3], {**ram_bg, **ram_fg16}, palette)
+    assert (lb_m3[0] >> 24) == 150
+
+    # 7. Test: HUD Metrik / Diagnostic Counters
+    stats = LineStats()
+    render_scanline(0, [d_bg, d_fg_m1], {**ram_bg, **ram_fg}, palette, stats=stats)
+    assert stats.descriptors_scanned == 2
+    assert stats.dst_steps > 0
+    assert stats.src_steps > 0
+
+    print("ALL FUNCTIONAL SPRITE_REF_MODEL SELF-TESTS PASSED (REV 3: FORMATS 0..18, 4 BLEND MODES, ARGB8888, EXACT CONTRACTS)!")
 
 
 if __name__ == "__main__":

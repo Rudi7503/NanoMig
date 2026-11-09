@@ -1,0 +1,279 @@
+{
+  "desc_rev": 3,
+  "generator": "generate_fixtures.py",
+  "description": "Comprehensive reference test suite for NanoMig Sprite Engine Rev. 3",
+  "global_steps": [
+    4,
+    4,
+    4
+  ],
+  "palette_sample": {
+    "0": "0x0",
+    "1": "0xff0000",
+    "2": "0xff00",
+    "3": "0xff",
+    "4": "0xffffff",
+    "5": "0x0",
+    "6": "0x804020"
+  },
+  "test_cases": {
+    "raw_descriptor_roundtrip": [
+      {
+        "orig": {
+          "raw_hex": "fa2400643801c8000010000c1d401040",
+          "y_pos": -1500,
+          "x_pos": 100,
+          "y_height_lo": 56,
+          "y_height11": 1080,
+          "x_width256": 1,
+          "prio": 200,
+          "pal_offset": 0,
+          "data_ptr": "0x10000c",
+          "fmt": 1,
+          "fmt5": 17,
+          "flags": 13,
+          "h_flip": true,
+          "v_flip": false,
+          "smooth_x": true,
+          "prio_ge": true,
+          "x_scale": 64,
+          "y_scale": 16,
+          "step_ctrl": 64,
+          "clut_mode": true,
+          "custom_step": false,
+          "blend_mode": 0,
+          "spr_alpha": 0
+        },
+        "packed_hex": "fa2400643801c8000010000c1d401040",
+        "unpacked": {
+          "raw_hex": "fa2400643801c8000010000c1d401040",
+          "y_pos": -1500,
+          "x_pos": 100,
+          "y_height_lo": 56,
+          "y_height11": 1080,
+          "x_width256": 1,
+          "prio": 200,
+          "pal_offset": 0,
+          "data_ptr": "0x10000c",
+          "fmt": 1,
+          "fmt5": 17,
+          "flags": 13,
+          "h_flip": true,
+          "v_flip": false,
+          "smooth_x": true,
+          "prio_ge": true,
+          "x_scale": 64,
+          "y_scale": 16,
+          "step_ctrl": 64,
+          "clut_mode": true,
+          "custom_step": false,
+          "blend_mode": 0,
+          "spr_alpha": 0
+        },
+        "verified": true
+      },
+      {
+        "orig": {
+          "raw_hex": "000000001004964000200000c04040b9",
+          "y_pos": 0,
+          "x_pos": 0,
+          "y_height_lo": 16,
+          "y_height11": 16,
+          "x_width256": 4,
+          "prio": 150,
+          "pal_offset": 64,
+          "data_ptr": "0x200000",
+          "fmt": 12,
+          "fmt5": 12,
+          "flags": 0,
+          "h_flip": false,
+          "v_flip": false,
+          "smooth_x": false,
+          "prio_ge": false,
+          "x_scale": 64,
+          "y_scale": 64,
+          "step_ctrl": 185,
+          "clut_mode": false,
+          "custom_step": true,
+          "blend_mode": 0,
+          "spr_alpha": 255
+        },
+        "packed_hex": "000000001004964000200000c04040b9",
+        "unpacked": {
+          "raw_hex": "000000001004964000200000c04040b9",
+          "y_pos": 0,
+          "x_pos": 0,
+          "y_height_lo": 16,
+          "y_height11": 16,
+          "x_width256": 4,
+          "prio": 150,
+          "pal_offset": 64,
+          "data_ptr": "0x200000",
+          "fmt": 12,
+          "fmt5": 12,
+          "flags": 0,
+          "h_flip": false,
+          "v_flip": false,
+          "smooth_x": false,
+          "prio_ge": false,
+          "x_scale": 64,
+          "y_scale": 64,
+          "step_ctrl": 185,
+          "clut_mode": false,
+          "custom_step": true,
+          "blend_mode": 0,
+          "spr_alpha": 255
+        },
+        "verified": true
+      },
+      {
+        "orig": {
+          "raw_hex": "0064ffce200250c80030000826208010",
+          "y_pos": 100,
+          "x_pos": -50,
+          "y_height_lo": 32,
+          "y_height11": 32,
+          "x_width256": 2,
+          "prio": 80,
+          "pal_offset": 200,
+          "data_ptr": "0x300008",
+          "fmt": 2,
+          "fmt5": 18,
+          "flags": 6,
+          "h_flip": false,
+          "v_flip": true,
+          "smooth_x": true,
+          "prio_ge": false,
+          "x_scale": 32,
+          "y_scale": 128,
+          "step_ctrl": 16,
+          "clut_mode": false,
+          "custom_step": false,
+          "blend_mode": 1,
+          "spr_alpha": 200
+        },
+        "packed_hex": "0064ffce200250c80030000826208010",
+        "unpacked": {
+          "raw_hex": "0064ffce200250c80030000826208010",
+          "y_pos": 100,
+          "x_pos": -50,
+          "y_height_lo": 32,
+          "y_height11": 32,
+          "x_width256": 2,
+          "prio": 80,
+          "pal_offset": 200,
+          "data_ptr": "0x300008",
+          "fmt": 2,
+          "fmt5": 18,
+          "flags": 6,
+          "h_flip": false,
+          "v_flip": true,
+          "smooth_x": true,
+          "prio_ge": false,
+          "x_scale": 32,
+          "y_scale": 128,
+          "step_ctrl": 16,
+          "clut_mode": false,
+          "custom_step": false,
+          "blend_mode": 1,
+          "spr_alpha": 200
+        },
+        "verified": true
+      }
+    ],
+    "negative_coords_clip": {
+      "descriptor": {
+        "raw_hex": "fff6fff81401b40000100000c0404040",
+        "y_pos": -10,
+        "x_pos": -8,
+        "y_height_lo": 20,
+        "y_height11": 20,
+        "x_width256": 1,
+        "prio": 180,
+        "pal_offset": 0,
+        "data_ptr": "0x100000",
+        "fmt": 12,
+        "fmt5": 12,
+        "flags": 0,
+        "h_flip": false,
+        "v_flip": false,
+        "smooth_x": false,
+        "prio_ge": false,
+        "x_scale": 64,
+        "y_scale": 64,
+        "step_ctrl": 64,
+        "clut_mode": true,
+        "custom_step": false,
+        "blend_mode": 0,
+        "spr_alpha": 255
+      },
+      "next_y": 0,
+      "clip_xmax": 320,
+      "non_zero_pixels": {}
+    },
+    "scale_extrema": {
+      "scale_16": {
+        "scale": 16,
+        "count": 128,
+        "first_x": 10,
+        "last_x": 137
+      },
+      "scale_63": {
+        "scale": 63,
+        "count": 33,
+        "first_x": 10,
+        "last_x": 42
+      },
+      "scale_65": {
+        "scale": 65,
+        "count": 32,
+        "first_x": 10,
+        "last_x": 41
+      },
+      "scale_255": {
+        "scale": 255,
+        "count": 9,
+        "first_x": 10,
+        "last_x": 18
+      }
+    },
+    "prio_ge_arbitration": {
+      "prio_ge_0_color": "0xff0000",
+      "prio_ge_1_color": "0x00ff00",
+      "verified": true
+    },
+    "opaque_black_semantics": {
+      "pixel_0_opaque_black": "0xa0000000",
+      "pixel_1_transparent": "0x0",
+      "verified": true
+    },
+    "blend_modes": {
+      "opaque": {
+        "mode": 0,
+        "prio": 180,
+        "rgb_hex": "0x963214"
+      },
+      "additive": {
+        "mode": 1,
+        "prio": 180,
+        "rgb_hex": "0xfa9678"
+      },
+      "translucent_50_50": {
+        "mode": 2,
+        "prio": 180,
+        "rgb_hex": "0x7d4b3c"
+      },
+      "alpha_8bit": {
+        "mode": 3,
+        "prio": 180,
+        "rgb_hex": "0x000000"
+      }
+    },
+    "format_18_argb": {
+      "fmt5": 18,
+      "pixel_0": "0xd2804020",
+      "pixel_1": "0xd2ff0080",
+      "pixel_2": "0x0"
+    }
+  }
+}

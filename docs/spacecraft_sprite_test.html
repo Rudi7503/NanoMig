@@ -244,7 +244,8 @@ function renderFrame() {
       name: fn, part: m,
       y_pos: oy + m.y0 + (m.h_lines - sh) - Math.round(explodeCur * 42),
       x_pos: ox + m.x0 + (idx === 0 ? -Math.round(explodeCur * 28) : Math.round(explodeCur * 28)),
-      prio: m.prio, x_scale: globalZoom, y_scale: yScale, smooth: smoothOn
+      prio: m.prio, x_scale: globalZoom, y_scale: yScale, smooth: smoothOn,
+      blend_mode: 1 // Additive Blending for thruster flames!
     });
   });
 
@@ -288,13 +289,15 @@ function renderFrame() {
     name: 'cockpit', part: mc,
     y_pos: oy + mc.y0 + Math.round(pitch * 5) + Math.round(explodeCur * 34),
     x_pos: ox + mc.x0 + Math.round(roll * 7),
-    prio: mc.prio, x_scale: globalZoom, y_scale: globalZoom, smooth: smoothOn
+    prio: mc.prio, x_scale: globalZoom, y_scale: globalZoom, smooth: smoothOn,
+    blend_mode: 2 // 50/50 Translucent glass canopy!
   });
 
   // Sort by Y_POS ascending (hardware descriptor contract)
   descs.sort((a, b) => a.y_pos - b.y_pos);
 
   let totalWords = 0, skippedWords = 0, totalCycles = 0;
+  let totalSrcSteps = 0, totalDstSteps = 0, totalDescsScanned = 0;
   let maxLineCycles = 0, peakLineY = 0;
   const step = 6; // 4-bit global step (0..15)
 
@@ -306,6 +309,7 @@ function renderFrame() {
 
     for (let di = 0; di < descs.length; di++) {
       const d = descs[di];
+      totalDescsScanned++;
       if (d.y_pos > y) break; // Hardware Early-Exit!
       const dy = y - d.y_pos;
       const scaledY = (dy * d.y_scale) >> 6;
@@ -344,6 +348,7 @@ function renderFrame() {
           const bw = seq64[pi];
           const code = codes[pi];
           totalCycles += 1;
+          totalSrcSteps += 1;
           lineCycles += 1;
           if (code === 0) {
             accR = accG = accB = 0;
@@ -415,6 +420,7 @@ function renderFrame() {
       let uFp = 0;
       let dstX = d.x_pos;
       while (((uFp >> 6) & 0x1FFF) < srcWidthPx) {
+        totalDstSteps++;
         if (dstX >= W) break;
         if (dstX >= 0) {
           const idx0 = (uFp >> 6) & 0x1FFF;
@@ -446,9 +452,29 @@ function renderFrame() {
             r = decR[idx1]; g = decG[idx1]; b = decB[idx1];
           }
 
-          if (outOp && d.prio > linePrio[dstX]) {
-            linePrio[dstX] = d.prio;
-            lineRgb[dstX]  = (r << 16) | (g << 8) | b;
+          if (outOp) {
+            const oldPrio = linePrio[dstX];
+            const oldRgb = lineRgb[dstX];
+            if (d.prio > oldPrio) {
+              let outR = r, outG = g, outB = b;
+              if (d.blend_mode === 1) { // Additive Blending (flames)
+                const dr = (oldRgb >> 16) & 0xFF;
+                const dg = (oldRgb >> 8) & 0xFF;
+                const db = oldRgb & 0xFF;
+                outR = Math.min(255, dr + r);
+                outG = Math.min(255, dg + g);
+                outB = Math.min(255, db + b);
+              } else if (d.blend_mode === 2) { // 50/50 Translucent (canopy glass)
+                const dr = (oldRgb >> 16) & 0xFF;
+                const dg = (oldRgb >> 8) & 0xFF;
+                const db = oldRgb & 0xFF;
+                outR = (dr + r) >> 1;
+                outG = (dg + g) >> 1;
+                outB = (db + b) >> 1;
+              }
+              linePrio[dstX] = d.prio;
+              lineRgb[dstX]  = (outR << 16) | (outG << 8) | outB;
+            }
           }
         }
         uFp = (uFp + d.x_scale) & 0x7FFFF;
@@ -498,10 +524,10 @@ function renderFrame() {
   const pct = totalWords > 0 ? (skippedWords * 100 / totalWords).toFixed(1) : '0.0';
   document.getElementById('hwStats').textContent =
     'Aktives Format: FORMAT ' + fmtId + ' (' + pxPerBurst + ' px/Burst) + 20 CLUT-Sterne (FORMAT 0)\n' +
-    'Gelesene 64-Bit-Worte/Frame: ' + totalWords + '  |  Per 1-Takt Zero-Word-Skip übersprungen: ' +
-    skippedWords + ' (' + pct + '%)\n' +
-    'Decoder-Takte Mittel: ~' + Math.round(totalCycles / H) + ' Takte/Zeile (' + (totalCycles / H / 72.64).toFixed(1) + '%)' +
-    '  |  Peak-Zeile (Y=' + peakLineY + '): ' + maxLineCycles + ' von 7.264 clk_114-Takten (' + (maxLineCycles / 72.64).toFixed(1) + '% Peak-Last!)';
+    'Gelesene 64-Bit-Worte: ' + totalWords + '  |  Zero-Word-Skip: ' + skippedWords + ' (' + pct + '%)\n' +
+    'Decoder-Operationsschätzung ohne DMA/Clear/Ausgabe: Mittel ~' + Math.round(totalCycles / H) + ' Takte/Zeile' +
+    '  |  Peak-Zeile (Y=' + peakLineY + '): ' + maxLineCycles + ' Takte\n' +
+    'Zähler: src_steps=' + totalSrcSteps + ', dst_steps=' + totalDstSteps + ', skip_words=' + skippedWords + ', descriptors_scanned=' + totalDescsScanned;
 
   requestAnimationFrame(renderFrame);
 }
