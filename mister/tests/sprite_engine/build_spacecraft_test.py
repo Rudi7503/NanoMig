@@ -36,7 +36,7 @@ DEFAULT_SRC_JPG = Path(r"D:\programmier_ordner\Vampire\new-ham\testbilder\real-s
 DEFAULT_OUT_PREVIEW = REPO_ROOT / "mister" / "tests" / "sprite_engine" / "spacecraft_sprites_preview.png"
 DEFAULT_OUT_HTML = REPO_ROOT / "docs" / "spacecraft_sprite_test.html"
 
-SHOWCASE_FORMATS = (18, 15, 13, 14, 2)
+SHOWCASE_FORMATS = (16, 15, 14, 13, 9)
 
 
 def build_palette_bank(rgb_pixels: np.ndarray, n_slots: int = 32) -> List[int]:
@@ -602,7 +602,7 @@ def generate_html_demo(palette256: List[int], formats_meta: Dict[int, List[Dict]
   <h1>NanoMig <span>HAM12/16-Sprite-Engine Praxistest</span> &middot; <code>real-spacecraft.jpg</code> in 8 bewegten Hardware-Sprites</h1>
   <div class="sub">
     Echtzeit-Ausführung des bitgenauen Hardware-Referenzmodells im Browser:
-    <span class="badge">FORMAT 18: ARGB8888 (8 px/Burst, 8-Bit Alpha)</span>
+    <span class="badge">FORMAT 16: ARGB8888 (8 px/Burst, 8-Bit Alpha)</span>
     <span class="badge">FORMAT 15: 16-12-12-12-12 (20 px/Burst, 100% palettenfrei)</span>
     <span class="badge">FORMAT 13: 12-6-8-6 (32 px/Burst)</span>
     <span class="badge">FORMAT 14: 12-5-5-5-5 (40 px/Burst)</span>
@@ -617,11 +617,11 @@ def generate_html_demo(palette256: List[int], formats_meta: Dict[int, List[Dict]
       <div class="ctl">
         <label style="width:100%"><b>Packformat:</b>
           <select id="selFmt" style="flex:1">
-            <option value="15" selected>FORMAT 15: 16-12-12-12-12 (64b, 20 px/Burst, 100% palettenfrei!)</option>
-            <option value="18">FORMAT 18: ARGB8888 TrueColor (32b, 8 px/Burst, 100% palettenfrei & Per-Pixel Alpha!)</option>
-            <option value="13">FORMAT 13: 12-6-8-6 (32b, 32 px/Burst, HAM12 + HAM06/08)</option>
-            <option value="14">FORMAT 14: 12-5-5-5-5 (32b, 40 px/Burst, HAM12 + 4&times;HAM05)</option>
-            <option value="2">FORMAT 2: 6-3-4-3-6-3-4-3 (32b, 64 px/Burst, 32-Slot Bank)</option>
+            <option value="16" selected>FORMAT 16: ARGB8888 TrueColor (32b, 8 px/Burst, 100% palettenfrei & Per-Pixel Alpha!)</option>
+            <option value="15">FORMAT 15: RGB16 Direct HighColor (16b, 16 px/Burst, 100% palettenfrei!)</option>
+            <option value="14">FORMAT 14: HAM16 Direct (16b, 16 px/Burst, 100% palettenfrei!)</option>
+            <option value="13">FORMAT 13: HAM16 12X4 (64b, 20 px/Burst, 100% palettenfrei!)</option>
+            <option value="9">FORMAT 9: HAM06 (6-3-4-3-6-3-4-3, 64 px/Burst)</option>
           </select>
         </label>
       </div>
@@ -677,12 +677,16 @@ def generate_html_demo(palette256: List[int], formats_meta: Dict[int, List[Dict]
 <script>
 const DATA = {payload_json};
 const SEQS_64 = {{
-  0:  [4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4],
-  2:  [6,3,4,3,6,3,4,3, 6,3,4,3,6,3,4,3],
-  13: [12,6,8,6, 12,6,8,6],
-  14: [12,5,5,5,5, 12,5,5,5,5],
-  15: [16,12,12,12,12],
-  18: [32,32]
+  16: [32,32],
+  15: [16,16, 16,16],
+  14: [16,16, 16,16],
+  13: [16,12,12,12,12],
+  12: [12,5,5,5,5, 12,5,5,5,5],
+  11: [12,6,8,6, 12,6,8,6],
+  9:  [6,3,4,3,6,3,4,3, 6,3,4,3,6,3,4,3],
+  8:  [4,4,4,4,4,4,4,4, 4,4,4,4,4,4,4,4],
+  18: [32,32],
+  2:  [6,3,4,3,6,3,4,3, 6,3,4,3,6,3,4,3]
 }};
 const W = 448, H = 440;
 const canvas = document.getElementById('screen');
@@ -762,7 +766,7 @@ const SHIELD_PART = {{
   w_bursts: SHIELD_BURSTS,
   h_lines: SHIELD_H,
   pal_offset: 0,
-  fmt: 18,
+  fmt: 16,
   clut_mode: false,
   words64: SHIELD_WORDS64
 }};
@@ -1070,25 +1074,31 @@ function renderFrame() {{
 
           if (decSk[idx0]) lineSkip[dstX] = 1;
 
-          let outOp = false, r = 0, g = 0, b = 0;
+          let outOp = false, r = 0, g = 0, b = 0, curA = 255;
           if (op0 && op1) {{
             outOp = true;
+            const a0 = (decA[idx0] > 0) ? decA[idx0] : 255;
+            const a1 = (decA[idx1] > 0) ? decA[idx1] : 255;
             if (!d.smooth || frac === 0) {{
               r = decR[idx0]; g = decG[idx0]; b = decB[idx0];
+              curA = a0;
             }} else {{
               const mr = (decR[idx0] + decR[idx1]) >> 1;
               const mg = (decG[idx0] + decG[idx1]) >> 1;
               const mb = (decB[idx0] + decB[idx1]) >> 1;
-              if (frac === 2) {{ r = mr; g = mg; b = mb; }}
-              else if (frac === 1) {{ r = (mr + decR[idx0]) >> 1; g = (mg + decG[idx0]) >> 1; b = (mb + decB[idx0]) >> 1; }}
-              else {{ r = (mr + decR[idx1]) >> 1; g = (mg + decG[idx1]) >> 1; b = (mb + decB[idx1]) >> 1; }}
+              const ma = (a0 + a1) >> 1;
+              if (frac === 2) {{ r = mr; g = mg; b = mb; curA = ma; }}
+              else if (frac === 1) {{ r = (mr + decR[idx0]) >> 1; g = (mg + decG[idx0]) >> 1; b = (mb + decB[idx0]) >> 1; curA = (ma + a0) >> 1; }}
+              else {{ r = (mr + decR[idx1]) >> 1; g = (mg + decG[idx1]) >> 1; b = (mb + decB[idx1]) >> 1; curA = (ma + a1) >> 1; }}
             }}
           }} else if (op0 && !op1) {{
             outOp = d.smooth ? (frac < 2) : true;
             r = decR[idx0]; g = decG[idx0]; b = decB[idx0];
+            curA = (decA[idx0] > 0) ? decA[idx0] : 255;
           }} else if (!op0 && op1) {{
             outOp = d.smooth ? (frac >= 2) : false;
             r = decR[idx1]; g = decG[idx1]; b = decB[idx1];
+            curA = (decA[idx1] > 0) ? decA[idx1] : 255;
           }}
 
           if (outOp) {{
@@ -1112,7 +1122,7 @@ function renderFrame() {{
                   outG = (dg + g) >> 1;
                   outB = (db + b) >> 1;
                 }} else if (d.blend_mode === 3) {{ // 8-Bit Alpha Blending
-                  const pixA = (decA[idx0] > 0) ? decA[idx0] : 255;
+                  const pixA = curA;
                   const sliderA = (d.alpha !== undefined) ? d.alpha : 255;
                   const a = (sliderA === 255) ? pixA : ((pixA * sliderA) >> 8);
                   if (a === 255) {{
@@ -1132,7 +1142,7 @@ function renderFrame() {{
                 }}
               }} else {{
                 if (d.blend_mode === 3) {{ // Alpha over empty target
-                  const pixA = (decA[idx0] > 0) ? decA[idx0] : 255;
+                  const pixA = curA;
                   const sliderA = (d.alpha !== undefined) ? d.alpha : 255;
                   const a = (sliderA === 255) ? pixA : ((pixA * sliderA) >> 8);
                   if (a === 0) {{

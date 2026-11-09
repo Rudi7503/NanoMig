@@ -43,4 +43,5 @@ __pycache__/
 *.py[cod]
 *austausch_config.json
 *_credentials.json
+*chat_state.json
 

@@ -5,9 +5,9 @@ Architecture Spec Revision 4 (DESC_REV = 4)
 
 Key Revision 4 Architectural Rules:
   - 100% 68000 Word- and Long-Aligned 16-Byte Sprite Descriptor:
-      +$00: int16_t  y_pos      (CMP.L (A0),(A1) sorts primarily Y and secondarily X!)
+      +$00: int16_t  y_pos      (Sort primarily Y and secondarily X)
       +$02: int16_t  x_pos
-      +$04: uint32_t data_ptr   (Clean 32-bit Fast-RAM pointer, no hidden bits!)
+      +$04: uint32_t data_ptr   (Clean 32-bit Fast-RAM pointer, 32-byte aligned)
       +$08: uint16_t height     (1..2047 scanlines, 0 = Sentinel / list end!)
       +$0A: uint8_t  width      (1..64 256-bit bursts)
       +$0B: uint8_t  format     (0..16: CLUT 1..8, HAM, RGB16, ARGB32)
@@ -26,7 +26,7 @@ Key Revision 4 Architectural Rules:
   - HAM Step Size fixed in hardware to 4 (<< 2). Register $DFF58C removed.
   - Power-of-2 Scaling in ctrl [2:0] (X_SCALE) and [5:3] (Y_SCALE):
       0=1x, 1=2x, 2=4x, 3=1/2, 4=1/4.
-  - CLUT_MODE bit completely removed (determined by format).
+  - Formats > 16 are treated strictly as No-Op.
 """
 
 from __future__ import annotations
@@ -34,8 +34,13 @@ import struct
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional, Any
 
+DESC_REV = 4
+
 # Fixed HAM step size in Hardware
 FIXED_HAM_STEP = 4
+
+def two_delta(bits2: int) -> int:
+    return (-2, -1, 1, 2)[bits2 & 0x3]
 
 # 256-bit burst bit-width sequences for all 17 formats (0..16)
 FORMAT_SEQS_256: Dict[int, Tuple[int, ...]] = {
@@ -54,7 +59,7 @@ FORMAT_SEQS_256: Dict[int, Tuple[int, ...]] = {
     12: (12, 5, 5, 5, 5) * 8,       # HAM12 12_5555: 40 px
     13: (16, 12, 12, 12, 12) * 4,   # HAM16 12X4: 20 px
     14: (16,) * 16,                 # HAM16 Direct: 16 px
-    15: (16,) * 16,                 # RGB16 Direct: 16 px
+    15: (16,) * 16,                 # RGB16 Direct (RGB565): 16 px
     16: (32,) * 8,                  # ARGB32 TrueColor: 8 px
 }
 
@@ -62,7 +67,11 @@ FORMAT_SEQS_256: Dict[int, Tuple[int, ...]] = {
 FORMAT_SEQS_64: Dict[int, Tuple[int, ...]] = {
     0:  (1,) * 64,
     1:  (2,) * 32,
+    2:  (3,) * 21,
     3:  (4,) * 16,
+    4:  (5,) * 12,
+    5:  (6,) * 10,
+    6:  (7,) * 9,
     7:  (8,) * 8,
     8:  (4,) * 16,
     9:  (6, 3, 4, 3) * 4,
@@ -73,8 +82,6 @@ FORMAT_SEQS_64: Dict[int, Tuple[int, ...]] = {
     14: (16,) * 4,
     15: (16,) * 4,
     16: (32,) * 2,
-    2:  (6, 3, 4, 3) * 4,           # Legacy alias for HAM06
-    18: (32,) * 2,                  # Legacy alias for ARGB32
 }
 
 FORMAT_PAD_BITS: Dict[int, int] = {
@@ -162,7 +169,7 @@ class SpriteDescriptor:
         # ARGB32 (FMT 16) uses per-pixel alpha from code[31:24]
         # FMT 13..15 use self.alpha
         # FMT 0..12 use self.alpha as PAL_OFFSET; if blended, alpha=255
-        if self.fmt5 in (13, 14, 15):
+        if self.format in (13, 14, 15):
             return self.alpha & 0xFF
         return 255
 
@@ -187,15 +194,25 @@ def pack_descriptor_raw(desc: SpriteDescriptor) -> bytes:
 
 def unpack_descriptor_raw(data16: bytes) -> SpriteDescriptor:
     """
-    Unpacks 16 bytes Big-Endian into a SpriteDescriptor (DESC_REV=4).
+    Unpacks a 16-byte raw Big-Endian chunk into a SpriteDescriptor (DESC_REV=4).
     """
-    y_pos, x_pos, data_ptr, height, width, format_id, prio, alpha, ctrl = struct.unpack(
-        '>hhIHBBBBH', data16[:16]
-    )
+    assert len(data16) == 16, f"Expected 16 bytes, got {len(data16)}"
+    (
+        y_pos,
+        x_pos,
+        data_ptr,
+        height,
+        width,
+        format_id,
+        prio,
+        alpha,
+        ctrl,
+    ) = struct.unpack('>hhIHBBBBH', data16)
+
     return SpriteDescriptor(
         y_pos=y_pos,
         x_pos=x_pos,
-        data_ptr=data_ptr,
+        data_ptr=data_ptr & 0xFFFFFFE0,
         height=height,
         width=width,
         format=format_id,
@@ -205,21 +222,35 @@ def unpack_descriptor_raw(data16: bytes) -> SpriteDescriptor:
     )
 
 
-def unpack_256bit_burst(w64_list: List[int], fmt5: int) -> List[Tuple[int, int]]:
+def unpack_256bit_burst(w64_list: List[int], fmt: int) -> List[Tuple[int, int]]:
     """
-    Unpacks 4x 64-bit words (256-bit DDR3 burst) from MSB to LSB.
-    Any padding bits naturally remain at the lower end.
+    Unpacks a 256-bit burst container (4x 64-bit Big-Endian words) into raw pixel codes.
+    Handles padding bits at the end of the 256-bit container.
+    Returns: List of (raw_code, bit_width)
     """
     assert len(w64_list) == 4
-    w256 = (w64_list[0] << 192) | (w64_list[1] << 128) | (w64_list[2] << 64) | w64_list[3]
-    seq = FORMAT_SEQS_256.get(fmt5, ())
-    out: List[Tuple[int, int]] = []
-    shift = 256
-    for bw in seq:
-        shift -= bw
-        code = (w256 >> shift) & ((1 << bw) - 1)
-        out.append((code, bw))
-    return out
+    if fmt not in FORMAT_SEQS_256:
+        return []
+
+    seq = FORMAT_SEQS_256[fmt]
+    pad_bits = FORMAT_PAD_BITS.get(fmt, 0)
+
+    # Reassemble full 256-bit integer from 4x 64-bit words (big-endian order)
+    full_val = (w64_list[0] << 192) | (w64_list[1] << 128) | (w64_list[2] << 64) | w64_list[3]
+
+    # Shift past end-padding bits
+    full_val >>= pad_bits
+
+    # Extract pixels from right to left, then reverse
+    pixels = []
+    for bw in reversed(seq):
+        mask = (1 << bw) - 1
+        code = full_val & mask
+        pixels.append((code, bw))
+        full_val >>= bw
+
+    pixels.reverse()
+    return pixels
 
 
 def precompute_ham_stage1(
@@ -229,14 +260,14 @@ def precompute_ham_stage1(
     pal_offset: int,
 ) -> Tuple[bool, bool, int, int, int, int, int, int, bool]:
     """
-    Precomputes anchor, direct colors, palette index and deltas with fixed step = 4.
+    Stage 1 decoder for CLUT, HAM, RGB16 and ARGB32 formats.
     Returns:
-      (anchor, direct_anchor, direct_rgb, pal_idx, delta_r, delta_g, delta_b, alpha, has_ppa)
+      (anchor, direct_anchor, direct_rgb, pal_idx, dr, dg, db, a, has_ppa)
     """
     if raw_code == 0:
         return (False, False, 0, 0, 0, 0, 0, 0, False)
 
-    # 1. CLUT Modes 0..7
+    # 1. FMT 0..7: Direct CLUT 1..8 Bit
     if fmt5 <= 7:
         pal_idx = (pal_offset + raw_code) & 0xFF
         return (True, False, 0, pal_idx, 0, 0, 0, 255, False)
@@ -249,11 +280,8 @@ def precompute_ham_stage1(
         b = raw_code & 0xFF
         return (True, True, (r << 16) | (g << 8) | b, 0, 0, 0, 0, a, True)
 
-    # 3. FMT 15: Direct RGB16 HighColor (RGB565 / RGB555)
+    # 3. FMT 15: Direct RGB16 HighColor (Pure RGB565)
     if fmt5 == 15:
-        if raw_code == 0x8000:
-            # Opaque black semantic
-            return (True, True, 0x000000, 0, 0, 0, 0, 255, False)
         r = ((raw_code >> 11) & 0x1F) << 3
         g = ((raw_code >> 5) & 0x3F) << 2
         b = (raw_code & 0x1F) << 3
@@ -272,16 +300,16 @@ def precompute_ham_stage1(
             # HAM16 Delta: step = 4
             turbo = bool(raw_code & 0x4000)
             mult = 16 if turbo else 4
-            dr_s3 = (raw_code >> 10) & 0x7
-            if dr_s3 >= 4:
-                dr_s3 -= 8
+            dr_s4 = (raw_code >> 10) & 0xF
+            if dr_s4 >= 8:
+                dr_s4 -= 16
             dg_s5 = (raw_code >> 5) & 0x1F
             if dg_s5 >= 16:
                 dg_s5 -= 32
             db_s5 = raw_code & 0x1F
             if db_s5 >= 16:
                 db_s5 -= 32
-            return (False, False, 0, 0, dr_s3 * mult, dg_s5 * mult, db_s5 * mult, 255, False)
+            return (False, False, 0, 0, dr_s4 * mult, dg_s5 * mult, db_s5 * mult, 255, False)
 
     # 5. FMT 11 / 12: HAM12 (Anchor + HAM)
     if bw == 12:
@@ -315,18 +343,45 @@ def precompute_ham_stage1(
         pal_idx = (pal_offset + raw_code) & 0xFF
         return (True, False, 0, pal_idx, 0, 0, 0, 255, False)
     else:
-        turbo = bool(raw_code & (1 << (bw - 2))) if bw >= 4 else False
-        mult = 16 if turbo else 4
-        chan = (raw_code >> (bw - 4)) & 0x3 if bw >= 5 else 0
+        turbo = False
         dr = dg = db = 0
-        delta_val = mult
-        if chan == 0:
-            dr = delta_val
-        elif chan == 1:
-            dg = delta_val
-        else:
-            db = delta_val
-        return (False, False, 0, 0, dr, dg, db, 255, False)
+        if bw == 3:
+            dr = 2 if (raw_code & 0x2) else -2
+            dg = 2 if (raw_code & 0x1) else -2
+            db = dr
+        elif bw == 4:
+            dr = 2 if (raw_code & 0x4) else -2
+            dg = 2 if (raw_code & 0x2) else -2
+            db = 2 if (raw_code & 0x1) else -2
+        elif bw == 5:
+            turbo = bool(raw_code & 0x8)
+            dr = 1 if (raw_code & 0x4) else -1
+            dg = 1 if (raw_code & 0x2) else -1
+            db = 1 if (raw_code & 0x1) else -1
+        elif bw == 6:
+            turbo = bool(raw_code & 0x10)
+            dr = 1 if (raw_code & 0x8) else -1
+            dg = two_delta((raw_code >> 1) & 0x3)
+            db = 1 if (raw_code & 0x1) else -1
+        elif bw == 8:
+            turbo = bool(raw_code & 0x40)
+            dr = two_delta((raw_code >> 4) & 0x3)
+            dg = two_delta((raw_code >> 2) & 0x3)
+            db = two_delta(raw_code & 0x3)
+
+        mult = (FIXED_HAM_STEP << 2) if turbo else FIXED_HAM_STEP
+        def calc_d(level: int) -> int:
+            if level == -2:
+                return -(mult << 1)
+            elif level == -1:
+                return -mult
+            elif level == 1:
+                return mult
+            elif level == 2:
+                return mult << 1
+            return 0
+
+        return (False, False, 0, 0, calc_d(dr), calc_d(dg), calc_d(db), 255, False)
 
 
 def clamp_u8(val: int) -> int:
@@ -343,7 +398,10 @@ def blend_pixel(dest_rgb24: int, dest_prio: int, src_px: DecodedPixel, blend_mod
 
     eff_alpha = src_px.alpha if src_px.has_per_pixel_alpha else global_alpha
 
-    sr, sg, sb = src_px.r, src_px.g, src_px.b
+    sr = src_px.r
+    sg = src_px.g
+    sb = src_px.b
+
     dr = (dest_rgb24 >> 16) & 0xFF
     dg = (dest_rgb24 >> 8) & 0xFF
     db = dest_rgb24 & 0xFF
@@ -380,12 +438,26 @@ def blend_pixel(dest_rgb24: int, dest_prio: int, src_px: DecodedPixel, blend_mod
     return (sr << 16) | (sg << 8) | sb
 
 
+def denise_mix_pixel(sprite_entry: int, amiga_rgb: int, amiga_prio: int = 0) -> int:
+    """
+    Mixes a 32-bit linebuffer entry with Amiga native playfield pixel.
+    [31:24] prio, [23:0] rgb24.
+    """
+    prio = (sprite_entry >> 24) & 0xFF
+    rgb = sprite_entry & 0xFFFFFF
+    if prio > amiga_prio and prio > 0:
+        return rgb
+    return amiga_rgb
+
+
 def render_scanline(
     scanline_y: int,
     descriptors: List[SpriteDescriptor],
     ram_words64: Dict[int, int],
     palette256: List[int],
+    global_steps: Tuple[int, int, int] = (4, 4, 4),
     clip_xmax: int = 2048,
+    zero_word_skip_en: bool = True,
 ) -> List[int]:
     """
     Renders one scanline with all descriptors according to Revision 4 rules.
@@ -394,7 +466,11 @@ def render_scanline(
     linebuffer = [0] * clip_xmax
 
     for desc in descriptors:
-        if desc.height == 0 or desc.prio == 0:
+        # Sentinel height == 0 terminates list processing immediately!
+        if desc.height == 0:
+            break
+        # Format > 16 is reserved / No-Op; Prio 0 is inactive sprite
+        if desc.format > 16 or desc.prio == 0:
             continue
 
         dy = scanline_y - desc.y_pos
@@ -434,9 +510,9 @@ def render_scanline(
                 ram_words64.get(burst_addr + 16, 0),
                 ram_words64.get(burst_addr + 24, 0),
             ]
-            for raw_code, bw in unpack_256bit_burst(w64_list, desc.fmt5):
+            for raw_code, bw in unpack_256bit_burst(w64_list, desc.format):
                 anchor, direct_anchor, direct_rgb, pal_idx, dr, dg, db, a, has_ppa = precompute_ham_stage1(
-                    raw_code, bw, desc.fmt5, desc.pal_offset
+                    raw_code, bw, desc.format, desc.pal_offset
                 )
                 if raw_code == 0:
                     acc_r = acc_g = acc_b = 0
@@ -461,21 +537,71 @@ def render_scanline(
         if desc.h_flip:
             decoded_line.reverse()
 
-        # Write to Linebuffer with Power-of-2 X-Scale
+        # Scale X (Power-of-2 with shrink and smooth_x)
         x_sc = desc.x_scale_code
+        smooth = desc.smooth_x
+        scaled_pixels: List[DecodedPixel] = []
+
+        if x_sc == 0:  # 1x
+            scaled_pixels = decoded_line
+        elif x_sc == 1:  # 2x Zoom
+            for i in range(len(decoded_line)):
+                p0 = decoded_line[i]
+                scaled_pixels.append(p0)
+                if smooth and (i + 1 < len(decoded_line)):
+                    p1 = decoded_line[i + 1]
+                    if p0.opaque and p1.opaque:
+                        mr = (p0.r + p1.r) >> 1
+                        mg = (p0.g + p1.g) >> 1
+                        mb = (p0.b + p1.b) >> 1
+                        ma = (p0.alpha + p1.alpha) >> 1
+                        scaled_pixels.append(DecodedPixel(True, mr, mg, mb, ma, p0.has_per_pixel_alpha or p1.has_per_pixel_alpha))
+                    elif p0.opaque:
+                        scaled_pixels.append(p0)
+                    elif p1.opaque:
+                        scaled_pixels.append(p1)
+                    else:
+                        scaled_pixels.append(DecodedPixel(False, 0, 0, 0, 0, False))
+                else:
+                    scaled_pixels.append(p0)
+        elif x_sc == 2:  # 4x Zoom
+            for p0 in decoded_line:
+                for _ in range(4):
+                    scaled_pixels.append(p0)
+        elif x_sc == 3:  # 1/2 Half Shrink
+            for i in range(0, len(decoded_line), 2):
+                p0 = decoded_line[i]
+                if smooth and (i + 1 < len(decoded_line)):
+                    p1 = decoded_line[i + 1]
+                    if p0.opaque and p1.opaque:
+                        mr = (p0.r + p1.r) >> 1
+                        mg = (p0.g + p1.g) >> 1
+                        mb = (p0.b + p1.b) >> 1
+                        ma = (p0.alpha + p1.alpha) >> 1
+                        scaled_pixels.append(DecodedPixel(True, mr, mg, mb, ma, p0.has_per_pixel_alpha or p1.has_per_pixel_alpha))
+                    elif p0.opaque:
+                        scaled_pixels.append(p0)
+                    elif p1.opaque:
+                        scaled_pixels.append(p1)
+                    else:
+                        scaled_pixels.append(DecodedPixel(False, 0, 0, 0, 0, False))
+                else:
+                    scaled_pixels.append(p0)
+        elif x_sc == 4:  # 1/4 Quarter Shrink
+            for i in range(0, len(decoded_line), 4):
+                scaled_pixels.append(decoded_line[i])
+        else:
+            scaled_pixels = decoded_line
+
+        # Write to Linebuffer with priority & alpha write-enable guard
         dst_x = desc.x_pos
         blend_mode = desc.blend_mode
 
-        for px in decoded_line:
-            # Repeat counts per pixel:
-            repeats = 1
-            if x_sc == 1:
-                repeats = 2  # 2x Zoom
-            elif x_sc == 2:
-                repeats = 4  # 4x Zoom
-
-            for _ in range(repeats):
-                if 0 <= dst_x < clip_xmax and px.opaque:
+        for px in scaled_pixels:
+            if 0 <= dst_x < clip_xmax and px.opaque:
+                eff_a = px.alpha if (blend_mode == 3 and px.has_per_pixel_alpha) else desc.spr_alpha
+                # Alpha=0 in blend mode 3 means completely transparent: WE remains OFF!
+                if not (blend_mode == 3 and eff_a == 0):
                     curr_entry = linebuffer[dst_x]
                     curr_prio = (curr_entry >> 24) & 0xFF
                     curr_rgb = curr_entry & 0xFFFFFF
@@ -484,8 +610,7 @@ def render_scanline(
                     if win:
                         final_rgb = blend_pixel(curr_rgb, curr_prio, px, blend_mode, desc.spr_alpha)
                         linebuffer[dst_x] = (desc.prio << 24) | final_rgb
-                dst_x += 1
-
+            dst_x += 1
 
     return linebuffer
 
@@ -567,6 +692,37 @@ def run_self_tests() -> None:
     assert (lb[1] & 0xFFFFFF) == palette[2]
     assert (lb[2] & 0xFFFFFF) == palette[3]
     print("[PASS] CLUT 8-Bit Render Scanline verified")
+
+    # 5. Review 10 Regression Verifications:
+    # A) Sentinel height=0 terminates processing
+    d_sentinel = SpriteDescriptor(0, 0, 0x00200000, 0, 1, 7, 200, 0, 0)
+    lb_sentinel = render_scanline(0, [d_sentinel, d_clut], ram_test, palette)
+    assert sum(v != 0 for v in lb_sentinel) == 0, "Sentinel height=0 must halt processing!"
+
+    # B) Alpha=0 with blend_mode=3 does NOT modify priority
+    d_bg = SpriteDescriptor(0, 0, 0x00200000, 1, 1, 7, 100, 0, 0) # Prio 100
+    d_fg = SpriteDescriptor(0, 0, 0x00300000, 1, 1, 16, 200, 255, (3 << 9)) # ARGB32, blend=3, prio=200
+    w64_a0 = (0x00FF0000 << 32) | 0x00FF0000 # Alpha = 0
+    ram_alpha0 = {
+        0x00200000: w64_clut, 0x00200008: w64_clut, 0x00200010: w64_clut, 0x00200018: w64_clut,
+        0x00300000: w64_a0, 0x00300008: w64_a0, 0x00300010: w64_a0, 0x00300018: w64_a0,
+    }
+    lb_a0 = render_scanline(0, [d_bg, d_fg], ram_alpha0, palette)
+    assert ((lb_a0[0] >> 24) & 0xFF) == 100, f"Alpha 0 must preserve prio 100, got {(lb_a0[0] >> 24) & 0xFF}"
+
+    # C) HAM16 red delta for 0xA000
+    _, _, _, _, dr, _, _, _, _ = precompute_ham_stage1(0xA000, 16, 14, 0)
+    assert dr == -32, f"Expected dr=-32 for HAM16 0xA000, got {dr}"
+
+    # D) RGB565 for 0x8000
+    _, _, rgb565, _, _, _, _, _, _ = precompute_ham_stage1(0x8000, 16, 15, 0)
+    assert rgb565 == 0x800000, f"Expected 0x800000 for RGB565 0x8000, got {hex(rgb565)}"
+
+    # E) HAM04 code 8 delta
+    _, _, _, _, dr, dg, db, _, _ = precompute_ham_stage1(8, 4, 8, 0)
+    assert (dr, dg, db) == (-8, -8, -8), f"Expected (-8,-8,-8) for HAM04 code 8, got {(dr, dg, db)}"
+
+    print("[PASS] All Review 10 Regression Verifications satisfied!")
 
     print("=" * 70)
     print("ALL REVISION 4 MODEL SELF-TESTS PASSED!")

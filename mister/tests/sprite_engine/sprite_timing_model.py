@@ -231,22 +231,42 @@ class VBlankPointerLatchingModel:
     """
     Simulates the native Amiga VBlank Pointer Latching architecture ($DFF580 SPR_LIST_PTR).
     Revision 4.1:
-      - Writing SPR_LIST_PTR sets pending pointer in shadow register.
+      - $DFF580 (SPR_LIST_PTR_HI): Writes to 16-bit internal staging register (no shadow commit).
+      - $DFF582 (SPR_LIST_PTR_LO): Atomically bundles staging_hi and val16 into shadow_ptr.
+      - 68000 `MOVE.L ..., $DFF580` executes HI cycle followed by LO cycle, guaranteeing atomicity.
+      - If VBlank occurs between HI and LO writes, shadow_ptr retains previous complete pointer.
       - Reading SPR_LIST_PTR returns currently active rendering pointer.
       - At VBlank start, hardware latches shadow -> active.
       - If active == 0 (NULL pointer): engine is completely dormant (0 DMA requests).
       - If active != 0: engine is active.
     """
     def __init__(self):
+        self.staging_hi = 0
         self.shadow_ptr = 0
         self.active_ptr = 0
         self.engine_active = False
 
+    def cpu_write_ptr_hi(self, val16: int) -> None:
+        """Writes 16-bit High Word staging register ($DFF580). Does NOT commit shadow."""
+        self.staging_hi = val16 & 0xFFFF
+
+    def cpu_write_ptr_lo(self, val16: int) -> None:
+        """Writes 16-bit Low Word ($DFF582) and atomically updates 32-bit shadow_ptr."""
+        self.shadow_ptr = ((self.staging_hi << 16) | (val16 & 0xFFFF)) & 0xFFFFFFFF
+
     def cpu_write_ptr(self, ptr: int) -> None:
-        self.shadow_ptr = ptr & 0xFFFFFFFF
+        """Simulates 68000 MOVE.L: HI write followed by LO write."""
+        self.cpu_write_ptr_hi((ptr >> 16) & 0xFFFF)
+        self.cpu_write_ptr_lo(ptr & 0xFFFF)
 
     def cpu_read_ptr(self) -> int:
         return self.active_ptr
+
+    def cpu_read_ptr_hi(self) -> int:
+        return (self.active_ptr >> 16) & 0xFFFF
+
+    def cpu_read_ptr_lo(self) -> int:
+        return self.active_ptr & 0xFFFF
 
     def vblank_tick(self) -> None:
         self.active_ptr = self.shadow_ptr
@@ -318,7 +338,7 @@ def run_timing_verification() -> None:
     print(f"[TEST 4 PASS] Write-Forwarding: {stats1['forwarding_hits']} consecutive column hits resolved via bypass.")
 
     # -------------------------------------------------------------------------
-    # TEST 5: Native Amiga VBlank Pointer Latching ($DFF580 SPR_LIST_PTR)
+    # TEST 5: Native Amiga VBlank Pointer Latching ($DFF580 / $DFF582)
     # -------------------------------------------------------------------------
     pl = VBlankPointerLatchingModel()
     assert pl.engine_active is False and pl.active_ptr == 0
@@ -332,13 +352,26 @@ def run_timing_verification() -> None:
     assert pl.cpu_read_ptr() == 0x00200000
     assert pl.engine_active is True
 
-    # CPU sets NULL pointer for Frame 2 (Disable)
+    # Test High/Low Word Staging Race Protection:
+    # CPU begins 16-bit write: writes HI word 0x0030 to $DFF580
+    pl.cpu_write_ptr_hi(0x0030)
+    # VBlank interrupts right between HI and LO write!
+    pl.vblank_tick()
+    # Must NOT corrupt active pointer: shadow_ptr was not committed yet!
+    assert pl.cpu_read_ptr() == 0x00200000, "Mid-word VBlank latch corruption detected!"
+    # CPU finishes with LO word 0x4000 to $DFF582
+    pl.cpu_write_ptr_lo(0x4000)
+    # Next VBlank cleanly latches the complete 32-bit pointer 0x00304000
+    pl.vblank_tick()
+    assert pl.cpu_read_ptr() == 0x00304000
+
+    # CPU sets NULL pointer for Frame 3 (Disable)
     pl.cpu_write_ptr(0)
-    assert pl.cpu_read_ptr() == 0x00200000, "Active pointer changed prematurely!"
+    assert pl.cpu_read_ptr() == 0x00304000, "Active pointer changed prematurely!"
     pl.vblank_tick()
     assert pl.cpu_read_ptr() == 0
     assert pl.engine_active is False, "Engine not dormant on NULL pointer!"
-    print("[TEST 5 PASS] Native VBlank Pointer Latching: Nullpointer disables engine (0 DMA), pointer switches atomar at VBlank.")
+    print("[TEST 5 PASS] Native VBlank Pointer Latching & Word Staging: Protected against mid-word VBlank, Nullpointer disables engine.")
 
     # -------------------------------------------------------------------------
     # TEST 6: Double-Buffering Swap (Buffer A vs Buffer B)

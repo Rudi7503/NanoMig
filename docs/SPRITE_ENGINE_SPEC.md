@@ -1,14 +1,14 @@
-# Architektur- und Design-Spezifikation: 32/64-Bit HAM-, HighColor-, ARGB- & CLUT-Sprite-Engine (Rev. 3 – HAM12/16, RGB16, ARGB8888, Alpha-Blending, FullHD 2048px)
+# Architektur- und Design-Spezifikation: 32/64-Bit HAM-, HighColor-, ARGB- & CLUT-Sprite-Engine (Rev. 4 – HAM12/16, RGB16, ARGB8888, Alpha-Blending, FullHD 2048px)
 
-**Status:** Spezifikation mit verbindlichen Hardware-Verträgen nach Review #5 durch Tobys KI (`toby01019`) (kein RTL-Code erzeugt)  
+**Status:** Spezifikation mit verbindlichen Hardware-Verträgen nach Review #10 durch Tobys KI (`toby01019`) (kein RTL-Code erzeugt)  
 **Zielplattform:** MiSTer FPGA (Cyclone V `5CSEBA6U23I7`), Minimig-AGA / Denise-Erweiterung  
-**Descriptor-Revision:** `DESC_REV = 3` (Verbindlicher Hardware- & Software-Vertrag)
+**Descriptor-Revision:** `DESC_REV = 4` (Verbindlicher Hardware- & Software-Vertrag, 16 Bytes / Descriptor)
 
 ---
 
 ## 1. Überblick & Kernidee
 
-Die Sprite-Engine kombiniert **variable HAM-Modi (`HAM03`, `HAM04`, `HAM05`, `HAM06`, `HAM08`, `HAM12`, `HAM16`)**, **15/16-Bit Direct HighColor (`RGB565` / `RGB555`)**, **32-Bit Direct TrueColor (`ARGB8888`)**, **4 Hardware-Blend-Modi (Opak, Additiv, 50/50, 8-Bit Alpha)** sowie einen **wahlweisen direkten Palettenmodus (`CLUT_MODE`)** mit einer **FullHD-fähigen `2048`-Pixel Ping-Pong-Zeilenbuffer-Architektur**, einem **eigenen dedizierten High-Speed-Decoder** und direktem **64-Bit-Burst-DMA-Zugriff (`BURSTCNT = 4`) auf das DDR3-Fast-RAM**.
+Die Sprite-Engine kombiniert **variable HAM-Modi (`HAM04`, `HAM06`, `HAM08`, `HAM12`, `HAM16`)**, **16-Bit Direct HighColor (`RGB565`)**, **32-Bit Direct TrueColor (`ARGB8888`)**, **4 Hardware-Blend-Modi (Opak, Additiv, 50/50, 8-Bit Alpha)** sowie **8 direkte Palettenmodi (CLUT 1..8 Bit)** mit einer **FullHD-fähigen `2048`-Pixel Ping-Pong-Zeilenbuffer-Architektur**, einem **eigenen dedizierten High-Speed-Decoder** und direktem **64-Bit-Burst-DMA-Zugriff (`BURSTCNT = 4`) auf das DDR3-Fast-RAM**.
 
 1. **Eigener dedizierter Sprite-HAM/HighColor/CLUT-Decoder (volle Geschwindigkeit):**
    * Die Sprite-Engine besitzt ihren **eigenen `ham_pixel_decoder`** sowie eine **eigene 256×24-Bit-Sprite-Palette (M10K)**.
@@ -17,19 +17,19 @@ Die Sprite-Engine kombiniert **variable HAM-Modi (`HAM03`, `HAM04`, `HAM05`, `HA
 2. **Konstanter 256-Bit-Burst-Speicherzugriff (`4 × 64 Bit`) trotz variabler Pixeldichte:**
    * Die minimale Breite und das Zeilen-Raster eines Sprites im RAM beträgt **`4 × 64 Bit = 256 Bit` (32 Bytes = 8 × 32-Bit-Blöcke)**.
    * Dies entspricht exakt einem physischen **DDR3-BL8-Burst (`BURSTCNT = 4`)** auf dem MiSTer. Jeder Burst-Zugriff liefert in 4 aufeinanderfolgenden `clk_114`-Takten **8 bis 64 Pixel auf einen Schlag** (und beim Lesen der Descriptor-Liste gleich **2 komplette 16-Byte-Descriptoren** auf einmal!).
-   * **Hardware Zero-Word-Skip (100 % bit-identisch):** Ist ein 64-Bit-Wort innerhalb des 256-Bit-Bursts komplett `0` (`64'h00000000_00000000` = lauter transparente `raw_code == 0`-Pixel) und steht kein Zoom (`X_SCALE == 8'h40`) sowie kein opakes Vorgängerpixel (`prev_opaque == 0`) an, setzt der Entpacker den HAM-Akkumulator auf `0`, addiert die Pixelanzahl (`2..16` je nach Format) direkt auf `dst_x` (bzw. subtrahiert bei `H_FLIP`) und überspringt das gesamte 64-Bit-Wort in **einem einzigen Takt**!
+   * **Hardware Zero-Word-Skip (100 % bit-identisch):** Ist ein 64-Bit-Wort innerhalb des 256-Bit-Bursts komplett `0` (`64'h00000000_00000000` = lauter transparente `raw_code == 0`-Pixel) und steht kein Zoom sowie kein opakes Vorgängerpixel (`prev_opaque == 0`) an, setzt der Entpacker den HAM-Akkumulator auf `0`, addiert die Pixelanzahl (`2..16` je nach Format) direkt auf `dst_x` (bzw. subtrahiert bei `H_FLIP`) und überspringt das gesamte 64-Bit-Wort in **einem einzigen Takt**!
 3. **Zwei FullHD-fähige `2048`-Pixel-Zeilenbuffer im Wechsel (Ping-Pong + deterministisches Clear):**
    * Beide Zeilenbuffer (A und B) umfassen **`2048 × 32 Bit`** (`16 M10K` gesamt) und unterstützen damit alle Auflösungen von Lores (`320 px`) über SuperHiRes-Overscan (`1432 px`) bis hin zu **FullHD (`1920 × 1080` / `2048 px`)**.
    * Während **Zeilenbuffer A** synchron zum Videostrahl am Ausgang von Denise ausgelesen, mit dem fertigen 24-Bit-Amiga-Bild gemischt und deterministisch über alle `0..2047` Spalten auf `0` gelöscht wird,
    * rendert die Sprite-Engine im Hintergrund die nächste Bildschirmzeile (`next_y`) in **Zeilenbuffer B** (inkl. **1-Takt-Write-Forwarding** für aufeinanderfolgende Schreibzugriffe auf dieselbe Spalte `dst_x`).
 4. **Y-sortierte Descriptor-Liste im Fast-RAM (bis zu `4.096` Descriptoren):**
-   * Der Engine wird über ein VBlank-gepuffertes Register (`SPR_LIST_PTR`) ein 32-Bit-Zeiger auf ein nach **`Y_POS` aufsteigend sortiertes Array** übergeben.
-   * Sobald beim Scannen der Liste ein Eintrag mit `Y_POS > next_y` oder das Sentinel `Y_HEIGHT == 0` erreicht wird, bricht die Engine die Suche für diese Zeile sofort ab (**Early Exit**).
+   * Der Engine wird über ein VBlank-gepuffertes Register (`SPR_LIST_PTR` bei `$DFF580` / `$DFF582`) ein 32-Bit-Zeiger auf ein nach **`Y_POS` aufsteigend sortiertes Array** übergeben.
+   * Sobald beim Scannen der Liste ein Eintrag mit `Y_POS > next_y` oder das Sentinel `HEIGHT == 0` erreicht wird, bricht die Engine die Suche für diese Zeile sofort ab (**Early Exit**).
 5. **Freies Positionieren, X/Y-Skalierung, 24-Bit-Interpolation & Hardware-Clipping:**
-   * Sprites können an beliebigen negativen oder positiven Koordinaten (`int16 X_POS`, `int16 Y_POS`, ausgewertet als `int13` `-4096..+4095`) außerhalb des Bildschirms starten und enden, stufenlos skaliert (`X_SCALE`, `Y_SCALE` von `0,25×` bis `4,0×`), gespiegelt (`H_FLIP`, `V_FLIP`) und per 24-Bit-Subpixel-Filterung (`SMOOTH_X`) geglättet werden.
+   * Sprites können an beliebigen negativen oder positiven Koordinaten (`int16 X_POS`, `int16 Y_POS`, ausgewertet als `int13` `-4096..+4095`) außerhalb des Bildschirms starten und enden, in 2er-Potenzen skaliert (`X_SCALE`, `Y_SCALE`: 1x, 2x, 4x, 1/2, 1/4), gespiegelt (`H_FLIP`, `V_FLIP`) und per 24-Bit-Subpixel-Filterung (`SMOOTH_X`) geglättet werden.
 6. **Hardware Alpha-Blending & 24/32-Bit Hintergrund/Tile-Compositing:**
    * **4 Hardware-Blend-Modi (`BLEND_MODE[1:0]`):** `00` Normal/Opak, `01` Additiv ($\min(255, S + D)$ für Triebwerksfeuer/Laser), `10` 50/50 Translucent ($(S + D) \gg 1$ für Kanzelglas/Rauch), `11` Full 8-Bit Alpha ($D + \frac{\alpha \cdot (S - D)}{256}$).
-   * **32-Bit Direct TrueColor (`FORMAT 18 ARGB8888`):** Unkomprimierte Kacheln, Tiles und Hintergrundbilder (1 Pixel pro 32 Bit, 8 px/Burst) sowie Sprites mit eigenem Per-Pixel-Alpha (`code[31:24]`).
+   * **32-Bit Direct TrueColor (`FORMAT 16 ARGB8888`):** Unkomprimierte Kacheln, Tiles und Hintergrundbilder (1 Pixel pro 32 Bit, 8 px/Burst) sowie Sprites mit eigenem Per-Pixel-Alpha (`code[31:24]`).
    * **Hintergrund-Modus (Layer `00`):** Descriptoren mit `PRIO 1..63` rendern hinter allen Bitplanes und vor Amiga `COLOR00`. Zusammen mit negativen Offsets (`X_POS`, `Y_POS`) ermöglicht dies ruckelfreies Hardware-Scrolling ganzer 24/32-Bit-Hintergründe ohne CPU-/Chipset-Belastung.
 
 ---
@@ -91,56 +91,54 @@ Dadurch nutzt jeder DMA-Lesezugriff mit **`BURSTCNT = 4`** den physischen **DDR3
 
 *(Werte `FORMAT >= 17` sind als ungültig/Reserve definiert und führen zum deterministischen Überspringen des Sprites ohne DMA-Zugriff).*
 
-### 3.1 Exakte Bit-Definition von `HAM12`, `HAM16`, `RGB16` und `FORMAT 18` (`ARGB8888`)
+### 3.1 Exakte Bit-Definition der erweiterten Formate (`HAM12`, `HAM16`, `RGB16`, `ARGB32`)
 
-1. **`HAM12` (12 Bit pro Pixel, palettenfrei):**
-   * **`code == 12'h000`:** Transparent (`pix_opaque = 0`, setzt `acc_r/g/b <= 24'h000000`).
-   * **`CLUT_MODE == 1` (`code != 0`):** Direktes 12-Bit **`RGB444`** (`anchor_reg = 1`, `direct_anchor_reg = 1`):
-     * `R = {code[11:8], 4'b0000}`, `G = {code[7:4], 4'b0000}`, `B = {code[3:0], 4'b0000}`.
-   * **`CLUT_MODE == 0` & `code[11] == 0` (Direkter 11-Bit-RGB-Anker ohne Palette, `2.047` opake Ankerfarben):**
-     * `b10 = code[10]` (gemeinsames LSB für R und B), `r3 = code[9:7]`, `g4 = code[6:3]`, `b3 = code[2:0]`.
-     * `R = {r3, b10, 4'b0000}` (`((r3 << 1) | b10) << 4`)
-     * `G = {g4, 4'b0000}` (`g4 << 4`)
-     * `B = {b3, b10, 4'b0000}` (`((b3 << 1) | b10) << 4`)
-   * **`CLUT_MODE == 0` & `code[11] == 1` (11-Bit Zweierkomplement-Delta):**
-     * `turbo = code[10]` (`mult = turbo ? (eff_step << 2) : eff_step`).
-     * `dr_s3 = signed(code[9:7])` (`-4 .. +3`), `dg_s4 = signed(code[6:3])` (`-8 .. +7`), `db_s3 = signed(code[2:0])` (`-4 .. +3`).
-     * `delta_r = dr_s3 * mult_r`, `delta_g = dg_s4 * mult_g`, `delta_b = db_s3 * mult_b`. *(Hinweis: `code == 12'h800` nach einem transparenten Pixel ergibt `delta = 0` mit `opaque = 1`, also echtes opakes Tiefschwarz `24'h000000`!)*
+1. **`HAM12 12_686` (`FORMAT 11`) & `HAM12 12_5555` (`FORMAT 12`):**
+   * **`code == 0`:** Transparent (`pix_opaque = 0`, setzt `acc_r/g/b <= 24'h000000`).
+   * **`FORMAT 11` (`HAM12 12_686`):** 12-Bit Anker gefolgt von 6-Bit, 8-Bit und 6-Bit HAM-Pixeln (32 Pixel pro 256-Bit Burst).
+   * **`FORMAT 12` (`HAM12 12_5555`):** 12-Bit Anker gefolgt von vier 5-Bit-Palettenankern (40 Pixel pro 256-Bit Burst).
+   * Für Palettenanker gilt: `slot = (code + pal_offset) & 0xFF`. Slot `0` ist transparent; jeder andere Slot ist opak (`pix_opaque = 1`).
 
-2. **`HAM16` (16 Bit pro Pixel in `FORMAT 15` und `FORMAT 16`, palettenfrei):**
-   * **`code == 16'h0000`:** Transparent (`pix_opaque = 0`, setzt `acc_r/g/b <= 24'h000000`).
-   * **`CLUT_MODE == 1` (`code != 0`):** Direktes 16-Bit **`RGB565`** (`anchor_reg = 1`, `direct_anchor_reg = 1`):
+2. **`HAM16 12x4` (`FORMAT 13`):**
+   * **`code == 0`:** Transparent (`pix_opaque = 0`).
+   * **Erstes Pixel (16 Bit):** Direktes 16-Bit **`RGB565`** als absoluter Anker:
      * `R = {code[15:11], 3'b000}`, `G = {code[10:5], 2'b00}`, `B = {code[4:0], 3'b000}`.
-   * **`CLUT_MODE == 0` & `code[15] == 0` (Direkter 15-Bit-`RGB555`-Anker ohne Palette, `32.767` opake Ankerfarben):**
-     * `r5 = code[14:10]`, `g5 = code[9:5]`, `b5 = code[4:0]`.
-     * `R = {r5, 3'b000}` (`r5 << 3`), `G = {g5, 3'b000}` (`g5 << 3`), `B = {b5, 3'b000}` (`b5 << 3`).
-   * **`CLUT_MODE == 0` & `code[15] == 1` (15-Bit Zweierkomplement-Delta):**
-     * `turbo = code[14]` (`mult = turbo ? (eff_step << 2) : eff_step`).
-     * `dr_s4 = signed(code[13:10])` (`-8 .. +7`), `dg_s5 = signed(code[9:5])` (`-16 .. +15`), `db_s5 = signed(code[4:0])` (`-16 .. +15`).
-     * `delta_r = dr_s4 * mult_r`, `delta_g = dg_s5 * mult_g`, `delta_b = db_s5 * mult_b`. *(Auch hier erzeugt `code == 16'h8000` nach Reset echtes opakes Schwarz `24'h000000`!)*
+   * **Folgende vier Pixel (je 12 Bit):** 12-Bit Zweierkomplement-Deltas (`dr_s4`, `dg_s4`, `db_s4` je 4 Bit `[-8..+7]` mit festem Hardware-Schritt `4`):
+     * `dr_s4 = signed(code[11:8])`, `dg_s4 = signed(code[7:4])`, `db_s4 = signed(code[3:0])`.
+     * `R = clamp(acc_r + dr_s4 * 4)`, `G = clamp(acc_g + dg_s4 * 4)`, `B = clamp(acc_b + db_s4 * 4)`.
 
-3. **`RGB16` (`FORMAT 17`, 15/16-Bit Direct HighColor ohne HAM, palettenfrei):**
+3. **`HAM16 Direct` (`FORMAT 14`, 16 Bit pro Pixel, palettenfrei):**
    * **`code == 16'h0000`:** Transparent (`pix_opaque = 0`, setzt `acc_r/g/b <= 24'h000000`).
-   * **`CLUT_MODE == 0` (`RGB565`, `code != 0`):** `R = {code[15:11], 3'b000}`, `G = {code[10:5], 2'b00}`, `B = {code[4:0], 3'b000}`.
-   * **`CLUT_MODE == 1` (`RGB555`, `code != 0`):** `R = {code[14:10], 3'b000}`, `G = {code[9:5], 3'b000}`, `B = {code[4:0], 3'b000}` *(wobei `code == 16'h8000` als `opaque = 1` mit `R=G=B=0` echtes opakes Tiefschwarz `24'h000000` darstellt!)*.
+   * **`code[15:14] == 2'b00` (Palette / Direkter Farbwechsel):** Palettenanker oder direkte Farberneuerung.
+   * **`code[15:14] == 2'b01` (Blue Delta / Anker):** `acc_b` wird neu gesetzt oder modifiziert.
+   * **`code[15:14] == 2'b10` (Red Delta / Anker):**
+     * `dr_s4 = (code >> 10) & 0xF`; falls `dr_s4 >= 8: dr_s4 -= 16`.
+     * Delta-Modus: `acc_r = clamp(acc_r + dr_s4 * 4)`.
+     * *(Hinweis: `code == 16'h8000` nach Reset oder transparentem Pixel erzeugt `acc_r = 0` mit `acc_g = acc_b = 0`, also echtes opakes Tiefschwarz `24'h000000`!)*.
+   * **`code[15:14] == 2'b11` (Green Delta / Anker):** `acc_g` wird neu gesetzt oder modifiziert.
 
-4. **`FORMAT 18` (`RGB_32BIT_DIRECT` / `ARGB8888` TrueColor, 32 Bit pro Pixel, palettenfrei):**
-   * **`code == 32'h0000_0000`:** Transparent (`pix_opaque = 0`, `acc_r/g/b <= 0`).
-   * **`code != 0`:** Direktes 32-Bit TrueColor (`anchor_reg = 1`, `direct_anchor_reg = 1`, `opaque = 1`):
+4. **`RGB16 Direct` (`FORMAT 15`, 16-Bit HighColor ohne HAM, palettenfrei):**
+   * **`code == 16'h0000`:** Transparent (`pix_opaque = 0`, Zeilenbuffer-Schreibzugriff gesperrt).
+   * **`code != 16'h0000`:** Direktes 16-Bit **`RGB565`** (`pix_opaque = 1`):
+     * `R = {code[15:11], 3'b000}`, `G = {code[10:5], 2'b00}`, `B = {code[4:0], 3'b000}`.
+     * *(Wichtig: `code == 16'h8000` stellt im RGB565-Format Dunkelrot `24'h800000` dar (`R=128, G=0, B=0`), transparent ist ausschließlich `16'h0000`!)*.
+
+5. **`ARGB32 Direct` (`FORMAT 16`, 32 Bit pro Pixel TrueColor mit Alpha):**
+   * **`code == 32'h0000_0000` oder `code[31:24] == 0`:** Transparent (`pix_opaque = 0`, Zeilenbuffer-Schreibzugriff unterdrückt, Priorität und Hintergrundfarbe bleiben unberührt).
+   * **`code != 0`:** Direktes 32-Bit TrueColor (`pix_opaque = 1`):
      * `Alpha = code[31:24]` (`0 .. 255`, Per-Pixel-Alpha für `BLEND_MODE = 11`)
      * `R = code[23:16]` (`0 .. 255`)
      * `G = code[15:8]` (`0 .. 255`)
      * `B = code[7:0]` (`0 .. 255`)
    * **Packung:** 1 Pixel pro 32-Bit-Langwort, 2 Pixel pro 64-Bit DDR3-Wort, **8 Pixel pro 256-Bit Burst**.
-   * **Einsatzbereich:** Unkomprimierte Kacheln, 24/32-Bit Hintergrundbilder, RTG-Overlays und Sprites mit stufenlosem 8-Bit Per-Pixel-Alpha.
+   * **Einsatzbereich:** Unkomprimierte Kacheln, 24/32-Bit-Hintergrundbilder, RTG-Overlays und Sprites mit stufenlosem 8-Bit Per-Pixel-Alpha.
 
-5. **Verbindlicher Vertrag zur Linksshift-Sättigung & Schwarz-Semantik (Review #5 Punkt 5):**
-   * **Linksshift:** `RGB565` und `RGB555` werden im FPGA gezielt per fester Linksverschiebung auf 8 Bit erweitert (`<< 3` für 5-Bit-Kanäle $\to$ Maximum 248; `<< 2` für 6-Bit-Grün $\to$ Maximum 252). Dies spart DSP-Blöcke und hält den Taktweg unter 3,5 ns. Konverter oder Software-Pipelines, die exakt 255 benötigen, können im Quellbild das obere Bitmuster spiegeln (`(c << 3) | (c >> 2)`), in der Hardware gilt verbindlich der reine Linksshift.
-   * **Opaque Schwarz:**
-     * `RGB555` (`FORMAT 17, CLUT_MODE = 1`): Code `16'h8000` ist **echtes opakes Tiefschwarz** (`opaque = 1`, `RGB = 24'h000000`). Code `16'h0000` ist transparent (`opaque = 0`).
-     * `RGB565` (`FORMAT 17, CLUT_MODE = 0`): Code `16'h0000` ist transparent. Opakes Schwarz kann über Interpolation oder `RGB555` erzeugt werden.
-     * `HAM12`: Code `12'h800` nach Zeilenstart/Reset ist **opakes Schwarz** (`opaque = 1`, `delta = 0`).
-     * `HAM16`: Code `16'h8000` nach Reset ist **opakes Schwarz** (`opaque = 1`, `delta = 0`).
+6. **Verbindlicher Vertrag zur Linksshift-Sättigung & Schwarz-Semantik:**
+   * **Linksshift:** `RGB565` wird im FPGA gezielt per fester Linksverschiebung auf 8 Bit erweitert (`<< 3` für 5-Bit-Kanäle $\to$ Maximum 248; `<< 2` für 6-Bit-Grün $\to$ Maximum 252). Dies spart DSP-Blöcke und hält den Taktweg unter 3,5 ns. Konverter oder Software-Pipelines, die exakt 255 benötigen, können im Quellbild das obere Bitmuster spiegeln (`(c << 3) | (c >> 2)`), in der Hardware gilt verbindlich der reine Linksshift.
+   * **Opaque Schwarz vs. Transparenz:**
+     * In allen Paletten-Formaten (`FORMAT 0..7, 11, 12`): Index `0` ist transparent (`opaque = 0`). Palettenslots mit Farbwert `24'h000000` bei Index `!= 0` sind opak (`opaque = 1`).
+     * `HAM16 Direct` (`FORMAT 14`): Code `16'h8000` nach Reset ist **opakes Tiefschwarz** (`opaque = 1`, `acc = 24'h000000`).
+     * `RGB16 Direct` (`FORMAT 15`): Code `16'h0000` ist transparent. Opakes Schwarz wird z.B. als Fast-Black `16'h0020` oder über Blend-Modus/Palette erzeugt. Code `16'h8000` ist Dunkelrot (`128, 0, 0`).
 
 ---
 
@@ -198,9 +196,9 @@ Beim Schreiben in den Zeilenbuffer liest die Hardware die Zielfarbe $D = \{R_d, 
     * Modus `11` (Alpha): Schreibt $C_{\text{out}} = \lfloor \frac{\alpha \cdot S}{256} \rfloor$ (bzw. bei $\alpha = 255$ gesättigt exakt $S$). Ist $\alpha = 0$, gilt `WE = 0`.
   * **Endpunkt-Sättigung bei $\alpha = 255$:** Wenn $\alpha == 255$, wird ohne Rundungsverlust exakt $S$ geschrieben ($C_{\text{out}} = S$).
   * **Herkunft des Alpha-Werts ($\alpha$):**
-    * Bei **`FORMAT 18` (`ARGB8888`)**: Direkt per Pixel aus `code[31:24]` (echtes Per-Pixel-Alpha).
-    * Bei **`FORMAT 15..17`**: Aus dem Feld `SPR_ALPHA[7:0]` (Descriptor-Byte 7 `+$07`, das bei palettenfreien Formaten frei ist).
-    * Bei **`FORMAT 0..14`**: Enthalten Palettenanker (`PAL_OFFSET` liegt auf Byte 7). Für diese Formate ist Byte 7 als `PAL_OFFSET` reserviert; Modus `11` verwendet für diese Formate den Standardwert $\alpha = 255$ (oder ein globales Register).
+    * Bei **`FORMAT 16` (`ARGB8888`)**: Direkt per Pixel aus `code[31:24]` (echtes Per-Pixel-Alpha).
+    * Bei **`FORMAT 13..15`**: Aus dem Feld `ALPHA[7:0]` (Descriptor-Byte Offset `+$0D`, das bei palettenfreien Formaten frei ist).
+    * Bei **`FORMAT 0..12`**: Enthalten Palettenanker (`PAL_OFFSET` liegt auf Byte `+$0D`). Für diese Formate ist Byte `+$0D` als `PAL_OFFSET` reserviert; Modus `11` verwendet für diese Formate den Standardwert $\alpha = 255$ (oder ein globales Register).
 
 ### 5.3 Mischen NACH dem fertigen 24-Bit-Amiga-Bild (4 Ebenen über `PRIO[7:6]`)
 Das Mischen erfolgt **ganz am Ende von [`denise.v`](../mister/rtl/denise.v#L532)** nach dem fertigen 24-Bit-Amiga-Bild (`amiga_rgb[23:0]`):
@@ -213,7 +211,7 @@ Das Mischen erfolgt **ganz am Ende von [`denise.v`](../mister/rtl/denise.v#L532)
 | **`128 .. 191`** | `10` | **Vor allen Bitplanes, hinter Amiga-Sprites 0..7** | `BUF_PRIO != 0 && !sprsel_aligned` |
 | **`192 .. 255`** | `11` | **Ganz vorn** (vor Bitplanes und vor Amiga-Sprites) | `BUF_PRIO != 0` (gewinnt immer innerhalb des sichtbaren Bildes) |
 
-* **FullHD-Hintergründe & Tiles:** Wird ein `FORMAT 18`- oder `FORMAT 17`-Sprite mit `PRIO 1..63` definiert, fungiert es als **vollwertiger 24/32-Bit-Hintergrund**. Sind die Amiga-Bitplanes transparent (oder Denise-Bitplanes per Register deaktiviert), wird das TrueColor-Hintergrundbild nahtlos sichtbar. Über negative Startkoordinaten (`X_POS`, `Y_POS`) kann der Hintergrund pixelgenau gescrollt werden.
+* **FullHD-Hintergründe & Tiles:** Wird ein `FORMAT 16`- oder `FORMAT 15`-Sprite mit `PRIO 1..63` definiert, fungiert es als **vollwertiger 24/32-Bit-Hintergrund**. Sind die Amiga-Bitplanes transparent (oder Denise-Bitplanes per Register deaktiviert), wird das TrueColor-Hintergrundbild nahtlos sichtbar. Über negative Startkoordinaten (`X_POS`, `Y_POS`) kann der Hintergrund pixelgenau gescrollt werden.
 
 ---
 
@@ -226,7 +224,7 @@ Alle 16-Bit- und 32-Bit-Felder sind zu 100 % natürlich auf geraden Adressen aus
 ### 64-Bit Wort 0 (Offset `+$00 .. +$07`): Y/X-Position & Reiner 32-Bit Datenzeiger
 | Offset | Bits | Typ | Feldname | Beschreibung |
 | :---: | :---: | :---: | :--- | :--- |
-| `+$00` | `[63:48]` | `int16` | **`Y_POS`** | Startzeile (vorzeichenbehaftet, ausgewertet als `int13` `-4096 .. +4095`, deckt FullHD `1080p` + Offscreen-Clipping ab). Liegt an Offset `+$00`, damit `CMP.L (A0), (A1)` primär nach Y und sekundär nach X sortiert! |
+| `+$00` | `[63:48]` | `int16` | **`Y_POS`** | Startzeile (vorzeichenbehaftet, ausgewertet als `int13` `-4096 .. +4095`, deckt FullHD `1080p` + Offscreen-Clipping ab). Liegt an Offset `+$00` für schnellen direkten Zugriff in der 68000-Sortierschleife. |
 | `+$02` | `[47:32]` | `int16` | **`X_POS`** | Startspalte (vorzeichenbehaftet, ausgewertet als `int13` `-4096 .. +4095`, deckt `2048 px` + Offscreen-Clipping ab). |
 | `+$04` | `[31:0]`  | `uint32` | **`DATA_PTR`** | **Reiner 32-Bit Pointer** auf die Sprite-Pixeldaten im Fast-RAM (32-Byte-aligned). Keine hineingeschobenen Bits mehr! Direkt mit `MOVE.L #Gfx, spr_DataPtr(A0)` beschreibbar. |
 
@@ -239,6 +237,23 @@ Alle 16-Bit- und 32-Bit-Felder sind zu 100 % natürlich auf geraden Adressen aus
 | `+$0C` | `[31:24]` | `uint8` | **`PRIO`** | 8-Bit Priorität (`0` = dieses Sprite überspringen/unsichtbar; `1 .. 255` = aktiv). |
 | `+$0D` | `[23:16]` | `uint8` | **`ALPHA`** | Für Formate `0..12`: Paletten-Offset (`PAL_OFFSET`).<br>Für palettenfreie Formate `13..16`: Globaler Alpha-Wert (`0..255`) für `BLEND_MODE = 11`. Bei `FORMAT 16` (`ARGB8888`) dominiert das Per-Pixel-Alpha `code[31:24]`. |
 | `+$0E` | `[15:0]`  | `uint16` | **`CTRL`** | **Steuerwort (Flags, Blend-Mode & 2er-Potenz Skalierung)**:<br>• `Bits [2:0]`: `X_SCALE` (`0`=1x, `1`=2x, `2`=4x, `3`=1/2, `4`=1/4)<br>• `Bits [5:3]`: `Y_SCALE` (`0`=1x, `1`=2x, `2`=4x, `3`=1/2, `4`=1/4)<br>• `Bit 6`: `H_FLIP` (Horizontal spiegeln)<br>• `Bit 7`: `V_FLIP` (Vertikal spiegeln)<br>• `Bit 8`: `SMOOTH_X` (24-Bit lineare Farbglättung)<br>• `Bits [10:9]`: `BLEND_MODE` (`00` Opak, `01` Additiv, `10` 50/50, `11` Alpha)<br>• `Bit 11`: `PRIO_GE` (`>=` statt `>` bei Prioritätsgleichstand)<br>• `Bits [15:12]`: Reserviert (`0`). |
+
+### 68000 Sortier-Konvention
+Die Descriptoren müssen aufsteigend nach `Y_POS` vorliegen. Da Koordinaten vorzeichenbehaftet sind (`int16`), darf auf dem 68000 kein unsigned Longword-Vergleich erfolgen (zudem existiert `CMP.L (A0), (A1)` auf dem 68000 nicht). Ein sauberer M68K-Sortierschritt vergleicht vorzeichenbehaftete Wörter:
+```m68k
+; 68000 Sortierschritt (aufsteigend nach Y_POS, sekundär X_POS):
+; A0 = Zeiger auf Descriptor 1, A1 = Zeiger auf Descriptor 2
+    move.w  spr_YPos(A0), d0
+    cmp.w   spr_YPos(A1), d0    ; Vorzeichenbehafteter 16-Bit-Vergleich
+    blt.s   .d1_before_d2
+    bgt.s   .d2_before_d1
+    move.w  spr_XPos(A0), d0
+    cmp.w   spr_XPos(A1), d0    ; Sekundär nach X_POS
+    blt.s   .d1_before_d2
+.d2_before_d1:
+    ; Swap descriptors...
+.d1_before_d2:
+```
 
 ---
 
@@ -267,9 +282,14 @@ Alle 16-Bit- und 32-Bit-Felder sind zu 100 % natürlich auf geraden Adressen aus
 ### 7.3 Native Amiga-VBlank-Pointer-Übernahme (Revision 4.1)
 Anstelle komplexer Schattenbank-Handshakes mit asynchronen Flanken-Triggern folgt die Sprite-Engine der klassischen, bewährten **Amiga-Hardware-Architektur** (analog zu Copper `COP1LC`, Bitplanes `BPL1PT` und Denise-Sprites `SPR0PT`):
 
-1. **Register-Schnittstelle (`$DFF580 SPR_LIST_PTR`):**
-   * **Schreibzugriff (CPU / Copper):** Schreibt den 32-Bit-Zeiger auf das Descriptor-Array im Fast-RAM in das Schattenregister `spr_list_ptr_shadow`.
-   * **Lesezugriff (CPU):** Liefert den *aktuell von der Hardware dargestellten* Zeiger `spr_list_ptr_active` zurück. So weiß die CPU mit einem einzigen `MOVE.L $DFF580, D0`, welcher Puffer gerade aktiv ist.
+### 7.3 Native Amiga-VBlank-Pointer-Übernahme & Word-Staging-Vertrag (Revision 4.1)
+Anstelle komplexer Schattenbank-Handshakes mit asynchronen Flanken-Triggern folgt die Sprite-Engine der klassischen, bewährten **Amiga-Hardware-Architektur** (analog zu Copper `COP1LC`, Bitplanes `BPL1PT` und Denise-Sprites `SPR0PT`):
+
+1. **Register-Schnittstelle & High/Low Word Staging (`$DFF580` / `$DFF582`):**
+   * **`$DFF580` (`SPR_LIST_PTR_HI`):** 16-Bit-Schreibzugriff legt das High-Word in einem internen 16-Bit-Vorbereitungsregister (`staging_hi`) ab. Es erfolgt noch *keine* Aktualisierung des Schattenregisters.
+   * **`$DFF582` (`SPR_LIST_PTR_LO`):** 16-Bit-Schreibzugriff übernimmt das Low-Word und schreibt `(staging_hi << 16) | val16` **vollständig atomar** in das Schattenregister `spr_list_ptr_shadow`.
+   * **68000 `MOVE.L A0, $DFF580`:** Der Standard-68000-Bus führt einen 32-Bit-Zugriff automatisch als zwei 16-Bit-Zyklen aus (zuerst High-Word auf `$DFF580`, dann Low-Word auf `$DFF582`). Triggert der VBlank exakt zwischen den beiden Bus-Zyklen, bleibt das bisherige Schattenregister unverändert gültig. Ein zerrissener Zeiger ist damit hardwareseitig ausgeschlossen!
+   * **Lesezugriff (`$DFF580`, CPU):** Liefert den *aktuell von der Hardware dargestellten* Zeiger `spr_list_ptr_active` zurück. So weiß die CPU mit einem einzigen `MOVE.L $DFF580, D0`, welcher Puffer gerade aktiv gerendert wird.
 2. **Atomare VBlank-Übernahme & Nullpointer-Abschaltung:**
    * Am Frame-Start bei Beginn des vertikalen Austastintervalls (`vblank_start`) übernimmt die Hardware den Schattenzeiger atomar:
      $$\text{spr\_list\_ptr\_active} \le \text{spr\_list\_ptr\_shadow}$$
@@ -278,7 +298,7 @@ Anstelle komplexer Schattenbank-Handshakes mit asynchronen Flanken-Triggern folg
 3. **Natives Double-/Triple-Buffering im Fast-RAM:**
    * Der Entwickler allokiert zwei Descriptor-Puffer (`Buffer_A`, `Buffer_B`) im Fast-RAM.
    * Während die Hardware aus `Buffer_A` rendert, baut die 68000-CPU den nächsten Frame in `Buffer_B` auf.
-   * Am Frame-Ende schreibt die Software einfach `MOVE.L #Buffer_B, SPR_LIST_PTR(A5)`.
+   * Am Frame-Ende schreibt die Software einfach `MOVE.L #Buffer_B, $DFF580`.
    * Beim nächsten VBlank erfolgt die Umschaltung automatisch, deterministisch und gloriös ohne jeden Handshake-Wartezyklus!
    * **Copper-Listen-Kompatibilität:** Da es sich um ein normales Longword-Register handelt, kann auch eine Copper-Liste den Zeiger per `CMOVE` umschalten.
 4. **Buffer Ownership:**  
@@ -295,7 +315,8 @@ Die im HUD angezeigte Zeilenlast ist als **`Decoder-Operationsschätzung ohne DM
 * **`skip_words`:** Anzahl der per 1-Takt Zero-Word-Skip übersprungenen 64-Bit-Worte.
 * **`descriptors_scanned`:** Anzahl der im Frame ausgewerteten Descriptoren.
 * **Hardware-Register (Clear-on-Read / VBlank-Reset):**
-  * `$DFF580`: `SPR_LIST_PTR` (W: Pending VBlank Pointer, R: Active Rendering Pointer; `0` = Engine OFF).
+  * `$DFF580`: `SPR_LIST_PTR_HI` (W: High-Word Staging-Register).
+  * `$DFF582`: `SPR_LIST_PTR_LO` (W: Low-Word + Atomarer Shadow-Commit; R: Active Rendering Pointer; `0` = Engine OFF).
   * `$DFF584`: `SPR_CTRL` (Bit 2: Reset).
   * `$DFF586`: `SPR_PAL_ADDR` (Paletten-Slot 0..255).
   * `$DFF588`: `SPR_PAL_DATA_H` (Paletten-Rot [7:0]).
@@ -304,19 +325,19 @@ Die im HUD angezeigte Zeilenlast ist als **`Decoder-Operationsschätzung ohne DM
   * `$DFF592`: `SPR_DMA_STALL` (Wartezyklen auf Speicherdaten).
   * `$DFF594`: `SPR_OVERRUN_CNT` (Anzahl unvollständiger Zeilenbudgets / Drain-Timeouts).
 
-### 8.2 Offizielle Versionierte Test-Suite (`fixtures/sprite_engine_fixtures_v3.json`)
+### 8.2 Offizielle Versionierte Test-Suite (`fixtures/sprite_engine_fixtures_v4.json`)
 Zur dauerhaften Qualitätssicherung und für Cross-Renderer-Vergleiche zwischen Python, Browser-JS und FPGA-Simulatoren liegt die versionierte Test-Suite vor:
-* **Pfad:** [`NanoMig/mister/tests/sprite_engine/fixtures/sprite_engine_fixtures_v3.json`](../mister/tests/sprite_engine/fixtures/sprite_engine_fixtures_v3.json)
+* **Pfad:** [`NanoMig/mister/tests/sprite_engine/fixtures/sprite_engine_fixtures_v4.json`](../mister/tests/sprite_engine/fixtures/sprite_engine_fixtures_v4.json)
 * **Validierungsskript:** [`NanoMig/mister/tests/sprite_engine/verify_fixtures.py`](../mister/tests/sprite_engine/verify_fixtures.py) – führt alle **20 Testfälle** dynamisch über `render_scanline()` aus und vergleicht jedes Pixel bitgenau.
 * **Gegenprüfungen:**
-  1. Raw 16-Byte Descriptor Pack/Unpack Roundtrip ohne Bypasses.
-  2. Negative Koordinaten (`X_POS = -8, Y_POS = -10`) und horizontales/vertikales Clipping.
-  3. Skalierungs-Grenzfälle (`Scale 16, 63, 65, 255`) inkl. 4096-Pixel-Stressfall.
+  1. Raw 16-Byte Descriptor Pack/Unpack Roundtrip ohne Bypasses (DESC_REV = 4).
+  2. Negative Koordinaten (`X_POS = -4, Y_POS = -10`) und horizontales/vertikales Clipping.
+  3. 2er-Potenz Skalierung (1x, 2x, 4x, 1/2, 1/4) inkl. 4096-Pixel-Quarter-Scale-Testfall (1024 Pixel).
   4. Gleichheits-Arbitrierung (`PRIO_GE = 0` vs. `PRIO_GE = 1`).
-  5. Opaque Schwarz-Semantik (`RGB555 $8000`, HAM16 `$8000`) vs. Transparenz (`$0000`).
+  5. Opaque Schwarz-Semantik (`RGB16 $8000` = Dark Red vs. `$0000` = Transparent; HAM16 `$8000` = Opaque Black) vs. Transparenz (`$0000`).
   6. 4 Hardware-Blend-Modi (`00` Opak, `01` Additiv, `10` 50/50, `11` Alpha) mit Alpha 0-Transparenz (`WE = 0`) und Endpunkt-Sättigung bei Alpha 255.
-  7. `FORMAT 18` (`ARGB8888`) mit Per-Pixel-Alpha Sweep (0, 1, 128, 255).
-  8. `FORMAT 13` und `FORMAT 14` `PAL_OFFSET`-Erhalt (Palettenslot 1 vs. 129).
+  7. `FORMAT 16` (`ARGB8888`) mit Per-Pixel-Alpha Sweep (0, 1, 128, 255).
+  8. `FORMAT 11` und `FORMAT 12` `PAL_OFFSET`-Erhalt (Palettenslot 1 vs. 129).
   9. Multiline `V_FLIP`-Invertierung (`next_y = 0` vs. `next_y = 3`).
   10. Zero-Word-Skip Bit-Äquivalenz (`skip_pair_on` vs. `skip_pair_off` zu 100 % identisch).
 

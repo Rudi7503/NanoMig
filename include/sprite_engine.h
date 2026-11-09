@@ -23,9 +23,9 @@ extern "C" {
  * ========================================================================= */
 #define CUSTOM_BASE             0x00DFF000
 
-#define REG_SPR_LIST_PTR        (*(volatile uint32_t*)(CUSTOM_BASE + 0x580)) /* W: Pending VBlank ptr; R: Active rendering ptr */
-#define REG_SPR_LIST_PTR_H      (*(volatile uint16_t*)(CUSTOM_BASE + 0x580))
-#define REG_SPR_LIST_PTR_L      (*(volatile uint16_t*)(CUSTOM_BASE + 0x582))
+#define REG_SPR_LIST_PTR        (*(volatile uint32_t*)(CUSTOM_BASE + 0x580)) /* W: Atomic 32-bit pointer commit; R: Active rendering ptr */
+#define REG_SPR_LIST_PTR_H      (*(volatile uint16_t*)(CUSTOM_BASE + 0x580)) /* W: High-word staging register (no commit) */
+#define REG_SPR_LIST_PTR_L      (*(volatile uint16_t*)(CUSTOM_BASE + 0x582)) /* W: Low-word + atomic shadow latch */
 #define REG_SPR_CTRL            (*(volatile uint16_t*)(CUSTOM_BASE + 0x584)) /* Bit 2: Reset */
 #define REG_SPR_PAL_ADDR        (*(volatile uint16_t*)(CUSTOM_BASE + 0x586))
 #define REG_SPR_PAL_DATA_H      (*(volatile uint16_t*)(CUSTOM_BASE + 0x588)) /* Red [7:0] */

@@ -21,7 +21,7 @@ from sprite_ref_model import (
     denise_mix_pixel,
 )
 
-FIXTURE_PATH = os.path.join(os.path.dirname(__file__), "fixtures", "sprite_engine_fixtures_v3.json")
+FIXTURE_PATH = os.path.join(os.path.dirname(__file__), "fixtures", "sprite_engine_fixtures_v4.json")
 
 
 def verify_suite() -> None:
@@ -60,7 +60,7 @@ def verify_suite() -> None:
 
         # EXECUTE ACTUAL RENDERER:
         actual_lb = render_scanline(
-            next_y=next_y,
+            scanline_y=next_y,
             descriptors=descs,
             ram_words64=ram,
             palette256=palette,
@@ -103,36 +103,33 @@ def verify_suite() -> None:
     palette_reg[3] = 0x000000  # Opaque black at slot 3
     palette_reg[4] = 0x804020
 
-    # 2a. Height 256 (y_height_lo == 0, data_ptr[2:0] == 1)
-    ram_h256 = {0x00200000: (0x04000000 << 32)}
-    d_h256 = SpriteDescriptor(10, 50, 0, 1, 120, 0, 0x00200001, 12, 0, 0x40, 0x40, 0x40)
+    # 2a. Height 256
+    ram_h256 = {0x00200000: (0x04 << 56)}
+    d_h256 = SpriteDescriptor(y_pos=10, x_pos=50, data_ptr=0x00200000, height=256, width=1, format=7, prio=120, alpha=0, ctrl=0)
     lb256 = render_scanline(10, [d_h256], ram_h256, palette_reg)
     assert lb256[50] == (120 << 24) | 0x804020
 
-    # 2b. Height 1080 Zoom (Y_POS = -1500, Y_SCALE = 16, dy = 2500 -> scaled_y = 625)
+    # 2b. Height 1080 Zoom (Y_POS = -1500, Y_SCALE = 2 (4x zoom), dy = 2500 -> scaled_y = 625)
     target_addr = 0x00100000 + ((625 * 1) << 5)
-    ram_1080 = {target_addr: (0x03000000 << 32)}
-    d_1080 = SpriteDescriptor(-1500, 100, 1080 & 0xFF, 1, 200, 0, 0x00100000 | ((1080 >> 8) & 0x7), 12, 0, 0x40, 16, 0x40)
+    ram_1080 = {target_addr: (0x03 << 56)}
+    d_1080 = SpriteDescriptor(y_pos=-1500, x_pos=100, data_ptr=0x00100000, height=1080, width=1, format=7, prio=200, alpha=0, ctrl=(2 << 3))
     lb1080 = render_scanline(1000, [d_1080], ram_1080, palette_reg)
     assert lb1080[100] == (200 << 24) | 0x000000
     assert lb1080[101] == 0
 
-    # 2c. 4096 source pixels (FORMAT 0, X_WIDTH256 = 64, X_SCALE = 255)
-    ram_4096: Dict[int, int] = {}
-    for w_i in range(64 * 4):
-        ram_4096[0x00500000 + w_i * 8] = 0x11111111_11111111
-    d_4096 = SpriteDescriptor(0, 0, 1, 64, 180, 0, 0x00500000, 0, 0, 255, 0x40, 0x40)
-    lb4096 = render_scanline(0, [d_4096], ram_4096, palette_reg)
+    # 2c. 4096 source pixels (FORMAT 0: 16 bursts * 256 px = 4096 px, X_SCALE = 4 (quarter -> 1024 px))
+    ram_4096: Dict[int, int] = {0x00500000 + w_i * 8: 0xFFFFFFFF_FFFFFFFF for w_i in range(16 * 4)}
+    d_4096 = SpriteDescriptor(y_pos=0, x_pos=0, data_ptr=0x00500000, height=1, width=16, format=0, prio=180, alpha=0, ctrl=4)
+    lb4096 = render_scanline(0, [d_4096], ram_4096, palette_reg, clip_xmax=2000)
     n_written = sum(1 for v in lb4096 if v != 0)
-    assert n_written == 1029, f"Expected 1029 pixels for 4096px @ X_SCALE=255, got {n_written}"
+    assert n_written == 1024, f"Expected 1024 pixels for 4096px @ quarter scale, got {n_written}"
 
     # 2d. Denise Blank gate & Layer priority
-    assert denise_mix_pixel((250 << 24) | 0xFF0000, 0x112233, blank_aligned=True,
-                            sprsel_aligned=False, pf_front_opaque=False, pf_any_opaque=False) == 0x000000
-    assert denise_mix_pixel((250 << 24) | 0xFF0000, 0x112233, blank_aligned=False,
-                            sprsel_aligned=True, pf_front_opaque=True, pf_any_opaque=True) == 0xFF0000
+    assert denise_mix_pixel((250 << 24) | 0xFF0000, 0x112233, amiga_prio=0) == 0xFF0000
+    assert denise_mix_pixel((50 << 24) | 0xFF0000, 0x112233, amiga_prio=100) == 0x112233
+    assert denise_mix_pixel(0, 0x112233, amiga_prio=0) == 0x112233
 
-    print("ALL FIXTURES AND REGRESSIONS IN sprite_engine_fixtures_v3.json VERIFIED 100% BIT-ACCURATELY!")
+    print("ALL FIXTURES AND REGRESSIONS IN sprite_engine_fixtures_v4.json VERIFIED 100% BIT-ACCURATELY!")
 
 
 if __name__ == "__main__":
