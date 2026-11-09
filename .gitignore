@@ -41,4 +41,6 @@ src/minimig-aga/biquad_iir_4ch.v
 # Python
 __pycache__/
 *.py[cod]
+*austausch_config.json
+*_credentials.json
 
