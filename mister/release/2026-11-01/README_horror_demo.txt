@@ -1,16 +1,31 @@
 ==============================================================================
-NanoMig / Minimig-AGA: "GOTHIC HORROR" Audio Engine & Horror Testcase
+NanoMig / Minimig-AGA: "GOTHIC HORROR" Audio Engine & Horror Testcase (V3)
 ==============================================================================
 
 Datei:        horror_demo
-Dateigröße:   24312 Bytes
-SHA-256:      ab084b0fdd84876b17dc3ffbb8ceefa009793d180c0b7811bb81021849ba2b92
+Dateigröße:   24472 Bytes
+SHA-256:      3ae00d0902fe64d20d9e80ea9a1388f36199a4795cec87a1119bf1efb3deb66b
 Plattform:    MiSTer FPGA DE10-Nano (Minimig-AGA Core Minimig_9f4914f0 / rudi/chain-stereo)
 System:       AmigaOS Kickstart 1.3 oder 3.x (CLI / AmigaDOS)
 Laufzeit:     ca. 18 Sekunden (5 kompakte, klar abgegrenzte Akte)
 
-Korrekturen in dieser Fassung (Kickstart 1.3 Verifikation):
-----------------------------------------------------------
+Korrekturen in Version 3 (Gothic Flur-Bereinigung & Pfeiler-Schutz):
+-------------------------------------------------------------------
+1. Flur-Begrenzung & Wall-Bouncing: Fledermäuse fliegen strikt im Korridor
+   (X: 52..250, Y: 16..180) und prallen an den gotischen Steinmauern sowie
+   Decke/Boden realistisch ab (Richtungswechsel).
+2. Pfeiler-Schutz: Plot_Bat_Draw und Plot_Bat_Erase clippen strikt auf den
+   Mittelkorridor (X: 48..254). Die steinernen Gewölbepfeiler (Bytes 0..5 und
+   34..39) können niemals mit Nullen ausgestanzt werden (beseitigt die schwarzen
+   Rechtecke unten links).
+3. Szenenwechsel Akt III -> Akt IV: Beim Übergang zum lachenden Skelett werden
+   alle 32 Fledermäuse vollständig vom Bildschirm getilgt und das gotische Mauerwerk
+   frisch aufgefrischt (Clear_Corridor_And_Refresh_Pillars).
+4. Audio & Stabilität: Unverändert 100% sauber ("Sound durchgehend gut"),
+   18 Sekunden Gesamtlaufzeit, saubere Rückkehr mit Return Code 0.
+
+Korrekturen aus Version 2 (Kickstart 1.3 Verifikation):
+------------------------------------------------------
 1. Copper-Display: Vollständige DIWSTRT ($2C81), DIWSTOP ($F4C1), DDFSTRT ($0038),
    DDFSTOP ($00D0) und FMODE ($0000) Initialisierung für saubere 320x200 Lowres.
 2. Sprites: Alle 8 Sprite-Zeiger im Copper auf Null gesetzt (beseitigt die störenden
@@ -58,16 +73,17 @@ Korrekturen in dieser Fassung (Kickstart 1.3 Verifikation):
    - Vokale Formant-Synthese über Biquad-Bandpassfilter.
    - Hardware-Ringmodulation für dämonisches Knurren und Raspeln.
    - Korridor-Echo trägt das Lachen durch die unendlichen Gewölbe.
-   - Mächtiger 16-Bit Subbass-Herzschlag auf Stimme 31.
 
-5. ACT V: EPILOG & SAUBERER EXIT (~0,8 s)
-   - Weiches Ausblenden aller 32 Stimmen.
-   - Sauberer AmigaOS-Exit zur CLI mit Return Code 0.
-   - Jederzeit abbrechbar mit linker Maustaste (LMB).
+5. ACT V: EPILOG & HARMONISCHES FADEOUT (~0,8 s)
+   - Sanftes Ausblenden aller aktiven Stimmen ohne Nulldurchgangssprünge.
+   - Sauberes Zurücksetzen der Audio-Hardware und Display-Register.
+   - Saubere Rückkehr zu AmigaDOS mit Return Code 0.
 
-Ausführung im AmigaDOS:
------------------------
-1. 'horror_demo' auf die Amiga-Festplatte / Diskette kopieren.
-2. In der AmigaDOS Shell aufrufen:
-   1> horror_demo
-3. Nach ca. 18 Sekunden kehrt das Programm automatisch sauber zur Shell zurück (RC: 0).
+Starten:
+--------
+   horror_demo
+
+Im Fehlerfall:
+--------------
+Ein Abbruch per Mausklick (linke Maustaste) ist jederzeit möglich und stellt
+die System-Displayanzeige sowie alle OS-Ressourcen sauber wieder her.

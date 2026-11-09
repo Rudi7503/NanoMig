@@ -231,6 +231,9 @@ Main:
         BSR     PrintStr
         MOVE.W  #4,CurrentAct
 
+        ; Pristine corridor wipe: erase all 32 bats & refresh stone pillars cleanly!
+        BSR     Clear_Corridor_And_Refresh_Pillars
+
         ; Draw the laughing skeleton skull in the archway
         BSR     Draw_Skeleton_Skull
 
@@ -604,22 +607,30 @@ Update_32_Bats_Movement_And_Audio:
         ADD.W   D3,D1
         ADD.W   D4,D2
 
-        ; Screen boundary wrap
-        CMPI.W  #10,D1
+        ; Corridor boundary check & wall bounce (strictly confined to hallway: X: 52..250, Y: 16..180)
+        CMPI.W  #52,D1
         BGE.S   .x_not_low
-        MOVE.W  #300,D1
+        MOVE.W  #52,D1
+        NEG.W   D3                      ; Bounce off left pillar!
+        MOVE.W  D3,4(A0)
 .x_not_low:
-        CMPI.W  #305,D1
+        CMPI.W  #250,D1
         BLE.S   .x_not_high
-        MOVE.W  #15,D1
+        MOVE.W  #250,D1
+        NEG.W   D3                      ; Bounce off right pillar!
+        MOVE.W  D3,4(A0)
 .x_not_high:
-        CMPI.W  #10,D2
+        CMPI.W  #16,D2
         BGE.S   .y_not_low
-        MOVE.W  #180,D2
+        MOVE.W  #16,D2
+        NEG.W   D4                      ; Bounce off ceiling!
+        MOVE.W  D4,6(A0)
 .y_not_low:
-        CMPI.W  #185,D2
+        CMPI.W  #180,D2
         BLE.S   .y_not_high
-        MOVE.W  #15,D2
+        MOVE.W  #180,D2
+        NEG.W   D4                      ; Bounce off floor!
+        MOVE.W  D4,6(A0)
 .y_not_high:
         MOVE.W  D1,(A0)
         MOVE.W  D2,2(A0)
@@ -839,13 +850,23 @@ Init_Screen_Planes:
 
 Draw_Castle_Hallway_And_Vampire:
         MOVEM.L D0-D7/A0-A4,-(SP)
+        BSR     Clear_Corridor_And_Refresh_Pillars
+        ; Draw Vampire Silhouette in Center Arch (Lines 60..160)
+        BSR     Draw_Vampire_Figure
+        MOVEM.L (SP)+,D0-D7/A0-A4
+        RTS
+
+; ------------------------------------------------------------------------------
+; Clear Entire Corridor (Cols 3..16) and Restore Clean Stone Pillars
+; ------------------------------------------------------------------------------
+Clear_Corridor_And_Refresh_Pillars:
+        MOVEM.L D0-D7/A0-A3,-(SP)
 
         LEA     ScreenPlanes,A0                 ; Plane 0
         LEA     BPL_SIZE(A0),A1                 ; Plane 1
         LEA     BPL_SIZE(A1),A2                 ; Plane 2
         LEA     BPL_SIZE(A2),A3                 ; Plane 3
 
-        ; Draw Stone Archway Pillars on Left (Cols 0..5) and Right (Cols 34..39)
         MOVE.W  #SCR_HEIGHT-1,D7                ; 200 lines
 .arch_y:
         ; Left Pillar (Bytes 0..5): Pattern with stone brick mortar
@@ -862,6 +883,40 @@ Draw_Castle_Hallway_And_Vampire:
         MOVE.B  #$FF,3(A1)
         MOVE.B  #$33,4(A1)
         MOVE.B  #$AA,5(A1)
+
+        ; Wipe open corridor (Bytes 6..33 = 28 bytes = 7 longwords) across ALL 4 planes
+        MOVEQ   #0,D0
+        MOVE.L  D0,6(A0)
+        MOVE.L  D0,10(A0)
+        MOVE.L  D0,14(A0)
+        MOVE.L  D0,18(A0)
+        MOVE.L  D0,22(A0)
+        MOVE.L  D0,26(A0)
+        MOVE.L  D0,30(A0)
+
+        MOVE.L  D0,6(A1)
+        MOVE.L  D0,10(A1)
+        MOVE.L  D0,14(A1)
+        MOVE.L  D0,18(A1)
+        MOVE.L  D0,22(A1)
+        MOVE.L  D0,26(A1)
+        MOVE.L  D0,30(A1)
+
+        MOVE.L  D0,6(A2)
+        MOVE.L  D0,10(A2)
+        MOVE.L  D0,14(A2)
+        MOVE.L  D0,18(A2)
+        MOVE.L  D0,22(A2)
+        MOVE.L  D0,26(A2)
+        MOVE.L  D0,30(A2)
+
+        MOVE.L  D0,6(A3)
+        MOVE.L  D0,10(A3)
+        MOVE.L  D0,14(A3)
+        MOVE.L  D0,18(A3)
+        MOVE.L  D0,22(A3)
+        MOVE.L  D0,26(A3)
+        MOVE.L  D0,30(A3)
 
         ; Right Pillar (Bytes 34..39)
         MOVE.B  #$FF,34(A0)
@@ -884,10 +939,7 @@ Draw_Castle_Hallway_And_Vampire:
         LEA     SCR_WIDTH_B(A3),A3
         DBRA    D7,.arch_y
 
-        ; Draw Vampire Silhouette in Center Arch (Lines 60..160)
-        BSR     Draw_Vampire_Figure
-
-        MOVEM.L (SP)+,D0-D7/A0-A4
+        MOVEM.L (SP)+,D0-D7/A0-A3
         RTS
 
 Draw_Vampire_Figure:
@@ -986,9 +1038,9 @@ Clear_Vampire_Center:
 ; ------------------------------------------------------------------------------
 Plot_Bat_Draw:
         MOVEM.L D0-D4/A1-A3,-(SP)
-        CMPI.W  #10,D1
+        CMPI.W  #48,D1
         BLT.S   .bat_out
-        CMPI.W  #290,D1
+        CMPI.W  #254,D1
         BGT.S   .bat_out
         CMPI.W  #10,D2
         BLT.S   .bat_out
@@ -1029,9 +1081,9 @@ Plot_Bat_Draw:
 
 Plot_Bat_Erase:
         MOVEM.L D0-D4/A1-A2,-(SP)
-        CMPI.W  #10,D1
+        CMPI.W  #48,D1
         BLT.S   .erase_out
-        CMPI.W  #290,D1
+        CMPI.W  #254,D1
         BGT.S   .erase_out
         CMPI.W  #10,D2
         BLT.S   .erase_out
