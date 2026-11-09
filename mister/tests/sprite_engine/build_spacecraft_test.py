@@ -36,7 +36,7 @@ DEFAULT_SRC_JPG = Path(r"D:\programmier_ordner\Vampire\new-ham\testbilder\real-s
 DEFAULT_OUT_PREVIEW = REPO_ROOT / "mister" / "tests" / "sprite_engine" / "spacecraft_sprites_preview.png"
 DEFAULT_OUT_HTML = REPO_ROOT / "docs" / "spacecraft_sprite_test.html"
 
-SHOWCASE_FORMATS = (13, 14, 15, 2)
+SHOWCASE_FORMATS = (18, 15, 13, 14, 2)
 
 
 def build_palette_bank(rgb_pixels: np.ndarray, n_slots: int = 32) -> List[int]:
@@ -207,6 +207,10 @@ def encode_ham_row_fmt(
                     code, (acc_r, acc_g, acc_b) = best_ham12_code(tr, tg, tb, acc_r, acc_g, acc_b, sr, sg, sb)
                 elif bw == 16:
                     code, (acc_r, acc_g, acc_b) = best_ham16_code(tr, tg, tb, acc_r, acc_g, acc_b, sr, sg, sb)
+                elif bw == 32:
+                    # FORMAT 18: ARGB8888 TrueColor with full 8-bit alpha (0xFF = opaque)
+                    code = (0xFF << 24) | (tr << 16) | (tg << 8) | tb
+                    acc_r, acc_g, acc_b = tr, tg, tb
                 else:
                     n_anc = 1 << (bw - 1)
                     dr_a = bank_r[1:n_anc] - tr
@@ -615,10 +619,11 @@ def generate_html_demo(palette256: List[int], formats_meta: Dict[int, List[Dict]
   <h1>NanoMig <span>HAM12/16-Sprite-Engine Praxistest</span> &middot; <code>real-spacecraft.jpg</code> in 8 bewegten Hardware-Sprites</h1>
   <div class="sub">
     Echtzeit-Ausführung des bitgenauen Hardware-Referenzmodells im Browser:
+    <span class="badge">FORMAT 18: ARGB8888 (8 px/Burst, 8-Bit Alpha)</span>
+    <span class="badge">FORMAT 15: 16-12-12-12-12 (20 px/Burst, 100% palettenfrei)</span>
     <span class="badge">FORMAT 13: 12-6-8-6 (32 px/Burst)</span>
     <span class="badge">FORMAT 14: 12-5-5-5-5 (40 px/Burst)</span>
-    <span class="badge">FORMAT 15: 16-12-12-12-12 (20 px/Burst, 100% palettenfrei)</span>
-    <span class="badge">4-Bit Steps (0..15)</span>
+    <span class="badge">4 Blend-Modi (Opak, Additiv, 50/50, Alpha)</span>
   </div>
 </header>
 <main>
@@ -630,6 +635,7 @@ def generate_html_demo(palette256: List[int], formats_meta: Dict[int, List[Dict]
         <label style="width:100%"><b>Packformat:</b>
           <select id="selFmt" style="flex:1">
             <option value="15" selected>FORMAT 15: 16-12-12-12-12 (64b, 20 px/Burst, 100% palettenfrei!)</option>
+            <option value="18">FORMAT 18: ARGB8888 TrueColor (32b, 8 px/Burst, 100% palettenfrei & Per-Pixel Alpha!)</option>
             <option value="13">FORMAT 13: 12-6-8-6 (32b, 32 px/Burst, HAM12 + HAM06/08)</option>
             <option value="14">FORMAT 14: 12-5-5-5-5 (32b, 40 px/Burst, HAM12 + 4&times;HAM05)</option>
             <option value="2">FORMAT 2: 6-3-4-3-6-3-4-3 (32b, 64 px/Burst, 32-Slot Bank)</option>
@@ -645,6 +651,10 @@ def generate_html_demo(palette256: List[int], formats_meta: Dict[int, List[Dict]
         <label><input type="checkbox" id="chkSmooth" checked> <code>SMOOTH_X = 1</code> (24-Bit Lerp)</label>
         <label><input type="checkbox" id="chkSkip" checked> <code>Zero-Word-Skip</code> (64'h0 in 1 Takt)</label>
         <label>Zoom <input type="range" id="rngZoom" min="48" max="96" value="64"> <span id="txtZoom" style="color:var(--acc)">1.00&times;</span></label>
+      </div>
+      <div class="ctl" style="background:#0f172a;border-color:#38bdf8">
+        <label><input type="checkbox" id="chkShield" checked> <b style="color:#38bdf8">Holo-Schild (ARGB8888 8-Bit Alpha)</b></label>
+        <label>Alpha: <input type="range" id="rngAlpha" min="0" max="255" value="140"> <span id="txtAlpha" style="color:var(--acc)">140 (55%)</span></label>
       </div>
       <div class="ctl">
         <label>Manuelles Rollen (Bank) <input type="range" id="rngRoll" min="-100" max="100" value="0"></label>
@@ -688,7 +698,8 @@ const SEQS_64 = {{
   2:  [6,3,4,3,6,3,4,3, 6,3,4,3,6,3,4,3],
   13: [12,6,8,6, 12,6,8,6],
   14: [12,5,5,5,5, 12,5,5,5,5],
-  15: [16,12,12,12,12]
+  15: [16,12,12,12,12],
+  18: [32,32]
 }};
 const W = 448, H = 440;
 const canvas = document.getElementById('screen');
@@ -731,6 +742,47 @@ const STAR_SPRITES = Array.from({{length: 20}}, (_, i) => {{
     }}
   }};
 }});
+
+// Pre-generate a 160x120 FORMAT 18 (ARGB8888, 20 Bursts = 80 words/line) Holo-Shield sprite
+const SHIELD_W = 160, SHIELD_H = 120, SHIELD_BURSTS = 20;
+const SHIELD_WORDS64 = [];
+for (let sy = 0; sy < SHIELD_H; sy++) {{
+  for (let sx = 0; sx < SHIELD_W; sx += 2) {{
+    let px0 = 0, px1 = 0;
+    // Pixel 0:
+    const dx0 = (sx - 80) / 72, dy0 = (sy - 60) / 52;
+    const r0 = dx0 * dx0 + dy0 * dy0;
+    if (r0 >= 0.72 && r0 <= 1.04) {{
+      const edge0 = 1.0 - Math.abs(r0 - 0.88) / 0.16;
+      const intense0 = Math.max(0, Math.min(1, edge0));
+      px0 = (0xFF << 24) | ((Math.round(30 * intense0)) << 16) | ((Math.round(200 + 55 * intense0)) << 8) | 255;
+    }} else if (r0 < 0.72) {{
+      const hex0 = ((sx ^ sy) & 8) ? 0x25 : 0x05;
+      px0 = (0x90 << 24) | (0x0A << 16) | ((0x75 + hex0) << 8) | 0xEE;
+    }}
+    // Pixel 1:
+    const dx1 = (sx + 1 - 80) / 72, dy1 = (sy - 60) / 52;
+    const r1 = dx1 * dx1 + dy1 * dy1;
+    if (r1 >= 0.72 && r1 <= 1.04) {{
+      const edge1 = 1.0 - Math.abs(r1 - 0.88) / 0.16;
+      const intense1 = Math.max(0, Math.min(1, edge1));
+      px1 = (0xFF << 24) | ((Math.round(30 * intense1)) << 16) | ((Math.round(200 + 55 * intense1)) << 8) | 255;
+    }} else if (r1 < 0.72) {{
+      const hex1 = (((sx + 1) ^ sy) & 8) ? 0x25 : 0x05;
+      px1 = (0x90 << 24) | (0x0A << 16) | ((0x75 + hex1) << 8) | 0xEE;
+    }}
+    SHIELD_WORDS64.push([px0 >>> 0, px1 >>> 0]);
+  }}
+}}
+const SHIELD_PART = {{
+  name: 'shield_holo',
+  w_bursts: SHIELD_BURSTS,
+  h_lines: SHIELD_H,
+  pal_offset: 0,
+  fmt: 18,
+  clut_mode: false,
+  words64: SHIELD_WORDS64
+}};
 
 let running = true;
 let explodeTarget = 0, explodeCur = 0;
@@ -870,6 +922,19 @@ function renderFrame() {{
     blend_mode: 2 // 50/50 Translucent glass canopy!
   }});
 
+  // 6. Holo-Shield (FORMAT 18 ARGB8888, 8-Bit Alpha Blending)
+  const shieldEnabled = document.getElementById('chkShield').checked;
+  const shieldAlpha = +document.getElementById('rngAlpha').value;
+  document.getElementById('txtAlpha').textContent = shieldAlpha + ' (' + Math.round(shieldAlpha * 100 / 255) + '%)' + (shieldAlpha === 0 ? ' [WE=0]' : (shieldAlpha === 255 ? ' [SAT]' : ''));
+  if (shieldEnabled) {{
+    descs.push({{
+      name: 'shield_holo', part: SHIELD_PART,
+      y_pos: oy + 2, x_pos: ox + 4,
+      prio: 195, x_scale: globalZoom, y_scale: globalZoom, smooth: smoothOn,
+      blend_mode: 3, alpha: shieldAlpha
+    }});
+  }}
+
   // Sort by Y_POS ascending (hardware descriptor contract)
   descs.sort((a, b) => a.y_pos - b.y_pos);
 
@@ -968,6 +1033,18 @@ function renderFrame() {{
             }}
             decOp[pOut] = 1; decR[pOut] = accR; decG[pOut] = accG; decB[pOut] = accB;
             prevOp = true; pOut++;
+          }} else if (bw === 32) {{
+            const a = (code >>> 24) & 0xFF;
+            accR = (code >>> 16) & 0xFF;
+            accG = (code >>> 8) & 0xFF;
+            accB = code & 0xFF;
+            if (code !== 0 && a !== 0) {{
+              decOp[pOut] = 1; decR[pOut] = accR; decG[pOut] = accG; decB[pOut] = accB;
+              prevOp = true;
+            }} else {{
+              prevOp = false;
+            }}
+            pOut++;
           }} else {{
             const msb = (code >> (bw - 1)) & 1;
             if (msb === 0) {{
@@ -1049,6 +1126,37 @@ function renderFrame() {{
                   outR = (dr + r) >> 1;
                   outG = (dg + g) >> 1;
                   outB = (db + b) >> 1;
+                }} else if (d.blend_mode === 3) {{ // 8-Bit Alpha Blending
+                  const a = (d.alpha !== undefined) ? d.alpha : 255;
+                  if (a === 255) {{
+                    outR = r; outG = g; outB = b;
+                  }} else if (a === 0) {{
+                    uFp = (uFp + d.x_scale) & 0x7FFFF;
+                    dstX++;
+                    continue; // WE = 0: strictly no write!
+                  }} else {{
+                    const dr = (oldRgb >> 16) & 0xFF;
+                    const dg = (oldRgb >> 8) & 0xFF;
+                    const db = oldRgb & 0xFF;
+                    outR = dr + (((r - dr) * a) >> 8);
+                    outG = dg + (((g - dg) * a) >> 8);
+                    outB = db + (((b - db) * a) >> 8);
+                  }}
+                }}
+              }} else {{
+                if (d.blend_mode === 3) {{ // Alpha over empty target
+                  const a = (d.alpha !== undefined) ? d.alpha : 255;
+                  if (a === 0) {{
+                    uFp = (uFp + d.x_scale) & 0x7FFFF;
+                    dstX++;
+                    continue; // WE = 0: buffer remains empty
+                  }} else if (a === 255) {{
+                    outR = r; outG = g; outB = b;
+                  }} else {{
+                    outR = (r * a) >> 8;
+                    outG = (g * a) >> 8;
+                    outB = (b * a) >> 8;
+                  }}
                 }}
               }}
               linePrio[dstX] = d.prio;

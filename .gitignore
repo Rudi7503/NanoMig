@@ -37,3 +37,8 @@ src/minimig-aga/biquad_iir_4ch.v
 /mister/build_id.v
 /mister/c5_pin_model_dump.txt
 /mister/jtag.cdf
+
+# Python
+__pycache__/
+*.py[cod]
+
