@@ -238,8 +238,7 @@ SDPB fd_dma_buf_inst (
    .CEA(fd_buf_we_even | fd_buf_we_odd),
    .CEB(fd_buf_reb),
    .OCE(1'b0),
-   .RESETA(1'b0),
-   .RESETB(1'b0)
+   .RESET(1'b0)
 );
 defparam fd_dma_buf_inst.BIT_WIDTH_0 = 16;
 defparam fd_dma_buf_inst.BIT_WIDTH_1 = 16;

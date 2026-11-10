@@ -320,3 +320,12 @@ set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to VGA_EN
 set_global_assignment -name VERILOG_FILE rtl/audio_ext/adpcm_decoder_shared.v
 set_global_assignment -name VERILOG_FILE rtl/audio_ext/biquad_iir_ringbuffer.v
 set_global_assignment -name VERILOG_FILE rtl/audio_ext/audio_capture.v
+set_global_assignment -name VERILOG_FILE rtl/sprite_engine/sprite_engine_blender.v
+set_global_assignment -name VERILOG_FILE rtl/sprite_engine/sprite_engine_palette.v
+set_global_assignment -name VERILOG_FILE rtl/sprite_engine/sprite_engine_linebuf.v
+set_global_assignment -name VERILOG_FILE rtl/sprite_engine/sprite_linebuf_dpram.v
+set_global_assignment -name VERILOG_FILE rtl/sprite_engine/sprite_engine_compositor.v
+set_global_assignment -name VERILOG_FILE rtl/sprite_engine/sprite_engine_decoder.v
+set_global_assignment -name VERILOG_FILE rtl/sprite_engine/sprite_engine_scaler.v
+set_global_assignment -name VERILOG_FILE rtl/sprite_engine/sprite_engine_dma.v
+set_global_assignment -name VERILOG_FILE rtl/sprite_engine/sprite_engine.v

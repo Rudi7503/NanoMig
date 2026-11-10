@@ -718,6 +718,18 @@ wire        mem2_readdatavalid, mem2_waitrequest;
 wire [28:0] dsnd_addr;
 wire        dsnd_rd, dsnd_busy, dsnd_ready;
 
+wire [28:0] dsnd_s_address;
+wire [7:0]  dsnd_s_burstcount, dsnd_s_byteenable;
+wire        dsnd_s_read, dsnd_s_write;
+wire [63:0] dsnd_s_writedata, dsnd_s_readdata;
+wire        dsnd_s_readdatavalid, dsnd_s_waitrequest;
+
+wire [31:0] spr_mem_address;
+wire [3:0]  spr_mem_burstcount;
+wire        spr_mem_read;
+wire [63:0] spr_mem_readdata;
+wire        spr_mem_readdatavalid, spr_mem_waitrequest;
+
 a2065_ddram_arbiter dsnd_arb
 (
 	.clk             (clk_114),
@@ -742,6 +754,42 @@ a2065_ddram_arbiter dsnd_arb
 	.m1_byteenable   (8'hFF),
 	.m1_write        (1'b0),
 	.m1_waitrequest  (dsnd_busy),
+
+	.s_address       (dsnd_s_address),
+	.s_burstcount    (dsnd_s_burstcount),
+	.s_read          (dsnd_s_read),
+	.s_readdata      (dsnd_s_readdata),
+	.s_readdatavalid (dsnd_s_readdatavalid),
+	.s_writedata     (dsnd_s_writedata),
+	.s_byteenable    (dsnd_s_byteenable),
+	.s_write         (dsnd_s_write),
+	.s_waitrequest   (dsnd_s_waitrequest)
+);
+
+a2065_ddram_arbiter spr_arb
+(
+	.clk             (clk_114),
+	.rst             (reset_d),
+
+	.m0_address      (spr_mem_address[31:3]),
+	.m0_burstcount   ({4'd0, spr_mem_burstcount}),
+	.m0_read         (spr_mem_read),
+	.m0_readdata     (spr_mem_readdata),
+	.m0_readdatavalid(spr_mem_readdatavalid),
+	.m0_writedata    (64'd0),
+	.m0_byteenable   (8'hFF),
+	.m0_write        (1'b0),
+	.m0_waitrequest  (spr_mem_waitrequest),
+
+	.m1_address      (dsnd_s_address),
+	.m1_burstcount   (dsnd_s_burstcount),
+	.m1_read         (dsnd_s_read),
+	.m1_readdata     (dsnd_s_readdata),
+	.m1_readdatavalid(dsnd_s_readdatavalid),
+	.m1_writedata    (dsnd_s_writedata),
+	.m1_byteenable   (dsnd_s_byteenable),
+	.m1_write        (dsnd_s_write),
+	.m1_waitrequest  (dsnd_s_waitrequest),
 
 	.s_address       (mem2_address),
 	.s_burstcount    (mem2_burstcount),
@@ -1067,6 +1115,13 @@ minimig minimig
 	.a2065_mem_byteenable(a2065_mem_byteenable),
 	.a2065_mem_write(a2065_mem_write),
 	.a2065_mem_waitrequest(a2065_mem_waitrequest),
+
+	.spr_mem_address        (spr_mem_address),
+	.spr_mem_burstcount     (spr_mem_burstcount),
+	.spr_mem_read           (spr_mem_read),
+	.spr_mem_readdata       (spr_mem_readdata),
+	.spr_mem_readdatavalid  (spr_mem_readdatavalid),
+	.spr_mem_waitrequest    (spr_mem_waitrequest),
 	
 	.USER_IN      			(USER_IN),
 	.USER_OUT     			(IndirectUserOutFlop),

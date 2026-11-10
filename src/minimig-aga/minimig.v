@@ -443,6 +443,12 @@ assign ide_fast = ~ide_config[5] & cpucfg[1];
    
 //--------------------------------------------------------------------------------------
 
+// Dedicated Sprite Engine Custom Registers ($DFF820..$DFF83E: 16 words = 32 bytes)
+wire spr_eng_selected = (cpu_address_out[23:5] == (24'hDFF820 >> 5));
+wire spr_eng_access   = spr_eng_selected && !dbr && (cpu_rd || cpu_hwr || cpu_lwr);
+wire [15:0] spr_eng_rdata;
+wire [10:0] vpos;
+
 //instantiate agnus
 agnus AGNUS1
 (
@@ -450,7 +456,7 @@ agnus AGNUS1
 	.clk7_en(clk7_en),
 	.cck(cck),
 	.reset(reset),
-	.aen(sel_reg & !audio_ext_selected & !ham_ext_selected),
+	.aen(sel_reg & !audio_ext_selected & !ham_ext_selected & !spr_eng_selected),
 	.rd(cpu_rd),
 	.hwr(cpu_hwr),
 	.lwr(cpu_lwr),
@@ -477,6 +483,7 @@ agnus AGNUS1
 	.strhor_denise(strhor_denise),
 	.strhor_paula(strhor_paula),
 	.htotal(htotal),
+	.vpos(vpos),
 	.harddis(harddis),
 	.varbeamen(varbeamen),
 	.int3(int3),
@@ -602,9 +609,9 @@ denise DENISE1
 	.chip48(chip48),
 	.data_out(denise_data_out),
 	.blank(~_hsync|vblank),
-	.red(red),
-	.green(green),
-	.blue(blue),
+	.red(denise_r),
+	.green(denise_g),
+	.blue(denise_b),
 	.a1k(chipset_config[2]),
 	.ecs(|chipset_config[4:3]),
 	.aga(chipset_config[4]),
@@ -617,6 +624,58 @@ denise DENISE1
 //instantiate cia A
 wire [3:0] porta_out;
 assign {_fire1_dat,_fire0_dat,_led} = porta_out[3:1];
+
+
+// ====================================================================
+// Dedicated High-Performance Sprite & HighColor/TrueColor Overlay Engine
+// ====================================================================
+wire [7:0] denise_r, denise_g, denise_b;
+wire [31:0] spr_mem_address;
+wire [3:0]  spr_mem_burstcount;
+wire        spr_mem_read;
+wire [63:0] spr_mem_readdata = 64'd0;
+wire        spr_mem_readdatavalid = 1'b0;
+wire        spr_mem_waitrequest = 1'b0;
+
+(* syn_noprune = 1 *) sprite_engine SPRITE_ENGINE (
+	.clk_render      (clk),
+	.clk_sys         (clk),
+	.clk_vid         (clk),
+	.rst_n           (~reset),
+
+	// Amiga Custom Bus Interface ($DFF820..$DFF83E)
+	.reg_cs          (spr_eng_access),
+	.reg_we          (cpu_hwr || cpu_lwr),
+	.reg_addr        (cpu_address_out[4:1]),
+	.reg_wdata       (cpu_data_out),
+	.reg_rdata       (spr_eng_rdata),
+
+	// Video Timing Inputs
+	.vblank_pulse    (sof),
+	.line_swap_pulse (sol),
+	.scanline_y      ({1'b0, vpos}),
+	.vid_x           (11'd0),
+	.vid_read_en     (1'b1),
+	.clip_xmax       (11'd2047),
+
+	// Denise Native Video Tap
+	.amiga_rgb       ({denise_r, denise_g, denise_b}),
+	.sprsel_aligned  (1'b0),
+	.pf_front_opaque (1'b0),
+	.pf_any_opaque   (1'b0),
+	.blank_n         (~(~_hsync | vblank)),
+
+	// Avalon-MM DDR3 / SDRAM Memory Master Interface
+	.avm_address     (spr_mem_address),
+	.avm_burstcount  (spr_mem_burstcount),
+	.avm_read        (spr_mem_read),
+	.avm_waitrequest (spr_mem_waitrequest),
+	.avm_readdata    (spr_mem_readdata),
+	.avm_readdatavalid(spr_mem_readdatavalid),
+
+	// Final Video Output
+	.out_rgb         ({red, green, blue})
+);
 
 ciaa CIAA1
 (
@@ -897,16 +956,22 @@ always @(posedge clk) begin
 end
 
 // Audio Extension: 16 Voices ($DFF400-$DFF5FF) with shared ADPCM & DSP AGC mixer
-wire audio_ext_selected = (cpu_address_out[23:9] == 15'b1101_1111_1111_010);
+// 32-Voice Ringbuffer Audio Extension ($DFF400..$DFF7FE = 1024 bytes)
+wire audio_ext_selected = (cpu_address_out[23:10] == 14'b1101_1111_1111_01);
 wire audio_ext_access = audio_ext_selected && !dbr && (cpu_rd || cpu_hwr || cpu_lwr);
 wire [15:0] audio_ext_rdata;
 wire audio_ext_irq;
-wire signed [15:0] audio_ext_l, audio_ext_r;
+wire signed [20:0] audio_ext_l, audio_ext_r;
 wire audio_dma_req;
 wire [31:0] audio_dma_addr;
 reg audio_dma_ack;
 wire [15:0] audio_dma_data = 16'd0;
 wire audio_dma_error = 1'b0;
+
+// Global Audio IRQ ($DFF804..$DFF80A)
+wire audio_irq_selected = (cpu_address_out[23:4] == (24'hDFF804 >> 4)) && (cpu_address_out[3:1] >= 3'd2 && cpu_address_out[3:1] <= 3'd5);
+wire audio_irq_access = audio_irq_selected && !dbr && (cpu_rd || cpu_hwr || cpu_lwr);
+wire [1:0] audio_irq_addr = cpu_address_out[3:1] - 3'd2;
 
 always @(posedge clk) begin
  if(reset) audio_dma_ack <= 1'b0;
@@ -914,18 +979,18 @@ always @(posedge clk) begin
 end
 
 audio_ext AUDIO_EXT (
-
-
  .clk(clk),
  .reset(reset),
  .ntsc(~_csync),
  .reg_cs(audio_ext_access),
  .reg_wr(cpu_hwr || cpu_lwr),
- .reg_addr(cpu_address_out[8:1]),
+ .reg_addr(cpu_address_out[9:1]),
  .reg_be({cpu_hwr, cpu_lwr}),
  .reg_wdata(cpu_data_out),
  .reg_rdata(audio_ext_rdata),
  .irq(audio_ext_irq),
+ .irq_cs(audio_irq_access),
+ .irq_addr(audio_irq_addr),
  .dma_req(audio_dma_req),
  .dma_addr(audio_dma_addr),
  .dma_ack(audio_dma_ack),
@@ -935,20 +1000,37 @@ audio_ext AUDIO_EXT (
  .sample_r(audio_ext_r)
 );
 
-// Mix Paula + Audio Extension
+// Master Mixer + 48kHz True-Peak AGC Limiter (+36 dB headroom)
 wire [14:0] paula_ldata, paula_rdata;
-wire signed [15:0] paula_l_s = {{1{paula_ldata[14]}}, paula_ldata};
-wire signed [15:0] paula_r_s = {{1{paula_rdata[14]}}, paula_rdata};
-wire signed [16:0] mix_l = paula_l_s + (audio_ext_l >>> 1);
-wire signed [16:0] mix_r = paula_r_s + (audio_ext_r >>> 1);
+wire signed [21:0] tmp_l = {{7{paula_ldata[14]}}, paula_ldata} + {{1{audio_ext_l[20]}}, audio_ext_l};
+wire signed [21:0] tmp_r = {{7{paula_rdata[14]}}, paula_rdata} + {{1{audio_ext_r[20]}}, audio_ext_r};
+wire signed [15:0] lim_l, lim_r;
 
-wire ovf_pos_l = (mix_l[16:15] == 2'b01);
-wire ovf_neg_l = (mix_l[16:15] == 2'b10);
-assign ldata = ovf_pos_l ? 15'sd16383 : (ovf_neg_l ? -15'sd16384 : mix_l[14:0]);
+// 48 kHz Audio Strobe Generator (28.375 MHz / 591 = 48.01 kHz)
+reg [9:0] audio_strobe_div;
+wire master_sample_strobe = (audio_strobe_div == 10'd0);
+always @(posedge clk) begin
+    if (reset) audio_strobe_div <= 10'd0;
+    else if (audio_strobe_div >= 10'd590) audio_strobe_div <= 10'd0;
+    else audio_strobe_div <= audio_strobe_div + 10'd1;
+end
 
-wire ovf_pos_r = (mix_r[16:15] == 2'b01);
-wire ovf_neg_r = (mix_r[16:15] == 2'b10);
-assign rdata = ovf_pos_r ? 15'sd16383 : (ovf_neg_r ? -15'sd16384 : mix_r[14:0]);
+audio_agc_limiter #(
+	.CEILING(22'sd30720)
+) master_agc_limiter (
+	.clk(clk),
+	.reset(reset),
+	.sample_strobe(master_sample_strobe),
+	.in_l(tmp_l),
+	.in_r(tmp_r),
+	.out_l(lim_l),
+	.out_r(lim_r),
+	.agc_active(),
+	.peak_hold()
+);
+
+assign ldata = lim_l[15:1];
+assign rdata = lim_r[15:1];
 
 
 
@@ -1118,6 +1200,7 @@ assign cpu_data_in = gary_data_out
 		     | cia_data_out
 		     | ((ham_ext_access && cpu_rd) ? ham_control_shadow : 16'h0000)
                      | ((audio_ext_access && cpu_rd) ? audio_ext_rdata : 16'h0000)
+                     | ((spr_eng_access && cpu_rd) ? spr_eng_rdata : 16'h0000)
 `ifndef DISABLE_IDE
 		     | gayle_data_out
 `endif
