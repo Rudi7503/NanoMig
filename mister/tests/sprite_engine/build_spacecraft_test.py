@@ -36,7 +36,7 @@ DEFAULT_SRC_JPG = Path(r"D:\programmier_ordner\Vampire\new-ham\testbilder\real-s
 DEFAULT_OUT_PREVIEW = REPO_ROOT / "mister" / "tests" / "sprite_engine" / "spacecraft_sprites_preview.png"
 DEFAULT_OUT_HTML = REPO_ROOT / "docs" / "spacecraft_sprite_test.html"
 
-SHOWCASE_FORMATS = (16, 15, 14, 13, 9)
+SHOWCASE_FORMATS = (16, 15, 14, 13, 9, 17, 18, 19)
 
 
 def build_palette_bank(rgb_pixels: np.ndarray, n_slots: int = 32) -> List[int]:
@@ -177,7 +177,8 @@ def encode_ham_row_fmt(
         if bw <= 8:
             n_anc = 1 << (bw - 1)
             lst = []
-            for d_code in range(n_anc, 1 << bw):
+            # Pure delta formats have no palette-anchor bit. Zero stays transparent.
+            for d_code in range(1 if fmt5 in (17, 18, 19) else n_anc, 1 << bw):
                 _, _, _, _, dr, dg, db, _, _ = precompute_ham_stage1(
                     d_code, bw, fmt5, pal_offset
                 )
@@ -211,6 +212,16 @@ def encode_ham_row_fmt(
                     # FORMAT 18: ARGB8888 TrueColor with full 8-bit alpha (0xFF = opaque)
                     code = (0xFF << 24) | (tr << 16) | (tg << 8) | tb
                     acc_r, acc_g, acc_b = tr, tg, tb
+                elif fmt5 in (17, 18, 19):
+                    # Evaluate all nonzero delta codes, including the low half.
+                    # Track the decoded accumulator, never a palette approximation.
+                    best_err = float('inf')
+                    for d_code, dr, dg, db in delta_lut[bw]:
+                        nr, ng, nb = (clamp_u8(acc_r + dr), clamp_u8(acc_g + dg), clamp_u8(acc_b + db))
+                        err = (nr - tr) ** 2 + (ng - tg) ** 2 + (nb - tb) ** 2
+                        if err < best_err:
+                            best_err, code, best_rgb = err, d_code, (nr, ng, nb)
+                    acc_r, acc_g, acc_b = best_rgb
                 else:
                     n_anc = 1 << (bw - 1)
                     dr_a = bank_r[1:n_anc] - tr
@@ -622,6 +633,9 @@ def generate_html_demo(palette256: List[int], formats_meta: Dict[int, List[Dict]
             <option value="14">FORMAT 14: HAM16 Direct (16b, 16 px/Burst, 100% palettenfrei!)</option>
             <option value="13">FORMAT 13: HAM16 12X4 (64b, 20 px/Burst, 100% palettenfrei!)</option>
             <option value="9">FORMAT 9: HAM06 (6-3-4-3-6-3-4-3, 64 px/Burst)</option>
+            <option value="17">FORMAT 17: HAM12 + 5-bit Delta (40 px/Burst)</option>
+            <option value="18">FORMAT 18: HAM12 + 6/8/6-bit Delta (32 px/Burst)</option>
+            <option value="19">FORMAT 19: Pure 8-bit Delta (32 px/Burst)</option>
           </select>
         </label>
       </div>
@@ -876,15 +890,15 @@ function renderFrame() {{
     }});
   }});
 
-  // 2. Wings (with exact integer ceiling `ceilSpan(m.orig_w_px, wScale)`)
+  // 2. Wings (with exact integer ceiling ceilSpan(m.orig_w_px, wScale))
   ['wing_l', 'wing_r'].forEach((wn, idx) => {{
     const m = byName[wn];
-    const wScale = Math.max(16, Math.min(255, Math.round(globalZoom + (idx === 0 ? roll * 7 : -roll * 7))));
+    const wScale = globalZoom;
     const sw = ceilSpan(m.orig_w_px, wScale);
     const wx = idx === 0
-      ? ox + m.x0 + (m.orig_w_px - sw) - Math.round(explodeCur * 54)
+      ? ox + m.x0 - Math.round(explodeCur * 54)
       : ox + m.x0 + Math.round(explodeCur * 54);
-    const wy = oy + m.y0 + (idx === 0 ? -Math.round(roll * 8) : Math.round(roll * 8));
+    const wy = oy + m.y0;
     descs.push({{
       name: wn, part: m, y_pos: wy, x_pos: wx,
       prio: m.prio, x_scale: wScale, y_scale: globalZoom, smooth: smoothOn
@@ -896,8 +910,8 @@ function renderFrame() {{
     const m = byName[pn];
     descs.push({{
       name: pn, part: m,
-      y_pos: oy + m.y0 + (idx === 0 ? -Math.round(roll * 3) : Math.round(roll * 3)) - Math.round(explodeCur * 20),
-      x_pos: ox + m.x0 + Math.round(roll * 2) + (idx === 0 ? -Math.round(explodeCur * 24) : Math.round(explodeCur * 24)),
+      y_pos: oy + m.y0 - Math.round(explodeCur * 20),
+      x_pos: ox + m.x0 + (idx === 0 ? -Math.round(explodeCur * 24) : Math.round(explodeCur * 24)),
       prio: m.prio, x_scale: globalZoom, y_scale: globalZoom, smooth: smoothOn
     }});
   }});
@@ -914,8 +928,8 @@ function renderFrame() {{
   const mc = byName['cockpit'];
   descs.push({{
     name: 'cockpit', part: mc,
-    y_pos: oy + mc.y0 + Math.round(pitch * 5) + Math.round(explodeCur * 34),
-    x_pos: ox + mc.x0 + Math.round(roll * 7),
+    y_pos: oy + mc.y0 + Math.round(explodeCur * 34),
+    x_pos: ox + mc.x0,
     prio: mc.prio, x_scale: globalZoom, y_scale: globalZoom, smooth: smoothOn,
     blend_mode: 2 // 50/50 Translucent glass canopy!
   }});
@@ -931,6 +945,18 @@ function renderFrame() {{
       prio: 195, x_scale: globalZoom, y_scale: globalZoom, smooth: smoothOn,
       blend_mode: 3, alpha: shieldAlpha
     }});
+  }}
+
+  // Apply a single ship-space transform to every attached component.
+  // Zoom uses inverse Q6 scaling; offsets must scale with the pixels.
+  const shipZoom = 64 / globalZoom;
+  for (const d of descs) {{
+    if (d.isStar) continue;
+    d.x_pos = ox + Math.round(192 + (d.x_pos - ox - 192) * shipZoom);
+    d.y_pos = oy + Math.round(194 + (d.y_pos - oy - 194) * shipZoom);
+    if (d.name === 'flame_l' || d.name === 'flame_r') {{
+      d.y_scale = Math.max(1, Math.round(d.y_scale * globalZoom / 64));
+    }}
   }}
 
   // Sort by Y_POS ascending (hardware descriptor contract)

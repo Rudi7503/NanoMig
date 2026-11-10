@@ -509,8 +509,8 @@ def render_scanline(
         # Sentinel height == 0 terminates list processing immediately!
         if desc.height == 0:
             break
-        # Format > 16 is reserved / No-Op; Prio 0 is inactive sprite
-        if desc.format > 16 or desc.prio == 0:
+        # Only explicitly defined formats are renderable; priority 0 is inactive.
+        if desc.format not in FORMAT_SEQS_256 or desc.prio == 0:
             continue
 
         dy = scanline_y - desc.y_pos
