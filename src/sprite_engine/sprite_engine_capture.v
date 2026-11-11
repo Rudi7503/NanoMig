@@ -8,10 +8,11 @@
 //
 //  Port A (Write, clk_vid):
 //    - Captures final composited out_rgb (24-bit) during active scanline
+//    - Sets cap_done at actual scanline end (falling edge of vid_read_en or Y change)
 //
 //  Port B (Read, clk_sys):
 //    - Amiga CPU readback via registers SPRENG_CAP_ADDR / SPRENG_CAP_DATA
-//    - Hardware auto-increment on low-word read
+//    - Hardware auto-increment on low-word read with bus transfer strobe
 //
 // ====================================================================
 
@@ -48,22 +49,39 @@ module sprite_engine_capture (
 
     // Capture Write Logic (clk_vid)
     wire line_match = (cur_y == cap_target_line);
+    reg line_capturing;
+
     always @(posedge clk_vid or negedge rst_n) begin
         if (!rst_n) begin
-            cap_done <= 1'b0;
+            cap_done       <= 1'b0;
+            line_capturing <= 1'b0;
         end else begin
             if (capture_en && line_match && vid_read_en) begin
                 cap_mem[vid_x] <= out_rgb;
+                line_capturing <= 1'b1;
                 if (vid_x == 11'd2047) begin
                     cap_done <= 1'b1;
                 end
+            end else if (line_capturing && (!vid_read_en || !line_match)) begin
+                cap_done       <= 1'b1;
+                line_capturing <= 1'b0;
             end else if (!capture_en) begin
-                cap_done <= 1'b0;
+                cap_done       <= 1'b0;
+                line_capturing <= 1'b0;
             end
         end
     end
 
     // CPU Read & Control Logic (clk_sys)
+    reg reg_cs_d;
+    always @(posedge clk_sys or negedge rst_n) begin
+        if (!rst_n)
+            reg_cs_d <= 1'b0;
+        else
+            reg_cs_d <= reg_cs;
+    end
+    wire cpu_read_strobe = reg_cs && !reg_cs_d && !reg_we;
+
     always @(posedge clk_sys or negedge rst_n) begin
         if (!rst_n) begin
             cap_target_line <= 12'sd0;
@@ -78,8 +96,8 @@ module sprite_engine_capture (
                     4'd10: read_addr       <= reg_wdata[10:0];
                     default: ;
                 endcase
-            end else if (reg_cs && !reg_we && reg_addr == 4'd12) begin
-                // Auto-increment read address after reading low word
+            end else if (cpu_read_strobe && reg_addr == 4'd12) begin
+                // Auto-increment read address once per bus read
                 read_addr <= read_addr + 11'd1;
             end
         end

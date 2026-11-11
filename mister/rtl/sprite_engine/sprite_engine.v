@@ -73,24 +73,28 @@ module sprite_engine (
     reg  pal_reg_we;
 
     reg [7:0]  pal_write_addr;
+    reg [7:0]  pal_commit_addr;
     reg [23:0] pal_write_data;
 
     always @(posedge clk_sys or negedge rst_n) begin
         if (!rst_n) begin
-            pal_write_addr <= 8'h00;
-            pal_write_data <= 24'h000000;
-            pal_reg_we     <= 1'b0;
+            pal_write_addr  <= 8'h00;
+            pal_commit_addr <= 8'h00;
+            pal_write_data  <= 24'h000000;
+            pal_reg_we      <= 1'b0;
         end else begin
             pal_reg_we <= 1'b0;
             if (reg_cs && reg_we) begin
                 if (reg_addr == 4'd3) begin
-                    pal_write_addr <= reg_wdata[7:0];
+                    pal_write_addr  <= reg_wdata[7:0];
+                    pal_commit_addr <= reg_wdata[7:0];
                 end else if (reg_addr == 4'd4) begin
                     pal_write_data[23:16] <= reg_wdata[7:0];
                 end else if (reg_addr == 4'd5) begin
                     pal_write_data[15:0] <= reg_wdata;
-                    pal_reg_we <= 1'b1;
-                    pal_write_addr <= pal_write_addr + 8'd1;
+                    pal_commit_addr      <= pal_write_addr;
+                    pal_reg_we           <= 1'b1;
+                    pal_write_addr       <= pal_write_addr + 8'd1;
                 end
             end
         end
@@ -127,7 +131,7 @@ module sprite_engine (
     sprite_engine_palette u_palette (
         .clk_a   (clk_sys),
         .we_a    (pal_reg_we),
-        .addr_a  (pal_write_addr),
+        .addr_a  (pal_commit_addr),
         .data_a  (pal_write_data),
         .q_a     (pal_qa),
 
@@ -197,8 +201,13 @@ module sprite_engine (
     );
 
     // ----------------------------------------------------------------
-    // Submodule 2b: 64-Bit Pixel Unpacker Shift Register
+    // Submodule 2b: 64-Bit Burst FIFO & Pixel Unpacker Shift Register
     // ----------------------------------------------------------------
+    reg [63:0] burst_fifo [0:7];
+    reg [2:0]  fifo_wr_ptr;
+    reg [2:0]  fifo_rd_ptr;
+    reg [3:0]  fifo_count;
+
     reg [63:0] shreg_data;
     reg [6:0]  shreg_bits;
     reg [5:0]  dec_bw;
@@ -222,16 +231,25 @@ module sprite_engine (
         endcase
     end
 
-    // Request next 64-bit word from DMA when shreg has fewer bits than one pixel
-    assign stream_ack = (shreg_bits < {1'b0, dec_bw}) || spr_start_line;
+    // DMA flow control: accept next burst when FIFO has room for at least 4 beats
+    assign stream_ack = (fifo_count <= 4'd4) || spr_start_line;
+
+    wire fifo_push = stream_valid;
+    wire fifo_pop  = (shreg_bits < {1'b0, dec_bw}) && (fifo_count > 4'd0);
 
     always @(posedge clk_render or negedge rst_n) begin
         if (!rst_n) begin
+            fifo_wr_ptr  <= 3'd0;
+            fifo_rd_ptr  <= 3'd0;
+            fifo_count   <= 4'd0;
             shreg_data   <= 64'd0;
             shreg_bits   <= 7'd0;
             dec_raw_code <= 32'd0;
             dec_in_valid <= 1'b0;
         end else if (spr_start_line) begin
+            fifo_wr_ptr  <= 3'd0;
+            fifo_rd_ptr  <= 3'd0;
+            fifo_count   <= 4'd0;
             shreg_data   <= 64'd0;
             shreg_bits   <= 7'd0;
             dec_raw_code <= 32'd0;
@@ -239,6 +257,20 @@ module sprite_engine (
         end else begin
             dec_in_valid <= 1'b0;
 
+            // FIFO write
+            if (fifo_push) begin
+                burst_fifo[fifo_wr_ptr] <= stream_word64;
+                fifo_wr_ptr <= fifo_wr_ptr + 3'd1;
+            end
+
+            // FIFO count tracking
+            case ({fifo_push, fifo_pop})
+                2'b10:   fifo_count <= fifo_count + 4'd1;
+                2'b01:   fifo_count <= fifo_count - 4'd1;
+                default: fifo_count <= fifo_count;
+            endcase
+
+            // Pixel unpacker shift register
             if (shreg_bits >= {1'b0, dec_bw}) begin
                 if (scale_src_ack) begin
                     case (dec_bw)
@@ -258,9 +290,10 @@ module sprite_engine (
                     shreg_data   <= shreg_data << dec_bw;
                     shreg_bits   <= shreg_bits - {1'b0, dec_bw};
                 end
-            end else if (stream_valid) begin
-                shreg_data <= stream_word64;
-                shreg_bits <= 7'd64;
+            end else if (fifo_pop) begin
+                shreg_data  <= burst_fifo[fifo_rd_ptr];
+                shreg_bits  <= 7'd64;
+                fifo_rd_ptr <= fifo_rd_ptr + 3'd1;
             end
         end
     end

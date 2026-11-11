@@ -34,22 +34,35 @@ module sprite_engine_decoder (
     input  wire [7:0]  desc_alpha,       // Descriptor global alpha (for FMT 13..15)
 
     // Palette read port (from sprite_engine_palette)
-    output reg  [7:0]  pal_addr,
+    output wire [7:0]  pal_addr,
     input  wire [23:0] pal_data,
 
     // Decoded pixel output
     output reg         out_valid,
-    output reg  [7:0]  out_r,
-    output reg  [7:0]  out_g,
-    output reg  [7:0]  out_b,
-    output reg  [7:0]  out_alpha,
-    output reg         out_opaque
+    output wire [7:0]  out_r,
+    output wire [7:0]  out_g,
+    output wire [7:0]  out_b,
+    output wire [7:0]  out_alpha,
+    output wire        out_opaque
 );
 
     // Color accumulator
     reg [7:0] acc_r;
     reg [7:0] acc_g;
     reg [7:0] acc_b;
+
+    reg [7:0] dec_r, dec_g, dec_b, dec_alpha;
+    reg       dec_opaque;
+
+    assign pal_addr = (pal_offset + raw_code[7:0]) & 8'hFF;
+    wire is_clut = (fmt <= 5'd7);
+    wire is_transparent = (raw_code == 32'h0);
+
+    assign out_r      = is_transparent ? 8'h00 : (is_clut ? pal_data[23:16] : dec_r);
+    assign out_g      = is_transparent ? 8'h00 : (is_clut ? pal_data[15:8]  : dec_g);
+    assign out_b      = is_transparent ? 8'h00 : (is_clut ? pal_data[7:0]   : dec_b);
+    assign out_alpha  = is_transparent ? 8'h00 : (is_clut ? 8'hFF           : dec_alpha);
+    assign out_opaque = is_transparent ? 1'b0  : (is_clut ? 1'b1            : dec_opaque);
 
     // Helper function for 2-bit delta: 00=-2, 01=-1, 10=+1, 11=+2
     function signed [2:0] two_delta;
@@ -88,25 +101,25 @@ module sprite_engine_decoder (
             acc_r      <= 8'h00;
             acc_g      <= 8'h00;
             acc_b      <= 8'h00;
-            out_r      <= 8'h00;
-            out_g      <= 8'h00;
-            out_b      <= 8'h00;
-            out_alpha  <= 8'h00;
-            out_opaque <= 1'b0;
+            dec_r      <= 8'h00;
+            dec_g      <= 8'h00;
+            dec_b      <= 8'h00;
+            dec_alpha  <= 8'h00;
+            dec_opaque <= 1'b0;
             out_valid  <= 1'b0;
-            pal_addr   <= 8'h00;
+            
         end else if (clr_acc) begin
             // Reset accumulator on scanline start
             acc_r      <= 8'h00;
             acc_g      <= 8'h00;
             acc_b      <= 8'h00;
-            out_r      <= 8'h00;
-            out_g      <= 8'h00;
-            out_b      <= 8'h00;
-            out_alpha  <= 8'h00;
-            out_opaque <= 1'b0;
+            dec_r      <= 8'h00;
+            dec_g      <= 8'h00;
+            dec_b      <= 8'h00;
+            dec_alpha  <= 8'h00;
+            dec_opaque <= 1'b0;
             out_valid  <= 1'b0;
-            pal_addr   <= 8'h00;
+            
         end else if (in_valid) begin
             out_valid <= 1'b1;
             if (raw_code == 32'h0) begin
@@ -114,53 +127,53 @@ module sprite_engine_decoder (
                 acc_r      <= 8'h00;
                 acc_g      <= 8'h00;
                 acc_b      <= 8'h00;
-                out_r      <= 8'h00;
-                out_g      <= 8'h00;
-                out_b      <= 8'h00;
-                out_alpha  <= 8'h00;
-                out_opaque <= 1'b0;
+                dec_r      <= 8'h00;
+                dec_g      <= 8'h00;
+                dec_b      <= 8'h00;
+                dec_alpha  <= 8'h00;
+                dec_opaque <= 1'b0;
             end else begin
                 case (fmt)
                 // --- FMT 0..7: Direct CLUT 1..8 Bit ---
                 5'd0, 5'd1, 5'd2, 5'd3, 5'd4, 5'd5, 5'd6, 5'd7: begin
-                    pal_addr   <= (pal_offset + raw_code[7:0]) & 8'hFF;
-                    out_r      <= pal_data[23:16];
-                    out_g      <= pal_data[15:8];
-                    out_b      <= pal_data[7:0];
-                    out_alpha  <= 8'hFF;
-                    out_opaque <= 1'b1;
+                    
+                    dec_r      <= pal_data[23:16];
+                    dec_g      <= pal_data[15:8];
+                    dec_b      <= pal_data[7:0];
+                    dec_alpha  <= 8'hFF;
+                    dec_opaque <= 1'b1;
                 end
 
                 // --- FMT 16: Direct ARGB32 TrueColor ---
                 5'd16: begin
-                    out_alpha  <= raw_code[31:24];
-                    out_r      <= raw_code[23:16];
-                    out_g      <= raw_code[15:8];
-                    out_b      <= raw_code[7:0];
-                    out_opaque <= (raw_code[31:24] != 8'h00);
+                    dec_alpha  <= raw_code[31:24];
+                    dec_r      <= raw_code[23:16];
+                    dec_g      <= raw_code[15:8];
+                    dec_b      <= raw_code[7:0];
+                    dec_opaque <= (raw_code[31:24] != 8'h00);
                 end
 
                 // --- FMT 15: Direct RGB16 HighColor (RGB565) ---
                 5'd15: begin
-                    out_r      <= {raw_code[15:11], 3'b000};
-                    out_g      <= {raw_code[10:5],  2'b00};
-                    out_b      <= {raw_code[4:0],   3'b000};
-                    out_alpha  <= desc_alpha;
-                    out_opaque <= 1'b1;
+                    dec_r      <= {raw_code[15:11], 3'b000};
+                    dec_g      <= {raw_code[10:5],  2'b00};
+                    dec_b      <= {raw_code[4:0],   3'b000};
+                    dec_alpha  <= desc_alpha;
+                    dec_opaque <= 1'b1;
                 end
 
                 // --- FMT 17: Pure ham5delta (40 px / burst) ---
                 5'd17: begin
                     if (bw == 6'd12) begin
                         // 12-Bit RGB444 Direct Anchor
-                        out_r      <= ((({raw_code[10:7], 1'b0}) | raw_code[10]) << 4);
-                        out_g      <= (raw_code[6:3] << 4);
-                        out_b      <= ((({raw_code[2:0], 1'b0})  | raw_code[10]) << 4);
+                        dec_r      <= ((({raw_code[10:7], 1'b0}) | raw_code[10]) << 4);
+                        dec_g      <= (raw_code[6:3] << 4);
+                        dec_b      <= ((({raw_code[2:0], 1'b0})  | raw_code[10]) << 4);
                         acc_r      <= ((({raw_code[10:7], 1'b0}) | raw_code[10]) << 4);
                         acc_g      <= (raw_code[6:3] << 4);
                         acc_b      <= ((({raw_code[2:0], 1'b0})  | raw_code[10]) << 4);
-                        out_alpha  <= 8'hFF;
-                        out_opaque <= 1'b1;
+                        dec_alpha  <= 8'hFF;
+                        dec_opaque <= 1'b1;
                     end else begin
                         // 5-Bit ham5delta: Bit4=Turbo (4x/16x), Bit3=dr, Bits2..1=dg, Bit0=db
                         begin: ham5d_block
@@ -174,11 +187,11 @@ module sprite_engine_decoder (
                             acc_r <= clamp_add(acc_r, dr_val);
                             acc_g <= clamp_add(acc_g, dg_val);
                             acc_b <= clamp_add(acc_b, db_val);
-                            out_r <= clamp_add(acc_r, dr_val);
-                            out_g <= clamp_add(acc_g, dg_val);
-                            out_b <= clamp_add(acc_b, db_val);
-                            out_alpha  <= 8'hFF;
-                            out_opaque <= 1'b1;
+                            dec_r <= clamp_add(acc_r, dr_val);
+                            dec_g <= clamp_add(acc_g, dg_val);
+                            dec_b <= clamp_add(acc_b, db_val);
+                            dec_alpha  <= 8'hFF;
+                            dec_opaque <= 1'b1;
                         end
                     end
                 end
@@ -187,14 +200,14 @@ module sprite_engine_decoder (
                 5'd18: begin
                     if (bw == 6'd12) begin
                         // 12-Bit RGB444 Direct Anchor
-                        out_r      <= ((({raw_code[10:7], 1'b0}) | raw_code[10]) << 4);
-                        out_g      <= (raw_code[6:3] << 4);
-                        out_b      <= ((({raw_code[2:0], 1'b0})  | raw_code[10]) << 4);
+                        dec_r      <= ((({raw_code[10:7], 1'b0}) | raw_code[10]) << 4);
+                        dec_g      <= (raw_code[6:3] << 4);
+                        dec_b      <= ((({raw_code[2:0], 1'b0})  | raw_code[10]) << 4);
                         acc_r      <= ((({raw_code[10:7], 1'b0}) | raw_code[10]) << 4);
                         acc_g      <= (raw_code[6:3] << 4);
                         acc_b      <= ((({raw_code[2:0], 1'b0})  | raw_code[10]) << 4);
-                        out_alpha  <= 8'hFF;
-                        out_opaque <= 1'b1;
+                        dec_alpha  <= 8'hFF;
+                        dec_opaque <= 1'b1;
                     end else if (bw == 6'd6) begin
                         // 6-Bit ham6delta: Bits 5..4 = Turboturbo (1x, 4x, 8x, 16x)
                         begin: ham6d_block
@@ -213,11 +226,11 @@ module sprite_engine_decoder (
                             acc_r <= clamp_add(acc_r, dr_val);
                             acc_g <= clamp_add(acc_g, dg_val);
                             acc_b <= clamp_add(acc_b, db_val);
-                            out_r <= clamp_add(acc_r, dr_val);
-                            out_g <= clamp_add(acc_g, dg_val);
-                            out_b <= clamp_add(acc_b, db_val);
-                            out_alpha  <= 8'hFF;
-                            out_opaque <= 1'b1;
+                            dec_r <= clamp_add(acc_r, dr_val);
+                            dec_g <= clamp_add(acc_g, dg_val);
+                            dec_b <= clamp_add(acc_b, db_val);
+                            dec_alpha  <= 8'hFF;
+                            dec_opaque <= 1'b1;
                         end
                     end else begin
                         // 8-Bit ham8delta: Bits 7..6 = Turboturbo (1x, 4x, 8x, 16x)
@@ -237,11 +250,11 @@ module sprite_engine_decoder (
                             acc_r <= clamp_add(acc_r, dr_val);
                             acc_g <= clamp_add(acc_g, dg_val);
                             acc_b <= clamp_add(acc_b, db_val);
-                            out_r <= clamp_add(acc_r, dr_val);
-                            out_g <= clamp_add(acc_g, dg_val);
-                            out_b <= clamp_add(acc_b, db_val);
-                            out_alpha  <= 8'hFF;
-                            out_opaque <= 1'b1;
+                            dec_r <= clamp_add(acc_r, dr_val);
+                            dec_g <= clamp_add(acc_g, dg_val);
+                            dec_b <= clamp_add(acc_b, db_val);
+                            dec_alpha  <= 8'hFF;
+                            dec_opaque <= 1'b1;
                         end
                     end
                 end
@@ -264,21 +277,21 @@ module sprite_engine_decoder (
                         acc_r <= clamp_add(acc_r, dr_val);
                         acc_g <= clamp_add(acc_g, dg_val);
                         acc_b <= clamp_add(acc_b, db_val);
-                        out_r <= clamp_add(acc_r, dr_val);
-                        out_g <= clamp_add(acc_g, dg_val);
-                        out_b <= clamp_add(acc_b, db_val);
-                        out_alpha  <= 8'hFF;
-                        out_opaque <= 1'b1;
+                        dec_r <= clamp_add(acc_r, dr_val);
+                        dec_g <= clamp_add(acc_g, dg_val);
+                        dec_b <= clamp_add(acc_b, db_val);
+                        dec_alpha  <= 8'hFF;
+                        dec_opaque <= 1'b1;
                     end
                 end
 
                 // Default fallback
                 default: begin
-                    out_r      <= 8'h00;
-                    out_g      <= 8'h00;
-                    out_b      <= 8'h00;
-                    out_alpha  <= 8'h00;
-                    out_opaque <= 1'b0;
+                    dec_r      <= 8'h00;
+                    dec_g      <= 8'h00;
+                    dec_b      <= 8'h00;
+                    dec_alpha  <= 8'h00;
+                    dec_opaque <= 1'b0;
                 end
             endcase
             end

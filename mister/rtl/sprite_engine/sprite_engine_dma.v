@@ -202,18 +202,13 @@ module sprite_engine_dma (
                         d_x_pos    <= avm_readdata[51:40];
                         d_flags    <= avm_readdata[39:32];
                         d_data_ptr <= avm_readdata[31:0];
-                        state      <= S_FETCH_DESC1;
+                        state      <= S_WAIT_DESC1;
                     end
                 end
 
-                // --- Read Descriptor 64-bit Word 1 ---
+                // --- Read Descriptor 64-bit Word 1 (Supplied by BL4 beat 1) ---
                 S_FETCH_DESC1: begin
-                    avm_address <= cur_desc_addr + 32'd8;
-                    avm_read    <= 1'b1;
-                    if (avm_read && !avm_waitrequest) begin
-                        avm_read <= 1'b0;
-                        state    <= S_WAIT_DESC1;
-                    end
+                    state <= S_WAIT_DESC1;
                 end
 
                 S_WAIT_DESC1: begin
@@ -274,12 +269,14 @@ module sprite_engine_dma (
 
                 // --- Issue DDR3 BL8 Burst Read for Sprite Pixels ---
                 S_FETCH_DATA: begin
-                    avm_address <= cur_line_data_addr + (burst_cnt * 32);
-                    avm_read    <= 1'b1;
-                    if (avm_read && !avm_waitrequest) begin
-                        avm_read <= 1'b0;
-                        beat_cnt <= 2'd0;
-                        state    <= S_STREAM_DATA;
+                    if (stream_ack) begin
+                        avm_address <= cur_line_data_addr + (burst_cnt * 32);
+                        avm_read    <= 1'b1;
+                        if (avm_read && !avm_waitrequest) begin
+                            avm_read <= 1'b0;
+                            beat_cnt <= 2'd0;
+                            state    <= S_STREAM_DATA;
+                        end
                     end
                 end
 
