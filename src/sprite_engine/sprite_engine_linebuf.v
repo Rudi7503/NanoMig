@@ -85,12 +85,14 @@ module sprite_engine_linebuf (
             sweeping  <= 1'b1;
         end else if (swap_edge) begin
             sweep_col <= clip_xmax; // Start clearing above clip_xmax
-            sweeping  <= 1'b1;
+            sweeping  <= (clip_xmax != 11'd2047);
         end else if (sweeping) begin
-            if (sweep_col == 11'd2047) begin
-                sweeping <= 1'b0;
-            end else begin
-                sweep_col <= sweep_col + 1'b1;
+            if (!wr_en) begin
+                if (sweep_col == 11'd2047) begin
+                    sweeping <= 1'b0;
+                end else begin
+                    sweep_col <= sweep_col + 1'b1;
+                end
             end
         end
     end
@@ -139,8 +141,8 @@ module sprite_engine_linebuf (
     // ----------------------------------------------------------------
     wire [31:0] ram0_vid_q;
     wire        ram0_render_we = (buf_sel == 1'b0) ? (wr_en || sweeping) : 1'b0;
-    wire [10:0] ram0_render_addr = sweeping ? sweep_col : (wr_en ? wr_x : rd_render_x);
-    wire [31:0] ram0_render_d = sweeping ? 32'h00000000 : {wr_prio, wr_rgb};
+    wire [10:0] ram0_render_addr = (buf_sel == 1'b0 && wr_en) ? wr_x : (sweeping ? sweep_col : rd_render_x);
+    wire [31:0] ram0_render_d = (buf_sel == 1'b0 && wr_en) ? {wr_prio, wr_rgb} : 32'h00000000;
     wire        ram0_vid_we = (buf_sel == 1'b1) && vid_read_en;
 
     sprite_linebuf_dpram #(
@@ -165,8 +167,8 @@ module sprite_engine_linebuf (
     // ----------------------------------------------------------------
     wire [31:0] ram1_vid_q;
     wire        ram1_render_we = (buf_sel == 1'b1) ? (wr_en || sweeping) : 1'b0;
-    wire [10:0] ram1_render_addr = sweeping ? sweep_col : (wr_en ? wr_x : rd_render_x);
-    wire [31:0] ram1_render_d = sweeping ? 32'h00000000 : {wr_prio, wr_rgb};
+    wire [10:0] ram1_render_addr = (buf_sel == 1'b1 && wr_en) ? wr_x : (sweeping ? sweep_col : rd_render_x);
+    wire [31:0] ram1_render_d = (buf_sel == 1'b1 && wr_en) ? {wr_prio, wr_rgb} : 32'h00000000;
     wire        ram1_vid_we = (buf_sel == 1'b0) && vid_read_en;
 
     sprite_linebuf_dpram #(

@@ -85,7 +85,7 @@ module sprite_engine_dma (
             active_ptr   <= 32'h0000_0000;
             ptr_updated  <= 1'b0;
             engine_en    <= 1'b0;
-            zero_skip_en <= 1'b1;
+            zero_skip_en <= 1'b0;
             cap_en       <= 1'b0;
         end else begin
             if (reg_we) begin
@@ -229,37 +229,48 @@ module sprite_engine_dma (
                     if (d_height == 12'd0) begin
                         // Sentinel: End of descriptor list!
                         state <= S_DONE;
-                    end else if (cur_y >= d_y_pos && cur_y < (d_y_pos + $signed({1'b0, d_height})) && d_prio != 8'h00) begin
-                        // Sprite is active on this line!
+                    end else if (cur_y >= d_y_pos && d_prio != 8'h00) begin
                         begin: eval_active
                             reg signed [11:0] dy;
-                            reg signed [11:0] dy_eff;
                             reg [11:0] src_y;
+                            reg [11:0] rel_y;
                             reg [15:0] bursts_per_line;
 
                             dy = cur_y - d_y_pos;
-                            dy_eff = d_flags[1] ? (d_height - 12'd1 - dy) : dy; // V_FLIP check
-                            src_y = (d_y_scale == 8'd64) ? dy_eff : ((dy_eff * d_y_scale) >> 6);
 
-                            bursts_per_line = (d_width_px + 12'd31) >> 5; // Bursts needed per line
-                            bursts_needed <= bursts_per_line[11:0];
-                            cur_line_data_addr <= d_data_ptr + (src_y * bursts_per_line * 32);
+                            // Power-of-2 Y-Scale (Rev 4 code 0..4 or Q6 64)
+                            case (d_y_scale)
+                                8'd1, 8'd32:  src_y = dy >> 1; // 2x Zoom
+                                8'd2, 8'd16:  src_y = dy >> 2; // 4x Zoom
+                                8'd3, 8'd128: src_y = dy << 1; // 1/2 Shrink
+                                8'd4:         src_y = dy << 2; // 1/4 Shrink
+                                default:      src_y = dy;      // 1x Normal
+                            endcase
 
-                            // Latch sprite output parameters
-                            sprite_active  <= 1'b1;
-                            spr_x          <= d_x_pos;
-                            spr_fmt        <= d_fmt[4:0];
-                            spr_prio       <= d_prio;
-                            spr_alpha      <= d_alpha;
-                            spr_blend_mode <= d_flags[3:2];
-                            spr_x_scale    <= d_x_scale;
-                            spr_smooth     <= d_flags[4];
-                            spr_h_flip     <= d_flags[0];
-                            spr_w_px       <= d_width_px[10:0];
-                            spr_start_line <= 1'b1;
+                            if (src_y < d_height) begin
+                                rel_y = d_flags[1] ? (d_height - 12'd1 - src_y) : src_y; // V_FLIP check
+                                bursts_per_line = (d_width_px + 12'd31) >> 5; // Bursts needed per line
+                                bursts_needed <= bursts_per_line[11:0];
+                                cur_line_data_addr <= d_data_ptr + (rel_y * bursts_per_line * 32);
 
-                            burst_cnt <= 12'd0;
-                            state     <= S_FETCH_DATA;
+                                // Latch sprite output parameters
+                                sprite_active  <= 1'b1;
+                                spr_x          <= d_x_pos;
+                                spr_fmt        <= d_fmt[4:0];
+                                spr_prio       <= d_prio;
+                                spr_alpha      <= d_alpha;
+                                spr_blend_mode <= d_flags[3:2];
+                                spr_x_scale    <= d_x_scale;
+                                spr_smooth     <= d_flags[4];
+                                spr_h_flip     <= d_flags[0];
+                                spr_w_px       <= d_width_px[10:0];
+                                spr_start_line <= 1'b1;
+
+                                burst_cnt <= 12'd0;
+                                state     <= S_FETCH_DATA;
+                            end else begin
+                                state <= S_NEXT_DESC;
+                            end
                         end
                     end else begin
                         // Not active on this line: advance to next descriptor

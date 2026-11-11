@@ -20,6 +20,7 @@ module sprite_engine_scaler (
 
     // Control
     input  wire        start_line,       // Strobe at start of rendering a sprite line
+    input  wire        step_en,          // Pipeline step enable (0=hold for RMW blend)
     input  wire signed [11:0] x_pos,     // Sprite X start coordinate (-2048..+2047)
     input  wire [7:0]  x_scale,          // Q6 scale factor (64 = 1.0x)
     input  wire        smooth_en,        // Linear interpolation enable
@@ -47,7 +48,8 @@ module sprite_engine_scaler (
 
     // Q6 accumulator for sub-pixel sampling
     reg [17:0] q6_accum;      // 12-bit integer, 6-bit fraction
-    reg [10:0] cur_dst_x;
+    reg signed [12:0] cur_dst_x;
+    wire dst_in_bounds = (cur_dst_x >= 13'sd0) && (cur_dst_x < 13'sd2048);
     reg [10:0] src_px_cnt;
 
     // Previous pixel staging for smooth interpolation / box filtering
@@ -73,7 +75,7 @@ module sprite_engine_scaler (
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             q6_accum    <= 18'd0;
-            cur_dst_x   <= 11'd0;
+            cur_dst_x   <= 13'sd0;
             src_px_cnt  <= 11'd0;
             dst_valid   <= 1'b0;
             dst_x       <= 11'd0;
@@ -90,29 +92,29 @@ module sprite_engine_scaler (
             prev_opaque <= 1'b0;
         end else if (start_line) begin
             q6_accum    <= 18'd0;
-            cur_dst_x   <= h_flip ? (x_pos[10:0] + orig_w_px - 11'd1) : ((x_pos < 0) ? 11'd0 : x_pos[10:0]);
+            cur_dst_x   <= h_flip ? (({1'b0, orig_w_px}) + x_pos - 13'sd1) : ({{1{x_pos[11]}}, x_pos});
             src_px_cnt  <= 11'd0;
             dst_valid   <= 1'b0;
             src_ack     <= 1'b1; // Request first pixel
             prev_opaque <= 1'b0;
-        end else if (src_valid && src_ack) begin
+        end else if (src_valid && src_ack && step_en) begin
             // 1:1 Scale Pass-through (Fast Path)
             if (x_scale == 8'd64) begin
-                dst_valid   <= 1'b1;
-                dst_x       <= cur_dst_x;
+                dst_valid   <= dst_in_bounds;
+                dst_x       <= cur_dst_x[10:0];
                 dst_r       <= src_r;
                 dst_g       <= src_g;
                 dst_b       <= src_b;
                 dst_alpha   <= src_alpha;
                 dst_opaque  <= src_opaque;
 
-                cur_dst_x   <= h_flip ? (cur_dst_x - 1'b1) : (cur_dst_x + 1'b1);
+                cur_dst_x   <= h_flip ? (cur_dst_x - 13'sd1) : (cur_dst_x + 13'sd1);
                 src_px_cnt  <= src_px_cnt + 1'b1;
                 src_ack     <= (src_px_cnt + 1'b1 < orig_w_px);
             end else if (x_scale < 8'd64) begin
                 // Upscaling / Stretch with optional linear interpolation
-                dst_valid   <= 1'b1;
-                dst_x       <= cur_dst_x;
+                dst_valid   <= dst_in_bounds;
+                dst_x       <= cur_dst_x[10:0];
                 if (smooth_en && prev_opaque && src_opaque) begin
                     dst_r       <= blend_r[13:6];
                     dst_g       <= blend_g[13:6];
@@ -162,26 +164,26 @@ module sprite_engine_scaler (
                         dst_alpha   <= src_alpha;
                         dst_opaque  <= 1'b1;
                         prev_opaque <= 1'b0;
-                        cur_dst_x   <= h_flip ? (cur_dst_x - 1'b1) : (cur_dst_x + 1'b1);
+                        cur_dst_x   <= h_flip ? (cur_dst_x - 13'sd1) : (cur_dst_x + 13'sd1);
                         src_ack     <= 1'b1;
                     end else begin
                         dst_valid   <= 1'b1;
                         dst_x       <= cur_dst_x;
                         dst_opaque  <= 1'b0;
-                        cur_dst_x   <= h_flip ? (cur_dst_x - 1'b1) : (cur_dst_x + 1'b1);
+                        cur_dst_x   <= h_flip ? (cur_dst_x - 13'sd1) : (cur_dst_x + 13'sd1);
                         src_ack     <= 1'b1;
                     end
                 end else begin
                     // Point-sampled shrink
-                    dst_valid   <= 1'b1;
-                    dst_x       <= cur_dst_x;
+                    dst_valid   <= dst_in_bounds;
+                    dst_x       <= cur_dst_x[10:0];
                     dst_r       <= src_r;
                     dst_g       <= src_g;
                     dst_b       <= src_b;
                     dst_alpha   <= src_alpha;
                     dst_opaque  <= src_opaque;
 
-                    cur_dst_x   <= h_flip ? (cur_dst_x - 1'b1) : (cur_dst_x + 1'b1);
+                    cur_dst_x   <= h_flip ? (cur_dst_x - 13'sd1) : (cur_dst_x + 13'sd1);
                     src_ack     <= 1'b1;
                 end
             end

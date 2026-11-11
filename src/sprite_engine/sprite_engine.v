@@ -208,6 +208,24 @@ module sprite_engine (
     reg [2:0]  fifo_rd_ptr;
     reg [3:0]  fifo_count;
 
+    reg [2:0]  sub_px_cnt;
+
+    always @(posedge clk_render or negedge rst_n) begin
+        if (!rst_n) begin
+            sub_px_cnt <= 3'd0;
+        end else if (spr_start_line) begin
+            sub_px_cnt <= 3'd0;
+        end else if (scale_src_ack) begin
+            case (spr_fmt)
+                5'd9:  sub_px_cnt <= (sub_px_cnt == 3'd3) ? 3'd0 : (sub_px_cnt + 3'd1);
+                5'd11, 5'd18: sub_px_cnt <= (sub_px_cnt == 3'd3) ? 3'd0 : (sub_px_cnt + 3'd1);
+                5'd12, 5'd17: sub_px_cnt <= (sub_px_cnt == 3'd4) ? 3'd0 : (sub_px_cnt + 3'd1);
+                5'd13: sub_px_cnt <= (sub_px_cnt == 3'd4) ? 3'd0 : (sub_px_cnt + 3'd1);
+                default: sub_px_cnt <= 3'd0;
+            endcase
+        end
+    end
+
     reg [63:0] shreg_data;
     reg [6:0]  shreg_bits;
     reg [5:0]  dec_bw;
@@ -225,8 +243,34 @@ module sprite_engine (
             5'd5:    dec_bw = 6'd6;  // 6-bit CLUT
             5'd6:    dec_bw = 6'd7;  // 7-bit CLUT
             5'd7:    dec_bw = 6'd8;  // 8-bit CLUT
+            5'd8:    dec_bw = 6'd4;  // HAM04
+            5'd9: begin              // HAM06: 6, 3, 4, 3
+                case (sub_px_cnt[1:0])
+                    2'd0: dec_bw = 6'd6;
+                    2'd1: dec_bw = 6'd3;
+                    2'd2: dec_bw = 6'd4;
+                    2'd3: dec_bw = 6'd3;
+                endcase
+            end
+            5'd10:   dec_bw = 6'd8;  // HAM08
+            5'd11, 5'd18: begin      // HAM12 12_686: 12, 6, 8, 6
+                case (sub_px_cnt[1:0])
+                    2'd0: dec_bw = 6'd12;
+                    2'd1: dec_bw = 6'd6;
+                    2'd2: dec_bw = 6'd8;
+                    2'd3: dec_bw = 6'd6;
+                endcase
+            end
+            5'd12, 5'd17: begin      // HAM12 12_5555: 12, 5, 5, 5, 5
+                dec_bw = (sub_px_cnt == 3'd0) ? 6'd12 : 6'd5;
+            end
+            5'd13: begin             // HAM16 12x4: 16, 12, 12, 12, 12
+                dec_bw = (sub_px_cnt == 3'd0) ? 6'd16 : 6'd12;
+            end
+            5'd14:   dec_bw = 6'd16; // HAM16 Direct
             5'd15:   dec_bw = 6'd16; // RGB16 (RGB565)
             5'd16:   dec_bw = 6'd32; // ARGB32
+            5'd19:   dec_bw = 6'd8;  // HAM08_D
             default: dec_bw = 6'd8;  // HAM / default 8-bit
         endcase
     end
@@ -331,6 +375,25 @@ module sprite_engine (
         .out_opaque (dec_opaque)
     );
 
+    // 2-Cycle Read-Modify-Write Pipeline for Blend Modes (Additive, 50/50, Alpha)
+    wire is_blend = (spr_blend_mode != 2'b00);
+    reg  rmw_phase;
+
+    always @(posedge clk_render or negedge rst_n) begin
+        if (!rst_n) begin
+            rmw_phase <= 1'b0;
+        end else if (spr_start_line) begin
+            rmw_phase <= 1'b0;
+        end else if (is_blend && scale_dst_valid) begin
+            rmw_phase <= ~rmw_phase;
+        end else begin
+            rmw_phase <= 1'b0;
+        end
+    end
+
+    wire scale_step_en = !is_blend || (rmw_phase == 1'b1) || !scale_dst_valid;
+    wire render_wr_en  = scale_dst_valid && blend_out_we && (!is_blend || rmw_phase == 1'b1);
+
     // ----------------------------------------------------------------
     // Submodule 4: Q6 Hardware Scaler
     // ----------------------------------------------------------------
@@ -347,6 +410,7 @@ module sprite_engine (
         .rst_n      (rst_n),
 
         .start_line (spr_start_line),
+        .step_en    (scale_step_en),
         .x_pos      (spr_x),
         .x_scale    (spr_x_scale),
         .smooth_en  (spr_smooth),
@@ -432,7 +496,7 @@ module sprite_engine (
         .line_swap_pulse (line_swap_pulse),
         .clip_xmax       (clip_xmax),
 
-        .wr_en           (scale_dst_valid && blend_out_we),
+        .wr_en           (render_wr_en),
         .wr_x            (scale_dst_x),
         .wr_prio         (blend_out_prio),
         .wr_rgb          ({blend_out_r, blend_out_g, blend_out_b}),
@@ -507,6 +571,28 @@ module sprite_engine (
     // ----------------------------------------------------------------
     wire signed [11:0] cap_target_line;
 
+    // 3-Cycle Pipeline Delay for Scanline Capture alignment with comp_out_rgb
+    reg [10:0] cap_x_d1, cap_x_d2, cap_x_d3;
+    reg        cap_read_en_d1, cap_read_en_d2, cap_read_en_d3;
+
+    always @(posedge clk_vid or negedge rst_n) begin
+        if (!rst_n) begin
+            cap_x_d1       <= 11'd0;
+            cap_x_d2       <= 11'd0;
+            cap_x_d3       <= 11'd0;
+            cap_read_en_d1 <= 1'b0;
+            cap_read_en_d2 <= 1'b0;
+            cap_read_en_d3 <= 1'b0;
+        end else begin
+            cap_x_d1       <= eff_vid_x;
+            cap_x_d2       <= cap_x_d1;
+            cap_x_d3       <= cap_x_d2;
+            cap_read_en_d1 <= eff_vid_read_en;
+            cap_read_en_d2 <= cap_read_en_d1;
+            cap_read_en_d3 <= cap_read_en_d2;
+        end
+    end
+
     sprite_engine_capture u_capture (
         .rst_n           (rst_n),
 
@@ -515,8 +601,8 @@ module sprite_engine (
         .capture_en      (dma_cap_en),
         .cur_y           (scanline_y),
         .cap_y           (cap_target_line),
-        .vid_x           (eff_vid_x),
-        .vid_read_en     (eff_vid_read_en),
+        .vid_x           (cap_x_d3),
+        .vid_read_en     (cap_read_en_d3),
         .out_rgb         (comp_out_rgb),
         .cap_done        (cap_done),
 

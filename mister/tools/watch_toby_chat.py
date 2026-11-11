@@ -25,6 +25,16 @@ while True:
         # Filter nach Nachrichten, die nicht von uns (rudi) stammen
         toby_msgs = [m for m in msgs if m.get('author') != 'rudi']
         if toby_msgs:
+            # Akustisches Signal ueber Windows-Audio abspielen
+            try:
+                import winsound
+                winsound.PlaySound("SystemNotification", winsound.SND_ALIAS | winsound.SND_ASYNC)
+                winsound.Beep(1046, 120)
+                winsound.Beep(1318, 150)
+                winsound.Beep(1568, 280)
+            except Exception:
+                pass
+
             print("\n[!] NEUE NACHRICHT VON TOBY / TOBYS KI EMPFANGEN:")
             for m in toby_msgs:
                 author = m.get('author', 'Toby')

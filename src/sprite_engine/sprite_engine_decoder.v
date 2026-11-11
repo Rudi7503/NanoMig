@@ -162,6 +162,370 @@ module sprite_engine_decoder (
                     dec_opaque <= 1'b1;
                 end
 
+                // --- FMT 8: HAM04 (4-bit: Bit 3 = MSB/Delta, Bits 2..0 = RGB) ---
+                5'd8: begin
+                    if (!raw_code[3]) begin
+                        // Palette Anchor (slots 0..7)
+                        dec_r      <= pal_data[23:16];
+                        dec_g      <= pal_data[15:8];
+                        dec_b      <= pal_data[7:0];
+                        acc_r      <= pal_data[23:16];
+                        acc_g      <= pal_data[15:8];
+                        acc_b      <= pal_data[7:0];
+                        dec_alpha  <= 8'hFF;
+                        dec_opaque <= 1'b1;
+                    end else begin
+                        // Delta: step = 8
+                        begin: ham04_block
+                            reg signed [8:0] dr_val, dg_val, db_val;
+                            dr_val = raw_code[2] ? 9'sd8 : -9'sd8;
+                            dg_val = raw_code[1] ? 9'sd8 : -9'sd8;
+                            db_val = raw_code[0] ? 9'sd8 : -9'sd8;
+
+                            acc_r <= clamp_add(acc_r, dr_val);
+                            acc_g <= clamp_add(acc_g, dg_val);
+                            acc_b <= clamp_add(acc_b, db_val);
+                            dec_r <= clamp_add(acc_r, dr_val);
+                            dec_g <= clamp_add(acc_g, dg_val);
+                            dec_b <= clamp_add(acc_b, db_val);
+                            dec_alpha  <= 8'hFF;
+                            dec_opaque <= 1'b1;
+                        end
+                    end
+                end
+
+                // --- FMT 9: HAM06 (6, 3, 4, 3) ---
+                5'd9: begin
+                    if (bw == 6'd6) begin
+                        if (!raw_code[5]) begin
+                            dec_r      <= pal_data[23:16];
+                            dec_g      <= pal_data[15:8];
+                            dec_b      <= pal_data[7:0];
+                            acc_r      <= pal_data[23:16];
+                            acc_g      <= pal_data[15:8];
+                            acc_b      <= pal_data[7:0];
+                            dec_alpha  <= 8'hFF;
+                            dec_opaque <= 1'b1;
+                        end else begin
+                            begin: ham06_6_block
+                                reg [4:0] mult;
+                                reg signed [8:0] dr_val, dg_val, db_val;
+                                mult = raw_code[4] ? 5'd16 : 5'd4;
+                                dr_val = (raw_code[3] ? 3'sd1 : -3'sd1) * mult;
+                                dg_val = two_delta(raw_code[2:1]) * mult;
+                                db_val = (raw_code[0] ? 3'sd1 : -3'sd1) * mult;
+                                acc_r <= clamp_add(acc_r, dr_val);
+                                acc_g <= clamp_add(acc_g, dg_val);
+                                acc_b <= clamp_add(acc_b, db_val);
+                                dec_r <= clamp_add(acc_r, dr_val);
+                                dec_g <= clamp_add(acc_g, dg_val);
+                                dec_b <= clamp_add(acc_b, db_val);
+                                dec_alpha  <= 8'hFF;
+                                dec_opaque <= 1'b1;
+                            end
+                        end
+                    end else if (bw == 6'd3) begin
+                        begin: ham06_3_block
+                            reg signed [8:0] dr_val, dg_val, db_val;
+                            dr_val = raw_code[1] ? 9'sd8 : -9'sd8;
+                            dg_val = raw_code[0] ? 9'sd8 : -9'sd8;
+                            db_val = dr_val;
+                            acc_r <= clamp_add(acc_r, dr_val);
+                            acc_g <= clamp_add(acc_g, dg_val);
+                            acc_b <= clamp_add(acc_b, db_val);
+                            dec_r <= clamp_add(acc_r, dr_val);
+                            dec_g <= clamp_add(acc_g, dg_val);
+                            dec_b <= clamp_add(acc_b, db_val);
+                            dec_alpha  <= 8'hFF;
+                            dec_opaque <= 1'b1;
+                        end
+                    end else begin
+                        begin: ham06_4_block
+                            reg signed [8:0] dr_val, dg_val, db_val;
+                            dr_val = raw_code[2] ? 9'sd8 : -9'sd8;
+                            dg_val = raw_code[1] ? 9'sd8 : -9'sd8;
+                            db_val = raw_code[0] ? 9'sd8 : -9'sd8;
+                            acc_r <= clamp_add(acc_r, dr_val);
+                            acc_g <= clamp_add(acc_g, dg_val);
+                            acc_b <= clamp_add(acc_b, db_val);
+                            dec_r <= clamp_add(acc_r, dr_val);
+                            dec_g <= clamp_add(acc_g, dg_val);
+                            dec_b <= clamp_add(acc_b, db_val);
+                            dec_alpha  <= 8'hFF;
+                            dec_opaque <= 1'b1;
+                        end
+                    end
+                end
+
+                // --- FMT 11: HAM12 (12-6-8-6) ---
+                5'd11: begin
+                    if (bw == 6'd12) begin
+                        if (!raw_code[11]) begin
+                            dec_r      <= ((({raw_code[9:7], 1'b0}) | raw_code[10]) << 4);
+                            dec_g      <= (raw_code[6:3] << 4);
+                            dec_b      <= ((({raw_code[2:0], 1'b0}) | raw_code[10]) << 4);
+                            acc_r      <= ((({raw_code[9:7], 1'b0}) | raw_code[10]) << 4);
+                            acc_g      <= (raw_code[6:3] << 4);
+                            acc_b      <= ((({raw_code[2:0], 1'b0}) | raw_code[10]) << 4);
+                            dec_alpha  <= 8'hFF;
+                            dec_opaque <= 1'b1;
+                        end else begin
+                            begin: ham12_12_delta
+                                reg [4:0] mult;
+                                reg signed [8:0] dr_val, dg_val, db_val;
+                                reg signed [3:0] dr_s3, db_s3;
+                                reg signed [4:0] dg_s4;
+                                mult = raw_code[10] ? 5'd16 : 5'd4;
+                                dr_s3 = raw_code[9:7]; if (dr_s3 >= 3'sd4) dr_s3 = dr_s3 - 4'sd8;
+                                dg_s4 = raw_code[6:3]; if (dg_s4 >= 4'sd8) dg_s4 = dg_s4 - 5'sd16;
+                                db_s3 = raw_code[2:0]; if (db_s3 >= 3'sd4) db_s3 = db_s3 - 4'sd8;
+                                dr_val = dr_s3 * mult;
+                                dg_val = dg_s4 * mult;
+                                db_val = db_s3 * mult;
+                                acc_r <= clamp_add(acc_r, dr_val);
+                                acc_g <= clamp_add(acc_g, dg_val);
+                                acc_b <= clamp_add(acc_b, db_val);
+                                dec_r <= clamp_add(acc_r, dr_val);
+                                dec_g <= clamp_add(acc_g, dg_val);
+                                dec_b <= clamp_add(acc_b, db_val);
+                                dec_alpha  <= 8'hFF;
+                                dec_opaque <= 1'b1;
+                            end
+                        end
+                    end else if (bw == 6'd6) begin
+                        if (!raw_code[5]) begin
+                            dec_r      <= pal_data[23:16];
+                            dec_g      <= pal_data[15:8];
+                            dec_b      <= pal_data[7:0];
+                            acc_r      <= pal_data[23:16];
+                            acc_g      <= pal_data[15:8];
+                            acc_b      <= pal_data[7:0];
+                            dec_alpha  <= 8'hFF;
+                            dec_opaque <= 1'b1;
+                        end else begin
+                            begin: ham12_6_delta
+                                reg [4:0] mult;
+                                reg signed [8:0] dr_val, dg_val, db_val;
+                                mult = raw_code[4] ? 5'd16 : 5'd4;
+                                dr_val = (raw_code[3] ? 3'sd1 : -3'sd1) * mult;
+                                dg_val = two_delta(raw_code[2:1]) * mult;
+                                db_val = (raw_code[0] ? 3'sd1 : -3'sd1) * mult;
+                                acc_r <= clamp_add(acc_r, dr_val);
+                                acc_g <= clamp_add(acc_g, dg_val);
+                                acc_b <= clamp_add(acc_b, db_val);
+                                dec_r <= clamp_add(acc_r, dr_val);
+                                dec_g <= clamp_add(acc_g, dg_val);
+                                dec_b <= clamp_add(acc_b, db_val);
+                                dec_alpha  <= 8'hFF;
+                                dec_opaque <= 1'b1;
+                            end
+                        end
+                    end else begin
+                        if (!raw_code[7]) begin
+                            dec_r      <= pal_data[23:16];
+                            dec_g      <= pal_data[15:8];
+                            dec_b      <= pal_data[7:0];
+                            acc_r      <= pal_data[23:16];
+                            acc_g      <= pal_data[15:8];
+                            acc_b      <= pal_data[7:0];
+                            dec_alpha  <= 8'hFF;
+                            dec_opaque <= 1'b1;
+                        end else begin
+                            begin: ham12_8_delta
+                                reg [4:0] mult;
+                                reg signed [8:0] dr_val, dg_val, db_val;
+                                mult = raw_code[6] ? 5'd16 : 5'd4;
+                                dr_val = two_delta(raw_code[5:4]) * mult;
+                                dg_val = two_delta(raw_code[3:2]) * mult;
+                                db_val = two_delta(raw_code[1:0]) * mult;
+                                acc_r <= clamp_add(acc_r, dr_val);
+                                acc_g <= clamp_add(acc_g, dg_val);
+                                acc_b <= clamp_add(acc_b, db_val);
+                                dec_r <= clamp_add(acc_r, dr_val);
+                                dec_g <= clamp_add(acc_g, dg_val);
+                                dec_b <= clamp_add(acc_b, db_val);
+                                dec_alpha  <= 8'hFF;
+                                dec_opaque <= 1'b1;
+                            end
+                        end
+                    end
+                end
+
+                // --- FMT 12: HAM12 (12-5-5-5-5) ---
+                5'd12: begin
+                    if (bw == 6'd12) begin
+                        if (!raw_code[11]) begin
+                            dec_r      <= ((({raw_code[9:7], 1'b0}) | raw_code[10]) << 4);
+                            dec_g      <= (raw_code[6:3] << 4);
+                            dec_b      <= ((({raw_code[2:0], 1'b0}) | raw_code[10]) << 4);
+                            acc_r      <= ((({raw_code[9:7], 1'b0}) | raw_code[10]) << 4);
+                            acc_g      <= (raw_code[6:3] << 4);
+                            acc_b      <= ((({raw_code[2:0], 1'b0}) | raw_code[10]) << 4);
+                            dec_alpha  <= 8'hFF;
+                            dec_opaque <= 1'b1;
+                        end else begin
+                            begin: ham12_5555_12_delta
+                                reg [4:0] mult;
+                                reg signed [8:0] dr_val, dg_val, db_val;
+                                reg signed [3:0] dr_s3, db_s3;
+                                reg signed [4:0] dg_s4;
+                                mult = raw_code[10] ? 5'd16 : 5'd4;
+                                dr_s3 = raw_code[9:7]; if (dr_s3 >= 3'sd4) dr_s3 = dr_s3 - 4'sd8;
+                                dg_s4 = raw_code[6:3]; if (dg_s4 >= 4'sd8) dg_s4 = dg_s4 - 5'sd16;
+                                db_s3 = raw_code[2:0]; if (db_s3 >= 3'sd4) db_s3 = db_s3 - 4'sd8;
+                                dr_val = dr_s3 * mult;
+                                dg_val = dg_s4 * mult;
+                                db_val = db_s3 * mult;
+                                acc_r <= clamp_add(acc_r, dr_val);
+                                acc_g <= clamp_add(acc_g, dg_val);
+                                acc_b <= clamp_add(acc_b, db_val);
+                                dec_r <= clamp_add(acc_r, dr_val);
+                                dec_g <= clamp_add(acc_g, dg_val);
+                                dec_b <= clamp_add(acc_b, db_val);
+                                dec_alpha  <= 8'hFF;
+                                dec_opaque <= 1'b1;
+                            end
+                        end
+                    end else begin
+                        if (!raw_code[4]) begin
+                            dec_r      <= pal_data[23:16];
+                            dec_g      <= pal_data[15:8];
+                            dec_b      <= pal_data[7:0];
+                            acc_r      <= pal_data[23:16];
+                            acc_g      <= pal_data[15:8];
+                            acc_b      <= pal_data[7:0];
+                            dec_alpha  <= 8'hFF;
+                            dec_opaque <= 1'b1;
+                        end else begin
+                            begin: ham12_5_delta
+                                reg signed [8:0] dr_val, dg_val, db_val;
+                                reg [4:0] mult;
+                                mult = raw_code[3] ? 5'd16 : 5'd4;
+                                dr_val = (raw_code[2] ? 3'sd1 : -3'sd1) * mult;
+                                dg_val = (raw_code[1] ? 3'sd1 : -3'sd1) * mult;
+                                db_val = (raw_code[0] ? 3'sd1 : -3'sd1) * mult;
+                                acc_r <= clamp_add(acc_r, dr_val);
+                                acc_g <= clamp_add(acc_g, dg_val);
+                                acc_b <= clamp_add(acc_b, db_val);
+                                dec_r <= clamp_add(acc_r, dr_val);
+                                dec_g <= clamp_add(acc_g, dg_val);
+                                dec_b <= clamp_add(acc_b, db_val);
+                                dec_alpha  <= 8'hFF;
+                                dec_opaque <= 1'b1;
+                            end
+                        end
+                    end
+                end
+
+                // --- FMT 13: HAM16 (16-12-12-12-12) ---
+                5'd13: begin
+                    if (bw == 6'd16) begin
+                        dec_r      <= {raw_code[15:11], 3'b000};
+                        dec_g      <= {raw_code[10:5],  2'b00};
+                        dec_b      <= {raw_code[4:0],   3'b000};
+                        acc_r      <= {raw_code[15:11], 3'b000};
+                        acc_g      <= {raw_code[10:5],  2'b00};
+                        acc_b      <= {raw_code[4:0],   3'b000};
+                        dec_alpha  <= 8'hFF;
+                        dec_opaque <= 1'b1;
+                    end else begin
+                        begin: ham16_12_delta
+                            reg signed [4:0] dr_s4, dg_s4, db_s4;
+                            dr_s4 = raw_code[11:8]; if (dr_s4 >= 4'sd8) dr_s4 = dr_s4 - 5'sd16;
+                            dg_s4 = raw_code[7:4];  if (dg_s4 >= 4'sd8) dg_s4 = dg_s4 - 5'sd16;
+                            db_s4 = raw_code[3:0];  if (db_s4 >= 4'sd8) db_s4 = db_s4 - 5'sd16;
+                            acc_r <= clamp_add(acc_r, dr_s4 * 9'sd4);
+                            acc_g <= clamp_add(acc_g, dg_s4 * 9'sd4);
+                            acc_b <= clamp_add(acc_b, db_s4 * 9'sd4);
+                            dec_r <= clamp_add(acc_r, dr_s4 * 9'sd4);
+                            dec_g <= clamp_add(acc_g, dg_s4 * 9'sd4);
+                            dec_b <= clamp_add(acc_b, db_s4 * 9'sd4);
+                            dec_alpha  <= 8'hFF;
+                            dec_opaque <= 1'b1;
+                        end
+                    end
+                end
+
+                // --- FMT 10: HAM08 (8-bit: Bit 7 = MSB/Delta, Bit 6 = Turbo) ---
+                5'd10: begin
+                    if (!raw_code[7]) begin
+                        // Palette Anchor (slots 0..127)
+                        dec_r      <= pal_data[23:16];
+                        dec_g      <= pal_data[15:8];
+                        dec_b      <= pal_data[7:0];
+                        acc_r      <= pal_data[23:16];
+                        acc_g      <= pal_data[15:8];
+                        acc_b      <= pal_data[7:0];
+                        dec_alpha  <= 8'hFF;
+                        dec_opaque <= 1'b1;
+                    end else begin
+                        // Delta
+                        begin: ham08_block
+                            reg [4:0] mult;
+                            reg signed [8:0] dr_val, dg_val, db_val;
+                            mult = raw_code[6] ? 5'd16 : 5'd4;
+                            dr_val = two_delta(raw_code[5:4]) * mult;
+                            dg_val = two_delta(raw_code[3:2]) * mult;
+                            db_val = two_delta(raw_code[1:0]) * mult;
+
+                            acc_r <= clamp_add(acc_r, dr_val);
+                            acc_g <= clamp_add(acc_g, dg_val);
+                            acc_b <= clamp_add(acc_b, db_val);
+                            dec_r <= clamp_add(acc_r, dr_val);
+                            dec_g <= clamp_add(acc_g, dg_val);
+                            dec_b <= clamp_add(acc_b, db_val);
+                            dec_alpha  <= 8'hFF;
+                            dec_opaque <= 1'b1;
+                        end
+                    end
+                end
+
+                // --- FMT 14: Pure HAM16 Direct (16-bit: Bit 15 = MSB, Bit 14 = Turbo) ---
+                5'd14: begin
+                    if (!raw_code[15]) begin
+                        // 15-bit RGB555 Direct Anchor
+                        dec_r      <= {raw_code[14:10], 3'b000};
+                        dec_g      <= {raw_code[9:5],   3'b000};
+                        dec_b      <= {raw_code[4:0],   3'b000};
+                        acc_r      <= {raw_code[14:10], 3'b000};
+                        acc_g      <= {raw_code[9:5],   3'b000};
+                        acc_b      <= {raw_code[4:0],   3'b000};
+                        dec_alpha  <= 8'hFF;
+                        dec_opaque <= 1'b1;
+                    end else begin
+                        // HAM16 Delta
+                        begin: ham16d_block
+                            reg [4:0] mult;
+                            reg signed [8:0] dr_val, dg_val, db_val;
+                            reg signed [4:0] dr_s4;
+                            reg signed [5:0] dg_s5, db_s5;
+                            mult = raw_code[14] ? 5'd16 : 5'd4;
+
+                            dr_s4 = raw_code[13:10];
+                            if (dr_s4 >= 4'sd8) dr_s4 = dr_s4 - 5'sd16;
+
+                            dg_s5 = raw_code[9:5];
+                            if (dg_s5 >= 5'sd16) dg_s5 = dg_s5 - 6'sd32;
+
+                            db_s5 = raw_code[4:0];
+                            if (db_s5 >= 5'sd16) db_s5 = db_s5 - 6'sd32;
+
+                            dr_val = dr_s4 * mult;
+                            dg_val = dg_s5 * mult;
+                            db_val = db_s5 * mult;
+
+                            acc_r <= clamp_add(acc_r, dr_val);
+                            acc_g <= clamp_add(acc_g, dg_val);
+                            acc_b <= clamp_add(acc_b, db_val);
+                            dec_r <= clamp_add(acc_r, dr_val);
+                            dec_g <= clamp_add(acc_g, dg_val);
+                            dec_b <= clamp_add(acc_b, db_val);
+                            dec_alpha  <= 8'hFF;
+                            dec_opaque <= 1'b1;
+                        end
+                    end
+                end
+
                 // --- FMT 17: Pure ham5delta (40 px / burst) ---
                 5'd17: begin
                     if (bw == 6'd12) begin
