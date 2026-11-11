@@ -57,10 +57,14 @@ module sprite_engine_dma (
     input  wire        stream_ack,
 
     // Status
-    output reg         line_done        // All sprites for this line finished
+    output reg         line_done,       // All sprites for this line finished
+    output wire        engine_en_out,
+    output wire        cap_en_out
 );
 
     assign avm_burstcount = 4'd4; // Always 4 beats = 256 bits (32 bytes)
+    assign engine_en_out  = engine_en;
+    assign cap_en_out     = cap_en;
 
     // ----------------------------------------------------------------
     // Registers & Staging
@@ -71,6 +75,7 @@ module sprite_engine_dma (
     reg        ptr_updated;
     reg        engine_en;
     reg        zero_skip_en;
+    reg        cap_en;
 
     // Register Write Logic
     always @(posedge clk or negedge rst_n) begin
@@ -81,6 +86,7 @@ module sprite_engine_dma (
             ptr_updated  <= 1'b0;
             engine_en    <= 1'b0;
             zero_skip_en <= 1'b1;
+            cap_en       <= 1'b0;
         end else begin
             if (reg_we) begin
                 case (reg_addr)
@@ -93,6 +99,7 @@ module sprite_engine_dma (
                     4'd2: begin
                         engine_en    <= reg_wdata[0];
                         zero_skip_en <= reg_wdata[1];
+                        cap_en       <= reg_wdata[2];
                     end
                 endcase
             end
@@ -110,7 +117,7 @@ module sprite_engine_dma (
         case (reg_addr)
             4'd0: reg_rdata = active_ptr[31:16];
             4'd1: reg_rdata = active_ptr[15:0];
-            4'd2: reg_rdata = {14'd0, zero_skip_en, engine_en};
+            4'd2: reg_rdata = {13'd0, cap_en, zero_skip_en, engine_en};
             4'd3: reg_rdata = {15'd0, line_done};
             default: reg_rdata = 16'h0000;
         endcase
@@ -166,6 +173,7 @@ module sprite_engine_dma (
             beat_cnt           <= 2'd0;
             cur_line_data_addr <= 32'h0;
         end else begin
+            stream_valid   <= 1'b0;
             spr_start_line <= 1'b0;
 
             case (state)
@@ -182,14 +190,14 @@ module sprite_engine_dma (
                 S_FETCH_DESC0: begin
                     avm_address <= cur_desc_addr;
                     avm_read    <= 1'b1;
-                    if (!avm_waitrequest) begin
-                        state <= S_WAIT_DESC0;
+                    if (avm_read && !avm_waitrequest) begin
+                        avm_read <= 1'b0;
+                        state    <= S_WAIT_DESC0;
                     end
                 end
 
                 S_WAIT_DESC0: begin
                     if (avm_readdatavalid) begin
-                        avm_read   <= 1'b0;
                         d_y_pos    <= avm_readdata[63:52];
                         d_x_pos    <= avm_readdata[51:40];
                         d_flags    <= avm_readdata[39:32];
@@ -202,14 +210,14 @@ module sprite_engine_dma (
                 S_FETCH_DESC1: begin
                     avm_address <= cur_desc_addr + 32'd8;
                     avm_read    <= 1'b1;
-                    if (!avm_waitrequest) begin
-                        state <= S_WAIT_DESC1;
+                    if (avm_read && !avm_waitrequest) begin
+                        avm_read <= 1'b0;
+                        state    <= S_WAIT_DESC1;
                     end
                 end
 
                 S_WAIT_DESC1: begin
                     if (avm_readdatavalid) begin
-                        avm_read   <= 1'b0;
                         d_height   <= avm_readdata[63:52];
                         d_width_px <= avm_readdata[51:40];
                         d_fmt      <= avm_readdata[39:32];
@@ -268,7 +276,8 @@ module sprite_engine_dma (
                 S_FETCH_DATA: begin
                     avm_address <= cur_line_data_addr + (burst_cnt * 32);
                     avm_read    <= 1'b1;
-                    if (!avm_waitrequest) begin
+                    if (avm_read && !avm_waitrequest) begin
+                        avm_read <= 1'b0;
                         beat_cnt <= 2'd0;
                         state    <= S_STREAM_DATA;
                     end
@@ -280,7 +289,6 @@ module sprite_engine_dma (
                         if (zero_skip_en && avm_readdata == 64'h0) begin
                             // 1-Cycle Zero-Word-Skip!
                             if (beat_cnt == 2'd3) begin
-                                avm_read <= 1'b0;
                                 if (burst_cnt + 12'd1 >= bursts_needed) begin
                                     state <= S_NEXT_DESC;
                                 end else begin
@@ -293,19 +301,15 @@ module sprite_engine_dma (
                         end else begin
                             stream_word64 <= avm_readdata;
                             stream_valid  <= 1'b1;
-                            if (stream_ack) begin
-                                stream_valid <= 1'b0;
-                                if (beat_cnt == 2'd3) begin
-                                    avm_read <= 1'b0;
-                                    if (burst_cnt + 12'd1 >= bursts_needed) begin
-                                        state <= S_NEXT_DESC;
-                                    end else begin
-                                        burst_cnt <= burst_cnt + 12'd1;
-                                        state     <= S_FETCH_DATA;
-                                    end
+                            if (beat_cnt == 2'd3) begin
+                                if (burst_cnt + 12'd1 >= bursts_needed) begin
+                                    state <= S_NEXT_DESC;
                                 end else begin
-                                    beat_cnt <= beat_cnt + 1'b1;
+                                    burst_cnt <= burst_cnt + 12'd1;
+                                    state     <= S_FETCH_DATA;
                                 end
+                            end else begin
+                                beat_cnt <= beat_cnt + 1'b1;
                             end
                         end
                     end

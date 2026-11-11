@@ -329,3 +329,4 @@ set_global_assignment -name VERILOG_FILE rtl/sprite_engine/sprite_engine_decoder
 set_global_assignment -name VERILOG_FILE rtl/sprite_engine/sprite_engine_scaler.v
 set_global_assignment -name VERILOG_FILE rtl/sprite_engine/sprite_engine_dma.v
 set_global_assignment -name VERILOG_FILE rtl/sprite_engine/sprite_engine.v
+set_global_assignment -name VERILOG_FILE rtl/sprite_engine/sprite_engine_capture.v

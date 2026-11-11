@@ -66,6 +66,7 @@
         <File path="sprite_engine/sprite_engine_compositor.v" type="file.verilog" enable="1"/>
         <File path="sprite_engine/sprite_engine_palette.v" type="file.verilog" enable="1"/>
         <File path="sprite_engine/sprite_engine_scaler.v" type="file.verilog" enable="1"/>
+        <File path="sprite_engine/sprite_engine_capture.v" type="file.verilog" enable="1"/>
 <File path="minimig-aga/audio_ext.v" type="file.verilog" enable="1"/>
         <File path="minimig-aga/biquad_iir_ringbuffer.v" type="file.verilog" enable="1"/>
         <File path="minimig-aga/adpcm_decoder_shared.v" type="file.verilog" enable="1"/>

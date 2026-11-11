@@ -25,6 +25,7 @@ module sprite_engine_decoder (
     input  wire        rst_n,
 
     // Control
+    input  wire        in_valid,         // Pixel input strobe (advances pipeline & accumulator)
     input  wire        clr_acc,          // Reset accumulator (at transparent pixel or start of line)
     input  wire [4:0]  fmt,              // FORMAT_ID (0..19)
     input  wire [5:0]  bw,               // Current sub-pixel bit width (1..32)
@@ -37,6 +38,7 @@ module sprite_engine_decoder (
     input  wire [23:0] pal_data,
 
     // Decoded pixel output
+    output reg         out_valid,
     output reg  [7:0]  out_r,
     output reg  [7:0]  out_g,
     output reg  [7:0]  out_b,
@@ -91,9 +93,10 @@ module sprite_engine_decoder (
             out_b      <= 8'h00;
             out_alpha  <= 8'h00;
             out_opaque <= 1'b0;
+            out_valid  <= 1'b0;
             pal_addr   <= 8'h00;
-        end else if (clr_acc || raw_code == 32'h0) begin
-            // Transparent pixel / end of burst / clr_acc
+        end else if (clr_acc) begin
+            // Reset accumulator on scanline start
             acc_r      <= 8'h00;
             acc_g      <= 8'h00;
             acc_b      <= 8'h00;
@@ -102,8 +105,22 @@ module sprite_engine_decoder (
             out_b      <= 8'h00;
             out_alpha  <= 8'h00;
             out_opaque <= 1'b0;
-        end else begin
-            case (fmt)
+            out_valid  <= 1'b0;
+            pal_addr   <= 8'h00;
+        end else if (in_valid) begin
+            out_valid <= 1'b1;
+            if (raw_code == 32'h0) begin
+                // Transparent pixel:
+                acc_r      <= 8'h00;
+                acc_g      <= 8'h00;
+                acc_b      <= 8'h00;
+                out_r      <= 8'h00;
+                out_g      <= 8'h00;
+                out_b      <= 8'h00;
+                out_alpha  <= 8'h00;
+                out_opaque <= 1'b0;
+            end else begin
+                case (fmt)
                 // --- FMT 0..7: Direct CLUT 1..8 Bit ---
                 5'd0, 5'd1, 5'd2, 5'd3, 5'd4, 5'd5, 5'd6, 5'd7: begin
                     pal_addr   <= (pal_offset + raw_code[7:0]) & 8'hFF;
@@ -264,6 +281,9 @@ module sprite_engine_decoder (
                     out_opaque <= 1'b0;
                 end
             endcase
+            end
+        end else begin
+            out_valid <= 1'b0;
         end
     end
 

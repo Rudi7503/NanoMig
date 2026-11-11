@@ -126,8 +126,13 @@ module biquad_iir_ringbuffer (
         // Ganzwort schreiben: zwei getrennt bedingte Byte-Zuweisungen sind fuer
         // Quartus kein Speichermuster, deshalb lag dieses Array in Flip-Flops
         // samt 32:1-Lesemuxen. Die CPU schreibt Koeffizienten ohnehin mit MOVE.W.
-        if (reg_cs && reg_wr) coeff_ram[cpu_coeff_addr] <= reg_wdata;
-        cpu_rdata_raw   <= coeff_ram[cpu_coeff_addr];
+        // Write-Through fuer Port 0 damit Gowin GW5A WRITE_MODE0 = 2'b01 zulaesst:
+        if (reg_cs && reg_wr) begin
+            coeff_ram[cpu_coeff_addr] <= reg_wdata;
+            cpu_rdata_raw <= reg_wdata;
+        end else begin
+            cpu_rdata_raw <= coeff_ram[cpu_coeff_addr];
+        end
         fsm_coeff_rdata <= coeff_ram[fsm_coeff_addr];
     end
     assign reg_rdata = cpu_rdata_raw;

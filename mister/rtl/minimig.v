@@ -796,6 +796,7 @@ assign res = {shres & |chipset_config[4:3], hires};
 
 //instantiate Denise
 wire [7:0] denise_r, denise_g, denise_b;
+wire denise_sprsel, denise_pf_front, denise_pf_any;
 denise DENISE1
 (		
 	.clk(clk),
@@ -823,7 +824,10 @@ denise DENISE1
 	.ecs(|chipset_config[4:3]),
 	.aga(chipset_config[4]),
 	.hires(hires),
-	.shres(shres)
+	.shres(shres),
+	.sprsel_out(denise_sprsel),
+	.pf_front_out(denise_pf_front),
+	.pf_any_out(denise_pf_any)
 );
 
 // ====================================================================
@@ -852,9 +856,9 @@ sprite_engine SPRITE_ENGINE (
 
 	// Denise Native Video Tap
 	.amiga_rgb       ({denise_r, denise_g, denise_b}),
-	.sprsel_aligned  (1'b0),
-	.pf_front_opaque (1'b0),
-	.pf_any_opaque   (1'b0),
+	.sprsel_aligned  (denise_sprsel),
+	.pf_front_opaque (denise_pf_front),
+	.pf_any_opaque   (denise_pf_any),
 	.blank_n         (~(~_hsync | vblank)),
 
 	// Avalon-MM DDR3 Memory Master Interface

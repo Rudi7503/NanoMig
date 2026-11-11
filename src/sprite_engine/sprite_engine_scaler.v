@@ -90,7 +90,7 @@ module sprite_engine_scaler (
             prev_opaque <= 1'b0;
         end else if (start_line) begin
             q6_accum    <= 18'd0;
-            cur_dst_x   <= (x_pos < 0) ? 11'd0 : x_pos[10:0];
+            cur_dst_x   <= h_flip ? (x_pos[10:0] + orig_w_px - 11'd1) : ((x_pos < 0) ? 11'd0 : x_pos[10:0]);
             src_px_cnt  <= 11'd0;
             dst_valid   <= 1'b0;
             src_ack     <= 1'b1; // Request first pixel
@@ -106,7 +106,7 @@ module sprite_engine_scaler (
                 dst_alpha   <= src_alpha;
                 dst_opaque  <= src_opaque;
 
-                cur_dst_x   <= cur_dst_x + 1'b1;
+                cur_dst_x   <= h_flip ? (cur_dst_x - 1'b1) : (cur_dst_x + 1'b1);
                 src_px_cnt  <= src_px_cnt + 1'b1;
                 src_ack     <= (src_px_cnt + 1'b1 < orig_w_px);
             end else if (x_scale < 8'd64) begin
@@ -127,7 +127,7 @@ module sprite_engine_scaler (
                     dst_opaque  <= src_opaque;
                 end
 
-                cur_dst_x <= cur_dst_x + 1'b1;
+                cur_dst_x <= h_flip ? (cur_dst_x - 1'b1) : (cur_dst_x + 1'b1);
                 q6_accum  <= next_q6;
                 if (q6_accum[11:6] != next_q6[11:6]) begin
                     // Advance to next source pixel
@@ -162,13 +162,13 @@ module sprite_engine_scaler (
                         dst_alpha   <= src_alpha;
                         dst_opaque  <= 1'b1;
                         prev_opaque <= 1'b0;
-                        cur_dst_x   <= cur_dst_x + 1'b1;
+                        cur_dst_x   <= h_flip ? (cur_dst_x - 1'b1) : (cur_dst_x + 1'b1);
                         src_ack     <= 1'b1;
                     end else begin
                         dst_valid   <= 1'b1;
                         dst_x       <= cur_dst_x;
                         dst_opaque  <= 1'b0;
-                        cur_dst_x   <= cur_dst_x + 1'b1;
+                        cur_dst_x   <= h_flip ? (cur_dst_x - 1'b1) : (cur_dst_x + 1'b1);
                         src_ack     <= 1'b1;
                     end
                 end else begin
@@ -181,7 +181,7 @@ module sprite_engine_scaler (
                     dst_alpha   <= src_alpha;
                     dst_opaque  <= src_opaque;
 
-                    cur_dst_x   <= cur_dst_x + 1'b1;
+                    cur_dst_x   <= h_flip ? (cur_dst_x - 1'b1) : (cur_dst_x + 1'b1);
                     src_ack     <= 1'b1;
                 end
             end

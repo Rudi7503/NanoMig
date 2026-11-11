@@ -128,6 +128,7 @@ module tb_sprite_engine;
     );
 
     // Standalone Decoder DUT
+    reg        dec_in_valid = 1;
     reg        dec_clr_acc = 0;
     reg  [4:0] dec_fmt = 0;
     reg  [5:0] dec_bw = 0;
@@ -142,6 +143,7 @@ module tb_sprite_engine;
     sprite_engine_decoder u_test_decoder (
         .clk        (clk_render),
         .rst_n      (rst_n),
+        .in_valid   (dec_in_valid),
         .clr_acc    (dec_clr_acc),
         .fmt        (dec_fmt),
         .bw         (dec_bw),
@@ -333,12 +335,12 @@ module tb_sprite_engine;
         $display("\n--- Test 4: Video Compositor Native Passthrough ---");
         amiga_rgb = 24'hAABBCC;
         blank_n   = 1;
-        #50;
+        repeat(4) @(posedge clk_vid); #1;
         check(out_rgb == 24'hAABBCC, "Sprite Engine cleanly passes through native Amiga RGB when idle");
 
         // Blanking test
         blank_n = 0;
-        #50;
+        repeat(4) @(posedge clk_vid); #1;
         check(out_rgb == 24'h000000, "Blanking active forces black output ($000000)");
 
         // ------------------------------------------------------------

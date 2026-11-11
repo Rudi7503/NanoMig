@@ -26,14 +26,16 @@ module sprite_engine_palette (
 );
 
     // 256 entries x 24-bit RGB
-    (* ramstyle = "M10K" *) reg [23:0] pal_ram [0:255];
+    reg [23:0] pal_ram [0:255];
 
-    // Port A
+    // Port A: CPU / Register interface (Write-Through mode to satisfy Gowin GW5A WRITE_MODE = 2'b01)
     always @(posedge clk_a) begin
         if (we_a) begin
             pal_ram[addr_a] <= data_a;
+            q_a <= data_a;
+        end else begin
+            q_a <= pal_ram[addr_a];
         end
-        q_a <= pal_ram[addr_a];
     end
 
     // Port B (Synchronous 1-cycle read)

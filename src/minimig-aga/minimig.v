@@ -618,7 +618,10 @@ denise DENISE1
 	.ham_frame_start(sof),
 	.ham_control(ham_control_active),
 	.hires(hires),
-	.shres(shres)
+	.shres(shres),
+	.sprsel_out(denise_sprsel),
+	.pf_front_out(denise_pf_front),
+	.pf_any_out(denise_pf_any)
 );
 
 //instantiate cia A
@@ -630,6 +633,7 @@ assign {_fire1_dat,_fire0_dat,_led} = porta_out[3:1];
 // Dedicated High-Performance Sprite & HighColor/TrueColor Overlay Engine
 // ====================================================================
 wire [7:0] denise_r, denise_g, denise_b;
+wire denise_sprsel, denise_pf_front, denise_pf_any;
 wire [31:0] spr_mem_address;
 wire [3:0]  spr_mem_burstcount;
 wire        spr_mem_read;
@@ -660,9 +664,9 @@ wire        spr_mem_waitrequest = 1'b0;
 
 	// Denise Native Video Tap
 	.amiga_rgb       ({denise_r, denise_g, denise_b}),
-	.sprsel_aligned  (1'b0),
-	.pf_front_opaque (1'b0),
-	.pf_any_opaque   (1'b0),
+	.sprsel_aligned  (denise_sprsel),
+	.pf_front_opaque (denise_pf_front),
+	.pf_any_opaque   (denise_pf_any),
 	.blank_n         (~(~_hsync | vblank)),
 
 	// Avalon-MM DDR3 / SDRAM Memory Master Interface

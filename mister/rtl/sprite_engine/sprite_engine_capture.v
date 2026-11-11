@@ -1,0 +1,99 @@
+// ====================================================================
+//
+//  sprite_engine_capture.v
+//  NanoMig Sprite Engine Diagnostic Scanline Raw Pixel Capture Buffer
+//
+//  Allows Amiga CPU to read back bit-accurate 24-bit RGB pixel data
+//  directly from FPGA without needing video grabber hardware.
+//
+//  Port A (Write, clk_vid):
+//    - Captures final composited out_rgb (24-bit) during active scanline
+//
+//  Port B (Read, clk_sys):
+//    - Amiga CPU readback via registers SPRENG_CAP_ADDR / SPRENG_CAP_DATA
+//    - Hardware auto-increment on low-word read
+//
+// ====================================================================
+
+`timescale 1ns / 1ps
+
+module sprite_engine_capture (
+    input  wire        rst_n,
+
+    // Video Write Domain (clk_vid)
+    input  wire        clk_vid,
+    input  wire        capture_en,
+    input  wire signed [11:0] cur_y,
+    input  wire signed [11:0] cap_y,
+    input  wire [10:0] vid_x,
+    input  wire        vid_read_en,
+    input  wire [23:0] out_rgb,
+    output reg         cap_done,
+
+    // Amiga CPU Read Domain (clk_sys)
+    input  wire        clk_sys,
+    input  wire        reg_cs,
+    input  wire        reg_we,
+    input  wire [3:0]  reg_addr,        // 9=CAP_LINE, 10=CAP_ADDR, 11=CAP_DATA_H, 12=CAP_DATA_L
+    input  wire [15:0] reg_wdata,
+    output reg  [15:0] reg_rdata,
+    output reg  signed [11:0] cap_target_line
+);
+
+    // 2048 x 24-bit True Dual-Port Block RAM
+    (* ramstyle = "no_rw_check" *) reg [23:0] cap_mem [0:2047];
+
+    reg [10:0] read_addr;
+    reg [23:0] read_rgb;
+
+    // Capture Write Logic (clk_vid)
+    wire line_match = (cur_y == cap_target_line);
+    always @(posedge clk_vid or negedge rst_n) begin
+        if (!rst_n) begin
+            cap_done <= 1'b0;
+        end else begin
+            if (capture_en && line_match && vid_read_en) begin
+                cap_mem[vid_x] <= out_rgb;
+                if (vid_x == 11'd2047) begin
+                    cap_done <= 1'b1;
+                end
+            end else if (!capture_en) begin
+                cap_done <= 1'b0;
+            end
+        end
+    end
+
+    // CPU Read & Control Logic (clk_sys)
+    always @(posedge clk_sys or negedge rst_n) begin
+        if (!rst_n) begin
+            cap_target_line <= 12'sd0;
+            read_addr       <= 11'd0;
+            read_rgb        <= 24'h000000;
+        end else begin
+            read_rgb <= cap_mem[read_addr];
+
+            if (reg_cs && reg_we) begin
+                case (reg_addr)
+                    4'd9:  cap_target_line <= reg_wdata[11:0];
+                    4'd10: read_addr       <= reg_wdata[10:0];
+                    default: ;
+                endcase
+            end else if (reg_cs && !reg_we && reg_addr == 4'd12) begin
+                // Auto-increment read address after reading low word
+                read_addr <= read_addr + 11'd1;
+            end
+        end
+    end
+
+    // Read Mux
+    always @(*) begin
+        case (reg_addr)
+            4'd9:  reg_rdata = {4'd0, cap_target_line};
+            4'd10: reg_rdata = {5'd0, read_addr};
+            4'd11: reg_rdata = {8'h00, read_rgb[23:16]}; // Red
+            4'd12: reg_rdata = read_rgb[15:0];           // Green/Blue
+            default: reg_rdata = 16'h0000;
+        endcase
+    end
+
+endmodule

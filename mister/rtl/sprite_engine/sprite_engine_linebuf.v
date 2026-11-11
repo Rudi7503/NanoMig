@@ -51,11 +51,24 @@ module sprite_engine_linebuf (
     // Ping-pong buffer selection: 0 = render buf 0, display buf 1; 1 = render buf 1, display buf 0
     reg buf_sel;
 
+    // Edge detection for line_swap_pulse to guarantee exactly one swap per source pulse
+    reg swap_sync0, swap_sync1;
+    always @(posedge clk_render or negedge rst_n) begin
+        if (!rst_n) begin
+            swap_sync0 <= 1'b0;
+            swap_sync1 <= 1'b0;
+        end else begin
+            swap_sync0 <= line_swap_pulse;
+            swap_sync1 <= swap_sync0;
+        end
+    end
+    wire swap_edge = swap_sync0 && !swap_sync1;
+
     // Cross line_swap_pulse into clk_render
     always @(posedge clk_render or negedge rst_n) begin
         if (!rst_n) begin
             buf_sel <= 1'b0;
-        end else if (line_swap_pulse) begin
+        end else if (swap_edge) begin
             buf_sel <= ~buf_sel;
         end
     end
@@ -70,7 +83,7 @@ module sprite_engine_linebuf (
         if (!rst_n) begin
             sweep_col <= 11'd0;
             sweeping  <= 1'b1;
-        end else if (line_swap_pulse) begin
+        end else if (swap_edge) begin
             sweep_col <= clip_xmax; // Start clearing above clip_xmax
             sweeping  <= 1'b1;
         end else if (sweeping) begin
@@ -98,7 +111,7 @@ module sprite_engine_linebuf (
             last_wr_x     <= 11'd0;
             last_wr_prio  <= 8'h00;
             last_wr_rgb   <= 24'h000000;
-        end else if (line_swap_pulse) begin
+        end else if (swap_edge) begin
             last_wr_valid <= 1'b0;
         end else if (wr_en) begin
             last_wr_valid <= 1'b1;
