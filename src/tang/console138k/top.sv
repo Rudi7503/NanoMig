@@ -218,7 +218,7 @@ wire       rom_done;
 // generate a reset for some time after rom has been initialized
 reg [15:0] reset_cnt;
 always @(negedge clk_28m) begin
-    if(bl616_jtagsel || !pll_lock || !rom_done || osd_reset || kbd_reset)
+    if(!pll_lock || !rom_done || osd_reset || kbd_reset)
         reset_cnt <= 16'hffff;
     else if(reset_cnt != 0)
         reset_cnt = reset_cnt - 16'd1;
@@ -641,7 +641,7 @@ reg            mem_ready_D;
 
 // geneate a start_rom_copy signal once flash and SDRAM are initialized
 always @(posedge clk_28m or negedge pll_lock) begin
- if(!pll_lock || bl616_jtagsel) begin
+ if(!pll_lock) begin
       start_rom_copy <= 1'b0;
       mem_ready_D <= 1'b0;
          
@@ -671,7 +671,7 @@ reg         flash_ram_write;
 reg [5:0]   flash_cnt;  
 
 always @(posedge clk_85m or negedge mem_ready) begin
-  if(!mem_ready || bl616_jtagsel) begin
+  if(!mem_ready) begin
        flash_addr <= 23'h300000;          // 6MB flash offset (word address),
 	                                      // flash driver this results in the flash address being 600000
        flash_ram_addr <= { 4'hf, 18'h0 }; // write into 512k sdram segment used for kick rom
@@ -778,7 +778,7 @@ sdram sdram (
 assign mspi_clk = clk_85m;
 flash #(.READ_DELAY(1)) flash (
     .clk       ( clk_85m     ),
-    .resetn    ( !(!pll_lock || bl616_jtagsel) ),
+    .resetn    ( !(!pll_lock) ),
     .ready     ( flash_ready ),
 
     .address   ( flash_addr  ),

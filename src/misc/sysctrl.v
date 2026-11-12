@@ -145,7 +145,7 @@ always @(posedge clk) begin
       system_floppy_wrprot <= 1'b1;
       system_cpu <= 2'b11;
       system_chipset <= AGA ? 3'd6 : 3'd2;
-      system_video_mode <= 1'b0;
+      system_video_mode <= 1'b1; // 1 = NTSC 60Hz (PC-Monitor kompatibel)
       system_video_screen <= 2'd0;
       system_video_filter <= 2'd0;
       system_video_scanlines <= 2'd0;

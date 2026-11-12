@@ -73,32 +73,72 @@ module sprite_engine_capture (
     end
 
     // CPU Read & Control Logic (clk_sys)
-    reg reg_cs_d;
+    reg        reg_cs_d;
+    reg        reg_we_d;
+    reg [3:0]  reg_addr_d;
+    reg        low_active;
+    reg        snap_valid;
+    reg [23:0] snap_rgb;
+
     always @(posedge clk_sys or negedge rst_n) begin
-        if (!rst_n)
-            reg_cs_d <= 1'b0;
-        else
-            reg_cs_d <= reg_cs;
+        if (!rst_n) begin
+            reg_cs_d   <= 1'b0;
+            reg_we_d   <= 1'b0;
+            reg_addr_d <= 4'd0;
+        end else begin
+            reg_cs_d   <= reg_cs;
+            reg_we_d   <= reg_we;
+            reg_addr_d <= reg_addr;
+        end
     end
-    wire cpu_read_strobe = reg_cs && !reg_cs_d && !reg_we;
+
+    wire transfer_start = (reg_cs && !reg_cs_d) || (reg_cs && (reg_addr != reg_addr_d || reg_we != reg_we_d));
+    wire low_transfer_end = low_active && (!reg_cs || reg_we || (reg_addr != 4'd12));
 
     always @(posedge clk_sys or negedge rst_n) begin
         if (!rst_n) begin
             cap_target_line <= 12'sd0;
             read_addr       <= 11'd0;
             read_rgb        <= 24'h000000;
+            snap_rgb        <= 24'h000000;
+            snap_valid      <= 1'b0;
+            low_active      <= 1'b0;
         end else begin
             read_rgb <= cap_mem[read_addr];
 
             if (reg_cs && reg_we) begin
+                low_active <= 1'b0;
                 case (reg_addr)
                     4'd9:  cap_target_line <= reg_wdata[11:0];
-                    4'd10: read_addr       <= reg_wdata[10:0];
+                    4'd10: begin
+                        read_addr  <= reg_wdata[10:0];
+                        snap_valid <= 1'b0;
+                    end
                     default: ;
                 endcase
-            end else if (cpu_read_strobe && reg_addr == 4'd12) begin
-                // Auto-increment read address once per bus read
-                read_addr <= read_addr + 11'd1;
+            end else begin
+                if (transfer_start && !reg_we) begin
+                    if (reg_addr == 4'd11) begin
+                        // HI-Read starts: capture 24-bit snapshot from valid synchronous RAM output
+                        snap_rgb   <= read_rgb;
+                        snap_valid <= 1'b1;
+                        low_active <= 1'b0;
+                    end else if (reg_addr == 4'd12) begin
+                        // LOW-Read starts
+                        low_active <= 1'b1;
+                        if (!snap_valid) begin
+                            // LOW without preceding HI: capture once and hold
+                            snap_rgb   <= read_rgb;
+                            snap_valid <= 1'b1;
+                        end
+                    end
+                end
+
+                if (low_transfer_end) begin
+                    low_active <= 1'b0;
+                    read_addr  <= read_addr + 11'd1;
+                    snap_valid <= 1'b0;
+                end
             end
         end
     end
@@ -108,8 +148,8 @@ module sprite_engine_capture (
         case (reg_addr)
             4'd9:  reg_rdata = {4'd0, cap_target_line};
             4'd10: reg_rdata = {5'd0, read_addr};
-            4'd11: reg_rdata = {8'h00, read_rgb[23:16]}; // Red
-            4'd12: reg_rdata = read_rgb[15:0];           // Green/Blue
+            4'd11: reg_rdata = {8'h00, (snap_valid ? snap_rgb[23:16] : read_rgb[23:16])}; // Red
+            4'd12: reg_rdata = (snap_valid ? snap_rgb[15:0] : read_rgb[15:0]);           // Green/Blue
             default: reg_rdata = 16'h0000;
         endcase
     end

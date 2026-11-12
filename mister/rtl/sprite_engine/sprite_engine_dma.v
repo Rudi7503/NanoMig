@@ -131,6 +131,7 @@ module sprite_engine_dma (
     localparam S_WAIT_DESC0  = 4'd2;
     localparam S_FETCH_DESC1 = 4'd3;
     localparam S_WAIT_DESC1  = 4'd4;
+    localparam S_DESC_DRAIN  = 4'd10;
     localparam S_EVAL_DESC   = 4'd5;
     localparam S_FETCH_DATA  = 4'd6;
     localparam S_STREAM_DATA = 4'd7;
@@ -156,6 +157,8 @@ module sprite_engine_dma (
     reg [11:0] bursts_needed;
     reg [11:0] burst_cnt;
     reg [1:0]  beat_cnt;
+    reg [1:0]  drain_cnt;
+    reg [5:0]  drain_timeout;
     reg [31:0] cur_line_data_addr;
 
     always @(posedge clk or negedge rst_n) begin
@@ -171,6 +174,8 @@ module sprite_engine_dma (
             line_done          <= 1'b1;
             burst_cnt          <= 12'd0;
             beat_cnt           <= 2'd0;
+            drain_cnt          <= 2'd0;
+            drain_timeout      <= 6'd0;
             cur_line_data_addr <= 32'h0;
         end else begin
             stream_valid   <= 1'b0;
@@ -213,14 +218,33 @@ module sprite_engine_dma (
 
                 S_WAIT_DESC1: begin
                     if (avm_readdatavalid) begin
-                        d_height   <= avm_readdata[63:52];
-                        d_width_px <= avm_readdata[51:40];
-                        d_fmt      <= avm_readdata[39:32];
-                        d_prio     <= avm_readdata[31:24];
-                        d_alpha    <= avm_readdata[23:16];
-                        d_x_scale  <= avm_readdata[15:8];
-                        d_y_scale  <= avm_readdata[7:0];
-                        state      <= S_EVAL_DESC;
+                        d_height      <= avm_readdata[63:52];
+                        d_width_px    <= avm_readdata[51:40];
+                        d_fmt         <= avm_readdata[39:32];
+                        d_prio        <= avm_readdata[31:24];
+                        d_alpha       <= avm_readdata[23:16];
+                        d_x_scale     <= avm_readdata[15:8];
+                        d_y_scale     <= avm_readdata[7:0];
+                        drain_cnt     <= 2'd2;
+                        drain_timeout <= 6'd0;
+                        state         <= S_DESC_DRAIN;
+                    end
+                end
+
+                // --- Drain Remaining 2 Words of BL4 Descriptor Burst ---
+                S_DESC_DRAIN: begin
+                    if (avm_readdatavalid) begin
+                        if (drain_cnt == 2'd1) begin
+                            state <= S_EVAL_DESC;
+                        end else begin
+                            drain_cnt <= drain_cnt - 2'd1;
+                        end
+                    end else begin
+                        drain_timeout <= drain_timeout + 6'd1;
+                        if (drain_timeout == 6'd32) begin
+                            // Fallback for legacy fixtures omitting trailing beats
+                            state <= S_EVAL_DESC;
+                        end
                     end
                 end
 
