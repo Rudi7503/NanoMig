@@ -209,7 +209,7 @@ module sprite_mem_adapter (
                 BEAT: begin
                     if (beat == 2'd3) begin
                         avm_waitrequest <= 1'b0;
-                        state           <= DONE;
+                        state           <= IDLE;   // Toby: direkt nach IDLE, nicht ueber DONE
                     end else begin
                         beat  <= beat + 2'd1;
                         state <= ISSUE;
