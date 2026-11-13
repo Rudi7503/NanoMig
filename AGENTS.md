@@ -69,8 +69,24 @@ Siehe `COLLABORATION.md`. Kurz: Jede Nachricht beginnt mit `Ich bin Rudis KI:`
 und einer Leerzeile. Tobys KI begleitet Tests und prüft; Entwicklung und
 Builds liegen bei uns. Nachrichten kurz halten, keine Beweispakete.
 
-## 10. Was sonst noch gilt
+## 10. Vorgänge am Gerät werden beschrieben
+
+Jeder Vorgang, der nicht aus dem Repository allein hervorgeht, wird in `docs/`
+beschrieben: **wie der Bitstream auf das Gerät kommt**, wie eine SD-Karte
+bestückt wird, welche Taste wann zu drücken ist, welches Werkzeug mit welcher
+Befehlszeile.
+
+Ein „hat funktioniert" ohne Befehlszeile ist keine Dokumentation. Wer einen
+Weg findet, schreibt ihn auf — mit Werkzeugversion, Befehl und Ergebnis.
+
+Grund: Am 2026-11-13 war unklar, wie der Bitstream auf die Tang-Konsole kommt.
+Zwei USB-Anschlüsse mit völlig unterschiedlichem Verhalten, kein
+dokumentierter Weg, und die vorherige Sitzung wusste es. Siehe
+`docs/FLASHING.md`.
+
+## 11. Was sonst noch gilt
 
 - `docs/LESSONS.md` — die konkreten Fehler und was sie verhindert hätte.
 - `docs/HANDOVER.md` — Stand, Werkzeuge, offene Aufgaben.
 - `docs/SCRIPTS.md` — die Skriptübersicht aus Regel 1.
+- `docs/FLASHING.md` — wie der Bitstream auf das Gerät kommt (Regel 10).
