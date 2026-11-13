@@ -114,25 +114,67 @@ Operationen, die hier gebraucht werden:
 | 53 | exFlash Erase,Program Arora V |
 | 54 | exFlash Erase,Program,Verify Arora V |
 
-## Zustand am 2026-11-13, 13:17 — Schreibzugriffe blockiert
+## Zustand am 2026-11-13 — was das Team am Gerät gemessen hat
 
-Nach dem erfolgreichen Lauf oben schlugen **alle** Schreiboperationen fehl:
+Die ausführlichen Regeln stehen in `.agent/rules/nanomig-lessons.md`
+(Punkt 9 und 11). Hier nur das, was man beim Flashen wirklich braucht.
 
-| Aufruf | Datei | Ergebnis |
-|---|---|---|
-| `-r 53` | unser `nanomig_tc138k.fs` | exit 50, 0,0 s |
-| `-r 53` | offiziell `nanomig_tc138k_official.fs` | exit 50, 0,0 s |
-| `-r 2` | unser | exit 50, 0,0 s |
-| `-r 2` | offiziell | exit 50, 0,02 s |
-| `-r 51` | — | exit 50, 0,01 s |
-| `-r 0` | — | **exit 0**, 0,02 s |
+### Nach dem Boot ist JTAG weg
 
-Lesen geht, schreiben nicht — und die offizielle Datei scheitert genauso wie
-unsere. Der Bitstream ist damit als Ursache ausgeschlossen.
+> Nach Flash des Original-Cores ist JTAG nicht mehr erreichbar
+> (`Gowin Device not found`, JTAG-Pins als GPIO) → normal.
 
-**Nächster Schritt in diesem Zustand: Konsole stromlos machen und neu
-anstecken**, dann erneut versuchen. Ein `jtagserver`-Prozess (PID 4612) lief
-zu diesem Zeitpunkt noch und liess sich nicht beenden.
+**Das erklärt `exit 50` bei jeder Schreiboperation.** Lesen der Device-Codes
+geht weiter, Schreiben nicht. Für erneutes Flashen muss die Konsole **mit
+gehaltenen Tasten S1/S2 eingeschaltet** werden.
+
+### Die Befehle, die funktionieren
+
+```
+Bitstream:  --cable-index 4 -d GW5AST-138C -r 53 --fsFile <fs>   --spiaddr 0x000000
+Kickstart:  --cable-index 4 -d GW5AST-138C -r 55 --mcuFile <bin> --spiaddr 0x600000
+Neustart:   --cable-index 4 -d GW5AST-138C -r 1
+```
+
+### Fallstricke
+
+| Falsch | Warum |
+|---|---|
+| `-r 8`, `-r 12` (Gowin-1-Codes) | GW5AST-138C ist Arora V und braucht eigene Codes (`spi flash not found`) |
+| `--fsFile` mit `.bin`/`.rom` | Gowin erwartet einen `.fs`-Header, schreibt sonst 0 Bytes |
+| Rohdaten mit `-r 56` verifizieren | meldet `Program and Verify Flash Failed`; `-r 55` genügt |
+| `openFPGALoader` unter Windows | FTDIBUS/VCP blockiert libusb (`usb_open() failed -4`) |
+| Booten ohne Kickstart an `0x600000` | Boot-FSM liest `0xFF`, CPU stürzt sofort ab → Schwarzbild |
+
+## Unser Core auf der Konsole: schwarzes Bild
+
+Stand 2026-11-13, gemessen vom Team:
+
+| Core | Ergebnis |
+|---|---|
+| Original NanoMig v0.9 | **läuft**, Diskettenhand auf HDMI |
+| unser `nanomig_tc138k.fs` (Flash `0x000000` + Kick 3.1 `0x600000`) | **LED dauerhaft grün, Bild schwarz, kein OSD** |
+
+Der Unterschied zum Original ist groß und umfasst drei Gruppen:
+
+1. **AGAIN/68020-Konfiguration** — `sysctrl.v`-Defaultwerte, `ENABLE_AGA`,
+   `ENABLE_TG68K`, `CPU_SLOW14`, `ENABLE_CACHE`, `CHIPRAM_CACHE`.
+2. **Reset- und JTAG-Änderungen** — in `5fb071f` wurde `bl616_jtagsel` aus den
+   Reset-Bedingungen in `top.sv` entfernt.
+3. **Sprite-Speicheranbindung** — Arbiter und Adapter zwischen CPU und dem
+   SDRAM-Anschluss p2 (`00e7ac3`, `7fc2fad`).
+
+Gruppe 3 ist der Hauptverdächtige für ein **gar nicht startendes** System:
+Der Arbiter sitzt im Speicherpfad des Prozessors. Ist er falsch, bootet
+nichts — auch wenn der Rest stimmt.
+
+Ein Test, der das entscheidet: dieselbe Konfiguration **ohne** die
+Sprite-Anbindung bauen (Speicherports wieder auf 0), flashen, booten.
+
+- Bootet dieser Stand → der Arbiter ist die Ursache.
+- Bootet er auch nicht → liegt es an Gruppe 1 oder 2, und die Sprite-Anbindung
+  ist unschuldig.
+
 
 
 ## Was am 2026-11-13 gemessen wurde
