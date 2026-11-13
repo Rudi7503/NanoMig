@@ -47,6 +47,24 @@ import sys
 import time
 from pathlib import Path
 
+try:
+    import winsound
+except Exception:
+    winsound = None
+
+
+def beep(freq, ms, mal=1, pause=0.08):
+    """Signalton - man hoert am Gerät, was der Rechner gerade tut."""
+    if winsound is None:
+        return
+    for i in range(mal):
+        try:
+            winsound.Beep(int(freq), int(ms))
+        except Exception:
+            pass
+        if i + 1 < mal:
+            time.sleep(pause)
+
 CLI = Path(r'C:\Gowin\Gowin_V1.9.12.04_x64\Programmer\bin\programmer_cli.exe')
 
 
@@ -89,6 +107,7 @@ def main():
         ok, out = probe_flash(args.cable, args.device)
         if ok:
             ident = [ln.strip() for ln in out.splitlines() if 'Flash' in ln or 'Detected' in ln]
+            beep(1200, 120, 1)   # JTAG offen: ein hoher Ton
             print('[JTAG_OK] %s' % (' | '.join(ident[:2]) if ident else 'Flash antwortet'))
             break
         note = 'Device not found' if 'not found' in out else out.strip().splitlines()[-1:] or ['keine Antwort']
@@ -97,6 +116,7 @@ def main():
             print('[WAIT] %s' % note)
             last_note = note
         if time.time() > deadline:
+            beep(250, 700, 1)
             print('[TIMEOUT] JTAG-Fenster nicht erwischt')
             return 2
         time.sleep(args.interval)
@@ -107,8 +127,10 @@ def main():
                    '--run', '53', '--fsFile', str(fs), '--spiaddr', '0x000000'])
     dauer = time.time() - t0
     if 'finished' in out.lower() and rc == 0:
+        beep(900, 120, 3)     # fertig: drei aufsteigende Toene waeren schoener, drei gleiche reichen
         print('[FLASH_OK] Bitstream geschrieben in %.1f s' % dauer)
     else:
+        beep(300, 500, 1)     # Fehler: tiefer, langer Ton
         print('[FLASH_FAIL] rc=%d nach %.1f s' % (rc, dauer))
         print('\n'.join(out.strip().splitlines()[-6:]))
         return 1
@@ -124,6 +146,7 @@ def main():
                        '--run', '55', '--mcuFile', str(rom), '--spiaddr', '0x600000'])
         dauer = time.time() - t0
         if 'finished' in out.lower() and rc == 0:
+            beep(1400, 150, 2)
             print('[KICK_OK] %s nach 0x600000 in %.1f s' % (rom.name, dauer))
         else:
             print('[KICK_FAIL] rc=%d' % rc)
