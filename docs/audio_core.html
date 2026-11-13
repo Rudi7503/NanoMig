@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NanoMig Audio-Kern</title>
+<style>
+  :root{
+    --bg:#0f1216; --panel:#171c23; --line:#2a3340; --ink:#e6edf3; --dim:#8b97a6;
+    --acc:#f0a04b; --acc2:#5fb3f0; --ok:#5ac77e; --bad:#e05a5a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:15px/1.6 "Segoe UI",system-ui,sans-serif}
+  header{padding:28px 24px 16px;border-bottom:1px solid var(--line);
+         background:linear-gradient(180deg,#161c24,#0f1216)}
+  h1{margin:0 0 4px;font-size:24px;font-weight:600}
+  h1 span{color:var(--acc)}
+  .sub{color:var(--dim);font-size:13px}
+  main{max-width:1180px;margin:0 auto;padding:24px}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+          padding:20px 22px;margin-bottom:20px}
+  h2{margin:0 0 14px;font-size:17px;font-weight:600;color:var(--acc)}
+  h3{margin:18px 0 8px;font-size:14px;font-weight:600;color:var(--acc2)}
+  p{margin:0 0 12px}
+  code{background:#0b0e12;border:1px solid var(--line);border-radius:4px;
+       padding:1px 5px;font:13px/1.4 Consolas,monospace;color:#cbd5e1}
+  .flow{display:flex;flex-wrap:wrap;gap:10px;align-items:stretch}
+  .node{flex:1 1 130px;min-width:120px;background:#0b0e12;border:1px solid var(--line);
+        border-radius:8px;padding:10px 12px}
+  .node b{display:block;font-size:13px;color:var(--acc)}
+  .node small{color:var(--dim);font-size:11.5px;line-height:1.35;display:block;margin-top:3px}
+  .arrow{align-self:center;color:var(--dim);font-size:18px}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line)}
+  th{color:var(--dim);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  td.num{text-align:right;font-family:Consolas,monospace}
+  .ok{color:var(--ok)} .bad{color:var(--bad)} .acc{color:var(--acc)}
+  .ctl{display:flex;flex-wrap:wrap;gap:18px;align-items:center;margin:6px 0 16px}
+  .ctl label{font-size:13px;color:var(--dim)}
+  input[type=range]{width:190px;accent-color:var(--acc)}
+  button{background:#0b0e12;color:var(--ink);border:1px solid var(--line);
+         border-radius:6px;padding:7px 14px;font-size:13px;cursor:pointer}
+  button:hover{border-color:var(--acc);color:var(--acc)}
+  button.on{background:var(--acc);color:#12161b;border-color:var(--acc);font-weight:600}
+  .grid32{display:grid;grid-template-columns:repeat(16,1fr);gap:4px;margin:10px 0}
+  .cell{aspect-ratio:1;border-radius:4px;background:#0b0e12;border:1px solid var(--line);
+        display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--dim)}
+  .cell.cur{background:var(--acc);color:#12161b;border-color:var(--acc);font-weight:700}
+  .cell.done{background:#1d2a33;color:var(--acc2);border-color:#26414f}
+  .fsm{display:grid;grid-template-columns:repeat(14,1fr);gap:4px;margin:10px 0}
+  .fsm div{height:34px;border-radius:4px;background:#0b0e12;border:1px solid var(--line);
+           display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--dim)}
+  .fsm div.on{background:var(--acc2);color:#0b1216;border-color:var(--acc2);font-weight:700}
+  .out{font-family:Consolas,monospace;font-size:13px;background:#0b0e12;
+       border:1px solid var(--line);border-radius:6px;padding:10px 12px;margin-top:10px}
+  .warn{border-left:3px solid var(--bad);background:#221416;padding:10px 14px;border-radius:0 6px 6px 0;margin:12px 0}
+  .note{border-left:3px solid var(--acc2);background:#101c22;padding:10px 14px;border-radius:0 6px 6px 0;margin:12px 0}
+  .badge{display:inline-block;font-size:11px;padding:1px 7px;border-radius:10px;
+         border:1px solid var(--line);color:var(--dim);margin-left:6px}
+  svg{max-width:100%;height:auto}
+  footer{color:var(--dim);font-size:12px;padding:10px 24px 40px;text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <h1>NanoMig <span>Audio-Kern</span></h1>
+  <div class="sub">32-Stimmen-Erweiterung &middot; Stand 01.11.2026 &middot; Branch <code>main</code> 2e3ed1e</div>
+</header>
+
+<main>
+
+<section>
+  <h2>1. Der Weg eines Samples</h2>
+  <div class="flow">
+    <div class="node"><b>CPU 68000</b><small>schreibt $DFF400..<br>Konfiguration je Stimme</small></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>Konfig-RAM</b><small>32 &times; {ptr, len, vol, per, ctrl, pred}<br>+ 32 &times; 5 Koeffizienten</small></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>DMA</b><small>1 Kanal, 32 Stimmen reihum<br>holt Worte aus dem RAM</small></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>FIFO</b><small>2048 &times; 16 Bit<br>64 Worte je Stimme<br>4 M10K</small></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>TDM</b><small>1 Takt je Stimme<br>PCM / ADPCM dekodieren</small></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>Biquad</b><small>2 DSPs<br>zeitmultiplex über Stimmen</small></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>Mixer</b><small>Lautstärke, Pan, AM<br>32-fach summiert</small></div>
+    <div class="arrow">&rarr;</div>
+    <div class="node"><b>Ausgang</b><small>AUDIO_L/R<br>+ Capture 2&times;4 KB</small></div>
+  </div>
+  <p style="margin-top:14px">Alles bis zur Ausgangsstufe läuft im selben Takt (<code>clk_28</code>).
+  Es gibt genau <b>eine</b> Timing-Domäne für den Audiopfad &mdash; wichtig für die Frage, warum
+  Timing-Verletzungen woanders sitzen.</p>
+</section>
+
+<section>
+  <h2>2. Die TDM-Runde &mdash; interaktiv</h2>
+  <p>Der Taktzähler <code>cur_voice</code> läuft 0&hellip;31 und springt dann zurück. In
+  <b>einem</b> Takt wird genau eine Stimme bedient. Eine Sampleperiode fasst
+  rund <b>597 Takte</b>, also etwa 18 vollständige Runden.</p>
+  <div class="ctl">
+    <button id="tdmPlay">Start</button>
+    <label>Tempo <input type="range" id="tdmSpeed" min="1" max="20" value="8"></label>
+    <span id="tdmInfo" class="acc" style="font-family:Consolas,monospace;font-size:13px"></span>
+  </div>
+  <div class="grid32" id="tdmGrid"></div>
+  <div class="out" id="tdmOut">cur_voice = 0 &middot; Runde 0</div>
+</section>
+
+<section>
+  <h2>3. Taktbudget &mdash; was passt in eine Periode?</h2>
+  <p>Jede gefilterte Stimme kostet <b>14 Takte</b> pro Kanal. Daraus folgt, wie viele
+  Stimmen ein DSP schafft und wann der zweite gebraucht wird.</p>
+  <div class="ctl">
+    <label>Stimmen <input type="range" id="nVoices" min="1" max="32" value="32"> <span id="nVoicesV" class="acc">32</span></label>
+    <label>Kaskadenstufen <input type="range" id="nStages" min="0" max="32" value="0"> <span id="nStagesV" class="acc">0</span></label>
+    <label>Kanäle
+      <select id="chMode" style="background:#0b0e12;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:6px 10px">
+        <option value="1">mono</option><option value="2" selected>stereo</option>
+      </select>
+    </label>
+  </div>
+  <table>
+    <tr><th>Größe</th><th>Wert</th><th>Bedeutung</th></tr>
+    <tr><td>Takte je Periode</td><td class="num" id="tbPer">597</td><td>bei 48 kHz</td></tr>
+    <tr><td>gefilterte Stimmen</td><td class="num" id="tbVoices">0</td><td>Kaskade + parallele Stimmen</td></tr>
+    <tr><td>Arbeit gesamt</td><td class="num" id="tbWork">0</td><td>Stimmen &times; 14 &times; Kanäle</td></tr>
+    <tr><td>pro DSP (2 vorhanden)</td><td class="num" id="tbSplit">0</td><td>Seitenteilung: je 1 Kanal</td></tr>
+    <tr><td>Auslastung</td><td class="num" id="tbLoad">&mdash;</td><td id="tbVerdict">&mdash;</td></tr>
+    <tr><td>Latenz der Kaskade</td><td class="num" id="tbLat">0 &micro;s</td><td id="tbLatNote">offener Pfad</td></tr>
+  </table>
+  <div class="note" id="tbNote">Seitenteilung: DSP&nbsp;0 rechnet links, DSP&nbsp;1 rechts, beide über alle 32 Stimmen.
+  Deshalb bleibt eine Kaskade innerhalb <i>einer</i> Instanz &mdash; Voraussetzung für die Auflösung in einer Periode.</div>
+</section>
+
+<section>
+  <h2>4. Der Biquad-Zustandsautomat &mdash; Schritt für Schritt</h2>
+  <p>Eine Stimme, ein Kanal: 14 Zustände. Die Multiplikationen sind um je einen Takt
+  versetzt (Operanden werden geladen, im nächsten Takt verbraucht) &mdash; das ist die
+  Pipeline <i>innerhalb</i> einer Stimme. Zwischen den Stimmen gibt es keine.</p>
+  <div class="ctl">
+    <button id="fsmPlay">Start</button>
+    <button id="fsmStep">Einzelschritt</button>
+  </div>
+  <div class="fsm" id="fsmRow"></div>
+  <div class="out" id="fsmOut">Zustand 0: nächste Stimme wählen</div>
+  <h3>Was in den Zuständen passiert</h3>
+  <table>
+    <tr><th>Zustand</th><th>Aktion</th></tr>
+    <tr><td>0</td><td>Stimme wählen, Koeffizient 0 und x1 lesen</td></tr>
+    <tr><td>1&ndash;2</td><td>x &times; b0 laden, Produkt in den Akkumulator</td></tr>
+    <tr><td>3&ndash;4</td><td>x1 &times; b1</td></tr>
+    <tr><td>5&ndash;6</td><td>x2 &times; b2</td></tr>
+    <tr><td>7&ndash;8</td><td>y1 &times; a1</td></tr>
+    <tr><td>9&ndash;10</td><td>y2 &times; a2, Sättigung</td></tr>
+    <tr><td>11&ndash;13</td><td>Zustand zurückschreiben: x1, x2, y1, y2</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>5. Kanalverkettung und Bypass</h2>
+  <p><code>v_ctrl[10:9]</code> wählt die Quelle einer Stimme. Damit lassen sich Stufen
+  hintereinanderschalten &mdash; der Ausgang einer Stimme wird zum Eingang der nächsten.</p>
+  <div class="ctl">
+    <button id="chainOpen" class="on">offene Kette</button>
+    <button id="chainRing">geschlossener Ring</button>
+  </div>
+  <svg viewBox="0 0 900 210" id="chainSvg"></svg>
+  <div class="out" id="chainOut"></div>
+  <div class="warn" id="chainWarn">
+    <b>Ringschluss beachten:</b> <code>prev_post_sample</code> wird jeden Takt neu geladen.
+    Bei <code>cur_voice = 0</code> steht dort der Ausgang von Stimme 31. Wer alle 32 Stimmen
+    verkettet, baut deshalb keinen offenen Pfad, sondern eine <b>geschlossene Schleife</b>
+    mit 32 &times; 12 dB/Oktave und einem Sample Verzögerung pro Stufe. Das kann schwingen.
+    Für eine offene Kaskade muss Stimme 0 auf <code>00</code> (eigene Quelle) stehen.
+  </div>
+</section>
+
+<section>
+  <h2>6. Register je Stimme</h2>
+  <p>Basis <code>$DFF400</code>, Schrittweite 16 Byte pro Stimme (wie Paula bei $DFF0A0).
+  Die Testprogramme setzen <code>AUDIO_EXT_BASE = $DFF400</code>.</p>
+  <table>
+    <tr><th>Offset</th><th>Name</th><th>Bits</th><th>Bedeutung</th></tr>
+    <tr><td>$00</td><td>AUD_PTRH</td><td>7:0</td><td>Startadresse [23:16]</td></tr>
+    <tr><td>$04</td><td>AUD_LENH</td><td>15:0</td><td>Länge in Bytes [31:16]</td></tr>
+    <tr><td>$0A</td><td>AUD_PER</td><td>15:0</td><td>Periodentakt der Stimme</td></tr>
+    <tr><td>$08</td><td>AUD_VOL</td><td>15:0</td><td>Lautstärke links [15:8], rechts [7:0]</td></tr>
+    <tr><td>$0C</td><td>AUD_CTRL</td><td>15:0</td><td>Bit0 16-Bit PCM &middot; Bit2 stereo &middot; Bit3 ADPCM &middot; Bit5:4 Bits/Code &middot; Bit7 Filter R &middot; Bit8 Filter L &middot; Bit10:9 Quelle</td></tr>
+    <tr><td>$1C</td><td>AUD_DELAY</td><td>&mdash;</td><td>Verzögerung vor dem Start</td></tr>
+    <tr><td>$1A</td><td>AUD_CMD</td><td>15:0</td><td>Bit0 Start &middot; Bit1 Stop</td></tr>
+    <tr><td>$0E</td><td>AUD_PRED</td><td>15:0</td><td>ADPCM-Prädiktor und Startindex</td></tr>
+    <tr><td>$10..$18</td><td>Koeffizienten</td><td>15:0</td><td>b0, b1, b2, a1, a2 als Q2.14</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>7. Konfigurations-RAM &mdash; wer schreibt, wer liest</h2>
+  <p>Drei völlig verschiedene Meister greifen auf dieselben Speicher zu. Das ist der Grund,
+  warum die Arrays so aussehen, wie sie aussehen &mdash; und warum manche im Block-RAM
+  landen und andere in Flip-Flops.</p>
+
+  <div class="ctl">
+    <button id="accWrite" class="on">CPU schreibt</button>
+    <button id="accTdm">TDM liest</button>
+    <button id="accFsm">Filter liest</button>
+  </div>
+  <svg viewBox="0 0 900 300" id="accSvg"></svg>
+  <div class="out" id="accOut"></div>
+
+  <h3>Die drei Zugriffe im Vergleich</h3>
+  <table>
+    <tr><th>Meister</th><th>Ziel</th><th>Adresse kommt von</th><th>Takt</th><th>Muster</th></tr>
+    <tr>
+      <td><b>CPU</b> (Schreiben)</td>
+      <td>Konfig-RAM, Koeffizienten</td>
+      <td><code>reg_addr[9:1]</code> &rarr; <code>{ch, off}</code></td>
+      <td>asynchron zum Audio</td>
+      <td><b>beliebig</b>, selten</td>
+    </tr>
+    <tr>
+      <td><b>TDM</b> (Lesen)</td>
+      <td>Konfig-RAM<br>(vol, per, ctrl, pred)</td>
+      <td><code>cur_voice_next</code></td>
+      <td>jeden Takt</td>
+      <td><b>sequenziell</b>, +1 je Takt</td>
+    </tr>
+    <tr>
+      <td><b>Filter</b> (Lesen)</td>
+      <td>Koeffizienten</td>
+      <td><code>{proc_ch, coeff_idx}</code></td>
+      <td>14 Takte je Stufe</td>
+      <td><b>sequenziell</b>, feste Stufe</td>
+    </tr>
+  </table>
+
+  <h3>Schreibpfad</h3>
+  <p>Die CPU legt <code>ch</code> und <code>off</code> an, die Dekodierung ist reine
+  Verdrahtung &mdash; kein Mux, keine Rechnung:</p>
+  <div class="out">reg_addr[9:1] &rarr; ch = reg_addr[9:5], off = reg_addr[4:1]
+
+if (write_once) case (off)
+    4'd4: ram_vol[ch]   &lt;= reg_wdata;   // Lautstärke
+    4'd5: ram_per[ch]   &lt;= reg_wdata;   // Periode
+    4'd6: ram_ctrl[ch]  &lt;= reg_wdata;   // Steuerbits
+    4'd7: ram_pred0[ch] &lt;= reg_wdata;   // ADPCM-Prädiktor
+endcase</div>
+  <p style="margin-top:12px">Ein einziger Schreibport, ein Takt, ein Wort. Die Adresse ist
+  ein Registerfeld &mdash; deshalb kostet der Schreibpfad fast nichts.</p>
+
+  <h3>Lesepfad</h3>
+  <p>Gelesen wird <b>jeden Takt</b>, und zwar für eine andere Stimme:</p>
+  <div class="out">dout_vol   &lt;= ram_vol[cur_voice_next];   // 1 Takt später gültig
+dout_per   &lt;= ram_per[cur_voice_next];
+dout_ctrl  &lt;= ram_ctrl[cur_voice_next];
+dout_pred0 &lt;= ram_pred0[cur_voice_next];</div>
+  <p style="margin-top:12px">Der Index <code>cur_voice_next</code> ist ein <b>Zähler</b>.
+  Fachlich ist das ein Ringbuffer-Lesezugriff &mdash; nichts Zufälliges, nichts Datenabhängiges.</p>
+
+  <div class="warn">
+    <b>Und trotzdem entsteht ein Multiplexer.</b> Ein Zähler als Adresse hilft nur dann,
+    wenn das Array ein <b>echter Speicher</b> ist. Liegt es in Flip-Flops, muss aus 32
+    möglichen Werten einer ausgewählt werden &mdash; ein 32:1-Mux aus LUTs, 16 Bit breit,
+    und zwar für jedes Array.
+    <br><br>
+    Ob es Flip-Flops werden, entscheidet allein der <b>Schreibpfad</b>. Zwei getrennt
+    bedingte Byte-Zuweisungen wie <code>if (reg_be[1]) mem[a][15:8] &lt;= …</code>
+    erkennt Quartus nicht als Speichermuster. Seit diese Arrays als Ganzwort geschrieben
+    werden, liegen sie im M10K &mdash; <b>1.751 Flip-Flops weniger</b>, im Filterbuild gemessen.
+  </div>
+
+  <h3>Was daraus für die Fläche folgt</h3>
+  <table>
+    <tr><th>Array</th><th>Größe</th><th>Schreibmuster</th><th>Landet in</th></tr>
+    <tr><td><code>fifo_ram</code></td><td>2048 &times; 16</td><td>Ganzwort</td><td class="ok">M10K (4 Blöcke)</td></tr>
+    <tr><td><code>ram_len</code>, <code>del_cnt</code>, <code>sdpb_*</code></td><td>32 &times; 16/32</td><td>Ganzwort</td><td class="ok">M10K</td></tr>
+    <tr><td><code>ram_vol/per/ctrl/pred0</code></td><td>32 &times; 16</td><td>Byte-Enable</td><td class="bad">Flip-Flops + 32:1-Muxe</td></tr>
+    <tr><td><code>coeff_ram</code></td><td>128 &times; 16</td><td>Byte-Enable</td><td class="bad">Flip-Flops + Muxe</td></tr>
+    <tr><td><code>state_ram</code></td><td>128 &times; 16</td><td>Ganzwort</td><td class="ok">M10K (18 Blöcke)</td></tr>
+  </table>
+  <p style="margin-top:12px">Die letzte Zeile ist die wichtigste Erkenntnis: <b>Dasselbe
+  Gerät, dasselbe Tool, dieselbe Größe</b> &mdash; nur das Schreibmuster entscheidet
+  zwischen einem Block-RAM und tausenden Flip-Flops.</p>
+</section>
+
+<section>
+  <h2>8. Die DMA-Maschine</h2>
+  <p>Ein einziger DMA-Kanal bedient alle 32 Stimmen reihum. Er hält immer nur
+  <b>eine</b> Anforderung offen &mdash; kein Puffer, keine Warteschlange, nur ein
+  Zeiger, der weiterwandert.</p>
+
+  <h3>Der Zustandsautomat</h3>
+  <svg viewBox="0 0 900 200" id="dmaFsmSvg"></svg>
+
+  <h3>Die Bedingungen</h3>
+  <table>
+    <tr><th>Signal</th><th>Bedeutung</th></tr>
+    <tr><td><code>dma_voice</code></td><td>5-Bit-Zähler, läuft 0&hellip;31 und springt zurück</td></tr>
+    <tr><td><code>dma_active</code></td><td>eine Anforderung ist unterwegs, wartet auf <code>dma_ack</code></td></tr>
+    <tr><td><code>|dma_len</code></td><td>die Stimme hat noch Bytes abzuholen</td></tr>
+    <tr><td><code>voice_state[1]</code></td><td>Stimme ist PREFILL oder PLAYING &mdash; gestoppte werden übersprungen</td></tr>
+    <tr><td><code>dma_fifo_full</code></td><td>FIFO hat &ge; 48 Wörter &mdash; dann pausiert diese Stimme</td></tr>
+  </table>
+
+  <div class="note">
+    <b>48 statt 64.</b> Der FIFO fasst 64 Wörter je Stimme, der DMA füllt aber nur bis 48.
+    Die 16 Wörter Reserve verhindern, dass Produzent und Konsument am selben Zeiger
+    gleichzeitig ankommen. Gleichzeitig weiß der TDM dadurch, dass immer Vorrat da ist.
+  </div>
+
+  <h3>Was bei einer Anforderung passiert</h3>
+  <div class="out">1. dma_ptr  = {ram_ptr[dma_voice], 1'b0}      23-Bit-Wort → 24-Bit-Byteadresse
+2. Anforderung an den Chip-DMA-Arbiter, wartet auf ack
+3. bei ack: fifo_ram[{dma_voice, dma_wrptr}] &lt;= dma_data
+            ram_wrptr[dma_voice] &lt;= dma_wrptr + 1
+            ram_ptr[dma_voice]   &lt;= dma_ptr + 1        (Wortzeiger)
+            ram_len[dma_voice]   &lt;= dma_len - 2        (Bytezähler)
+            dma_voice            &lt;= dma_voice + 1</div>
+
+  <h3>Beim Start einer Stimme</h3>
+  <div class="out">if (dma_need_init[dma_voice]):
+    ram_ptr[dma_voice]   &lt;= {cfg_ptr_hi, cfg_ptr_lo[15:1]}   // Adresse aus dem Register
+    ram_len[dma_voice]   &lt;= {cfg_len_hi, cfg_len_lo}         // Länge in Bytes
+    ram_wrptr[dma_voice] &lt;= 0                                // frisch anfangen</div>
+  <p style="margin-top:12px"><code>dma_need_init</code> wird gesetzt bei: Startbefehl,
+  Ablauf der Startverzögerung, und Loop-Neuladen (<code>loop_reload</code>).
+  Der TDM setzt dabei im selben Zug seinen Lesenzeiger auf 0.</p>
+
+  <h3>Interaktiv: der Zeiger läuft</h3>
+  <div class="ctl">
+    <button id="dmaStep">Takt</button>
+    <button id="dmaRun">Start</button>
+    <button id="dmaReset">Zurücksetzen</button>
+    <span id="dmaInfo" class="acc" style="font-family:Consolas,monospace;font-size:13px"></span>
+  </div>
+  <div id="dmaTable"></div>
+  <div class="out" id="dmaOut"></div>
+</section>
+<section>
+  <h2>9. Gemessene Fläche</h2>
+  <p>Aus den Fitter-Reports. Die Zahlen schwanken je Build um ein bis zwei Prozent,
+  weil die Packung von der Platzierung abhängt &mdash; für Flächenvergleiche ist die
+  Synthese-Schätzung die stabilere Größe.</p>
+  <table>
+    <tr><th>Block</th><th>ALMs</th><th>Anteil</th></tr>
+    <tr><td><code>emu</code> (gesamte FPGA-Seite)</td><td class="num">31.537</td><td class="num">81 %</td></tr>
+    <tr><td>&nbsp;&nbsp;<code>minimig</code></td><td class="num">14.731</td><td class="num">38 %</td></tr>
+    <tr><td>&nbsp;&nbsp;<code>cpu_wrapper</code></td><td class="num">9.753</td><td class="num">25 %</td></tr>
+    <tr><td>&nbsp;&nbsp;<b><code>audio_ext</code></b></td><td class="num"><b>7.876</b></td><td class="num"><b>20 %</b></td></tr>
+    <tr><td>&nbsp;&nbsp;&nbsp;&nbsp;<code>biquad_inst0</code></td><td class="num">3.966</td><td class="num">10 %</td></tr>
+    <tr><td>&nbsp;&nbsp;<code>ascal</code> (Video-Scaler)</td><td class="num">2.136</td><td class="num">6 %</td></tr>
+    <tr><td>&nbsp;&nbsp;<code>denise</code></td><td class="num">1.898</td><td class="num">5 %</td></tr>
+    <tr><td>&nbsp;&nbsp;<code>paula</code></td><td class="num">1.431</td><td class="num">4 %</td></tr>
+  </table>
+  <h3>Wo im Audio-Block die Fläche sitzt</h3>
+  <p>Nicht in den Rechenwerken, sondern in <b>Register-Arrays mit variablem Index</b>:
+  Jeder Lesezugriff darauf wird zu einem 32:1-Multiplexer aus LUTs. Vier solche Arrays
+  (Volume, Periode, Control, Prädiktor) kosteten zusammen rund 2.000 Flip-Flops und
+  ebenso viele Muxe &mdash; bis sie als Ganzwort geschrieben wurden und damit im
+  Block-RAM landeten.</p>
+  <table>
+    <tr><th>Änderung</th><th>ALMs</th><th>Register</th><th>RAM</th></tr>
+    <tr><td><code>main</code></td><td class="num">38.355</td><td class="num">53.135</td><td class="num">327</td></tr>
+    <tr><td>Ganzwort-Schreiben (BRAM)</td><td class="num ok">38.039</td><td class="num ok">51.384</td><td class="num">331</td></tr>
+    <tr><td>Filterbänke zusammengelegt</td><td class="num bad">38.686</td><td class="num">53.334</td><td class="num">324</td></tr>
+    <tr><td>beides kombiniert</td><td class="num ok">37.937</td><td class="num ok">51.142</td><td class="num">328</td></tr>
+    <tr><td>Audio-DMA bis Fast-RAM</td><td class="num">38.669</td><td class="num">53.080</td><td class="num">327</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>10. Die vier Korrekturen</h2>
+  <table>
+    <tr><th>#</th><th>Wo</th><th>Was falsch war</th><th>Beleg</th></tr>
+    <tr><td>6a</td><td>Mixer</td><td>Teilbereich <code>mul[23:8]</code> ist unsigned &rarr; negatives Produkt wird Vollaussteuerung</td><td>4 &times; <code>$signed()</code></td></tr>
+    <tr><td>6b</td><td>TDM</td><td>Loop setzte PCM auf <code>pred0 = 0</code> &rarr; jedes Loop ein Nullsample</td><td>500 &rarr; 0 Nullframes</td></tr>
+    <tr><td>8a</td><td>Filter</td><td>RAM-Ausgang und Verbrauch im selben Takt; Historie nach Reset ungültig</td><td>Simulation + Hardware</td></tr>
+    <tr><td>8b</td><td>Filter</td><td>DSP war an den TDM-Slot gebunden</td><td>1.048.576 Auswahlfälle</td></tr>
+  </table>
+  <h3>Zwei weitere, noch nicht auf Hardware</h3>
+  <table>
+    <tr><th>#</th><th>Wo</th><th>Was falsch war</th><th>Beleg</th></tr>
+    <tr><td>96d4b06</td><td>TDM</td><td>16-Bit-Stereo war ein Deadlock: Zähler blieb bei 16, gebraucht 32</td><td>decodes 0 &rarr; 177</td></tr>
+    <tr><td>d25f8d8</td><td>TDM</td><td>Linker und rechter Kanal bekamen dasselbe Sample</td><td>L&ne;R in 201.795 von 201.795</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>11. Offene Punkte</h2>
+  <table>
+    <tr><th>Punkt</th><th>Stand</th></tr>
+    <tr><td>Pipelining über Stimmen</td><td>448 &rarr; ~224 Takte möglich, zurückgestellt</td></tr>
+    <tr><td>Kaskade in einer Periode</td><td>fester Scheduler gebaut, Abweichung ungeklärt (<code>wip/fixed-order-scheduler</code>)</td></tr>
+    <tr><td>Seitenteilung</td><td>im Bau, Fitter bricht bei 104 % ab &mdash; RAM-Inferenz verloren</td></tr>
+    <tr><td>Timing</td><td>Setup &minus;1,846 ns in der CPU-Domäne, TNS &minus;213 ns &rarr; viele knappe Pfade</td></tr>
+  </table>
+</section>
+
+</main>
+<footer>Erzeugt aus den Quellen und Fitter-Reports des NanoMig-Projekts. Zahlen ohne Gewähr auf Wiederholbarkeit der Platzierung.</footer>
+
+<script>
+// ---------- 2. TDM ----------
+const N = 32;
+const grid = document.getElementById('tdmGrid');
+const cells = [];
+for (let i = 0; i < N; i++) {
+  const d = document.createElement('div');
+  d.className = 'cell'; d.textContent = i;
+  grid.appendChild(d); cells.push(d);
+}
+let cur = 0, round = 0, playing = false, timer = null;
+const tdmOut = document.getElementById('tdmOut');
+const tdmInfo = document.getElementById('tdmInfo');
+function tdmTick() {
+  cells.forEach((c, i) => { c.className = 'cell' + (i === cur ? ' cur' : (i < cur ? ' done' : '')); });
+  tdmOut.textContent = 'cur_voice = ' + cur + ' · Runde ' + round +
+    '  →  Stimme ' + cur + ' liest FIFO, dekodiert, übergibt an den Filter';
+  if (cur === N - 1) { round++; }
+  cur = (cur + 1) % N;
+}
+function tdmStart() {
+  playing = !playing;
+  document.getElementById('tdmPlay').textContent = playing ? 'Stop' : 'Start';
+  document.getElementById('tdmPlay').classList.toggle('on', playing);
+  if (playing) {
+    const s = 210 - document.getElementById('tdmSpeed').value * 10;
+    timer = setInterval(tdmTick, s);
+  } else clearInterval(timer);
+}
+document.getElementById('tdmPlay').onclick = tdmStart;
+document.getElementById('tdmSpeed').oninput = () => { if (playing) { clearInterval(timer); const s = 210 - document.getElementById('tdmSpeed').value * 10; timer = setInterval(tdmTick, s); } };
+tdmTick();
+
+// ---------- 3. Taktbudget ----------
+const PER = 597.6;
+function budget() {
+  const voices = +document.getElementById('nVoices').value;
+  const stages = +document.getElementById('nStages').value;
+  const ch = +document.getElementById('chMode').value;
+  document.getElementById('nVoicesV').textContent = voices;
+  document.getElementById('nStagesV').textContent = stages;
+  const filtered = Math.min(voices, stages > 0 ? stages : voices);
+  const work = filtered * 14 * ch;
+  const perDsp = work / 2;               // Seitenteilung
+  const load = perDsp / PER;
+  document.getElementById('tbVoices').textContent = filtered;
+  document.getElementById('tbWork').textContent = work;
+  document.getElementById('tbSplit').textContent = Math.round(perDsp);
+  document.getElementById('tbLoad').textContent = (load * 100).toFixed(0) + ' %';
+  const v = document.getElementById('tbVerdict');
+  if (load <= 1) { v.textContent = 'passt'; v.className = 'ok'; }
+  else { v.textContent = 'passt nicht — zweiter DSP nötig oder weniger Stufen'; v.className = 'bad'; }
+  const lat = stages * 20.833;
+  document.getElementById('tbLat').textContent = lat.toFixed(0) + ' µs';
+  document.getElementById('tbLatNote').textContent = stages === 0 ? 'keine Kaskade' :
+    stages + ' Stufen × 20,8 µs (eine Sampleperiode je Stufe)';
+  const note = document.getElementById('tbNote');
+  if (stages > 0 && ch === 2 && stages > 16) {
+    note.innerHTML = '<b>Grenze erreicht:</b> ' + stages + ' Stufen stereo brauchen ' +
+      (stages * 28) + ' Takte je DSP, verfügbar sind 597. Baue die Kette kürzer oder teile sie auf.';
+    note.style.borderLeftColor = 'var(--bad)';
+  } else {
+    note.innerHTML = 'Seitenteilung: DSP&nbsp;0 rechnet links, DSP&nbsp;1 rechts, beide über alle 32 Stimmen. ' +
+      'Deshalb bleibt eine Kaskade innerhalb <i>einer</i> Instanz.';
+    note.style.borderLeftColor = 'var(--acc2)';
+  }
+}
+['nVoices', 'nStages', 'chMode'].forEach(id => {
+  document.getElementById(id).oninput = budget;
+  document.getElementById(id).onchange = budget;
+});
+budget();
+
+// ---------- 4. FSM ----------
+const fsmRow = document.getElementById('fsmRow');
+const fcells = [];
+const fsmText = [
+  '0 — Stimme wählen, b0 und x1 lesen',
+  '1 — Operanden laden: x × b0',
+  '2 — Produkt in den Akkumulator',
+  '3 — Operanden laden: x1 × b1',
+  '4 — Produkt addieren',
+  '5 — Operanden laden: x2 × b2',
+  '6 — Produkt addieren',
+  '7 — Operanden laden: y1 × a1',
+  '8 — Produkt addieren',
+  '9 — Operanden laden: y2 × a2',
+  '10 — Produkt addieren, Sättigung, x2 ← x1',
+  '11 — x1 ← x',
+  '12 — y2 ← y1',
+  '13 — y1 ← Ergebnis, Ausgabe gültig'
+];
+for (let i = 0; i < 14; i++) {
+  const d = document.createElement('div'); d.textContent = i; fsmRow.appendChild(d); fcells.push(d);
+}
+let fs = 0, fTimer = null;
+function fsmDraw() {
+  fcells.forEach((c, i) => c.className = i === fs ? 'on' : '');
+  document.getElementById('fsmOut').textContent = 'Zustand ' + fsmText[fs];
+}
+document.getElementById('fsmStep').onclick = () => { fs = (fs + 1) % 14; fsmDraw(); };
+document.getElementById('fsmPlay').onclick = function () {
+  if (fTimer) { clearInterval(fTimer); fTimer = null; this.textContent = 'Start'; this.classList.remove('on'); }
+  else { fTimer = setInterval(() => { fs = (fs + 1) % 14; fsmDraw(); }, 420); this.textContent = 'Stop'; this.classList.add('on'); }
+};
+fsmDraw();
+
+// ---------- 5. Verkettung ----------
+const svg = document.getElementById('chainSvg');
+const chainOut = document.getElementById('chainOut');
+function drawChain(ring) {
+  const n = 8, boxW = 82, gap = (900 - n * boxW) / (n + 1);
+  let s = '';
+  const y = 70;
+  for (let i = 0; i < n; i++) {
+    const x = gap + i * (boxW + gap);
+    s += `<rect x="${x}" y="${y}" width="${boxW}" height="46" rx="7" fill="#0b0e12" stroke="${i === 7 ? '#f0a04b' : '#2a3340'}" stroke-width="1.5"/>`;
+    s += `<text x="${x + boxW / 2}" y="${y + 21}" fill="#e6edf3" font-size="12" text-anchor="middle" font-family="Consolas,monospace">ch${i}</text>`;
+    s += `<text x="${x + boxW / 2}" y="${y + 36}" fill="#8b97a6" font-size="9.5" text-anchor="middle">Filter</text>`;
+    if (i < n - 1) {
+      const x2 = x + boxW, x3 = gap + (i + 1) * (boxW + gap);
+      s += `<line x1="${x2}" y1="${y + 23}" x2="${x3}" y2="${y + 23}" stroke="#5fb3f0" stroke-width="1.6" marker-end="url(#a)"/>`;
+    }
+  }
+  // Rückführung
+  if (ring) {
+    const x0 = gap + 0 * (boxW + gap), xl = gap + (n - 1) * (boxW + gap);
+    s += `<path d="M ${xl + boxW / 2} ${y + 46} C ${xl} ${y + 120}, ${x0} ${y + 120}, ${x0 + boxW / 2} ${y + 46}" fill="none" stroke="#e05a5a" stroke-width="1.8" stroke-dasharray="5 4" marker-end="url(#b)"/>`;
+    s += `<text x="450" y="${y + 118}" fill="#e05a5a" font-size="11" text-anchor="middle">Rückführung ch7 → ch0 (in Hardware: ch31 → ch0)</text>`;
+    chainOut.innerHTML = 'Geschlossener Ring: <span class="bad">jede Stufe sieht den Ausgang der vorigen, auch am Ende der Kette.</span> Die Schleife kann schwingen.';
+  } else {
+    chainOut.innerHTML = 'Offene Kette: ch0 liest <code>v_input_src = 00</code> (eigene Quelle), ch1..ch' + (n - 1) +
+      ' lesen <code>01</code> oder <code>10</code>. ' + (n - 1) + ' Filterstufen, ' + (n - 1) + ' × 12 dB/Oktave.';
+  }
+  svg.innerHTML = '<defs><marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#5fb3f0"/></marker><marker id="b" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#e05a5a"/></marker></defs>' + s;
+}
+document.getElementById('chainOpen').onclick = function () {
+  this.classList.add('on'); document.getElementById('chainRing').classList.remove('on');
+  document.getElementById('chainWarn').style.display = 'none'; drawChain(false);
+};
+document.getElementById('chainRing').onclick = function () {
+  this.classList.add('on'); document.getElementById('chainOpen').classList.remove('on');
+  document.getElementById('chainWarn').style.display = 'block'; drawChain(true);
+};
+document.getElementById('chainWarn').style.display = 'none';
+drawChain(false);
+// ---------- 7. Konfigurations-RAM: Zugriffe ----------
+const accSvg = document.getElementById('accSvg');
+const accOut = document.getElementById('accOut');
+const ACC = {
+  write: {
+    text: 'CPU schreibt: Adresse {ch, off} aus dem Registerfeld, ein Wort, ein Takt. Kein Mux — nur Verdrahtung.',
+    hi: ['p-cpu-w', 'p-w-mem'],
+    ex: 'Beispiel: MOVE.W #$0100,$DFF464  →  ch = (0x464-0x400)/16 = 6, off = 4  →  ram_vol[6] = 0x0100'
+  },
+  tdm: {
+    text: 'TDM liest: cur_voice_next zählt 0…31, jeden Takt ein anderer Eintrag. Das Muster ist ein Ringbuffer, kein Zufall.',
+    hi: ['p-mem-tdm', 'p-tdm'],
+    ex: 'Beispiel: cur_voice = 11  →  gelesen wird ram_vol[12], ram_per[12], ram_ctrl[12], ram_pred0[12]'
+  },
+  fsm: {
+    text: 'Filter liest: feste Stufe, Schritt für Schritt durch die fünf Koeffizienten. Auch hier ein Zähler, kein Datenpfad.',
+    hi: ['p-mem-fsm', 'p-fsm'],
+    ex: 'Beispiel: proc_ch = 17, Zustand 3  →  coeff_ram[17*8 + 1] = b1'
+  }
+};
+function drawAcc(kind) {
+  const x = 30, y0 = 40;
+  let s = '<defs><marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#5fb3f0"/></marker></defs>';
+  // CPU
+  s += `<rect x="${x}" y="${y0}" width="160" height="60" rx="8" fill="#0b0e12" stroke="#2a3340"/>`;
+  s += `<text x="${x + 80}" y="${y0 + 26}" fill="#f0a04b" font-size="13" text-anchor="middle" font-weight="600">CPU 68000</text>`;
+  s += `<text x="${x + 80}" y="${y0 + 45}" fill="#8b97a6" font-size="10.5" text-anchor="middle">reg_addr, reg_wdata, reg_be</text>`;
+  // TDM
+  s += `<rect x="${x}" y="${y0 + 130}" width="160" height="60" rx="8" fill="#0b0e12" stroke="#2a3340"/>`;
+  s += `<text x="${x + 80}" y="${y0 + 156}" fill="#5fb3f0" font-size="13" text-anchor="middle" font-weight="600">TDM</text>`;
+  s += `<text x="${x + 80}" y="${y0 + 175}" fill="#8b97a6" font-size="10.5" text-anchor="middle">cur_voice_next (Zähler)</text>`;
+  // FSM
+  s += `<rect x="${x}" y="${y0 + 220}" width="160" height="60" rx="8" fill="#0b0e12" stroke="#2a3340"/>`;
+  s += `<text x="${x + 80}" y="${y0 + 246}" fill="#5fb3f0" font-size="13" text-anchor="middle" font-weight="600">Biquad-FSM</text>`;
+  s += `<text x="${x + 80}" y="${y0 + 265}" fill="#8b97a6" font-size="10.5" text-anchor="middle">{proc_ch, coeff_idx}</text>`;
+  // Speicher
+  const mx = 330, mw = 240;
+  s += `<rect x="${mx}" y="${y0}" width="${mw}" height="80" rx="8" fill="#0b0e12" stroke="#f0a04b" stroke-width="1.5"/>`;
+  s += `<text x="${mx + mw / 2}" y="${y0 + 22}" fill="#f0a04b" font-size="12.5" text-anchor="middle" font-weight="600">Konfig-RAM</text>`;
+  s += `<text x="${mx + mw / 2}" y="${y0 + 40}" fill="#e6edf3" font-size="11" text-anchor="middle" font-family="Consolas,monospace">32 × 16 Bit × 4</text>`;
+  s += `<text x="${mx + mw / 2}" y="${y0 + 58}" fill="#8b97a6" font-size="10" text-anchor="middle">vol · per · ctrl · pred0</text>`;
+  s += `<text x="${mx + mw / 2}" y="${y0 + 72}" fill="#5ac77e" font-size="10" text-anchor="middle">M10K, 1 Block je Array</text>`;
+  s += `<rect x="${mx}" y="${y0 + 220}" width="${mw}" height="80" rx="8" fill="#0b0e12" stroke="#e05a5a" stroke-width="1.5"/>`;
+  s += `<text x="${mx + mw / 2}" y="${y0 + 242}" fill="#e05a5a" font-size="12.5" text-anchor="middle" font-weight="600">Koeffizienten-RAM</text>`;
+  s += `<text x="${mx + mw / 2}" y="${y0 + 260}" fill="#e6edf3" font-size="11" text-anchor="middle" font-family="Consolas,monospace">32 × 8 Worte</text>`;
+  s += `<text x="${mx + mw / 2}" y="${y0 + 278}" fill="#8b97a6" font-size="10" text-anchor="middle">b0 · b1 · b2 · a1 · a2</text>`;
+  s += `<text x="${mx + mw / 2}" y="${y0 + 293}" fill="#e05a5a" font-size="10" text-anchor="middle">heute Flip-Flops + 32:1-Muxe</text>`;
+  // Voice-Logik rechts
+  const rx = 660;
+  s += `<rect x="${rx}" y="${y0 + 130}" width="200" height="60" rx="8" fill="#0b0e12" stroke="#2a3340"/>`;
+  s += `<text x="${rx + 100}" y="${y0 + 156}" fill="#e6edf3" font-size="12" text-anchor="middle">Stimmen-Logik</text>`;
+  s += `<text x="${rx + 100}" y="${y0 + 175}" fill="#8b97a6" font-size="10" text-anchor="middle">Lautstärke, Pan, Mixer</text>`;
+  s += `<rect x="${rx}" y="${y0 + 220}" width="200" height="60" rx="8" fill="#0b0e12" stroke="#2a3340"/>`;
+  s += `<text x="${rx + 100}" y="${y0 + 246}" fill="#e6edf3" font-size="12" text-anchor="middle">DSP</text>`;
+  s += `<text x="${rx + 100}" y="${y0 + 265}" fill="#8b97a6" font-size="10" text-anchor="middle">Multiplizierer, Akkumulator</text>`;
+  // Pfade
+  const on = ACC[kind].hi;
+  const col = id => on.includes(id) ? '#f0a04b' : '#3a4655';
+  const w = id => on.includes(id) ? 3 : 1.4;
+  s += `<line id="p-cpu-w" x1="${x + 160}" y1="${y0 + 30}" x2="${mx}" y2="${y0 + 30}" stroke="${col('p-cpu-w')}" stroke-width="${w('p-cpu-w')}" marker-end="url(#ar)"/>`;
+  s += `<text x="${mx - 10}" y="${y0 + 22}" fill="${col('p-cpu-w')}" font-size="10" text-anchor="end">schreiben</text>`;
+  s += `<line id="p-mem-tdm" x1="${mx}" y1="${y0 + 60}" x2="${x + 160}" y2="${y0 + 150}" stroke="${col('p-mem-tdm')}" stroke-width="${w('p-mem-tdm')}" marker-end="url(#ar)" transform="translate(0,0)"/>`;
+  s += `<text x="${mx - 10}" y="${y0 + 100}" fill="${col('p-mem-tdm')}" font-size="10" text-anchor="end">lesen</text>`;
+  s += `<line id="p-tdm" x1="${x + 160}" y1="${y0 + 160}" x2="${rx}" y2="${y0 + 160}" stroke="${col('p-tdm')}" stroke-width="${w('p-tdm')}" marker-end="url(#ar)"/>`;
+  s += `<line id="p-mem-fsm" x1="${mx}" y1="${y0 + 250}" x2="${x + 160}" y2="${y0 + 250}" stroke="${col('p-mem-fsm')}" stroke-width="${w('p-mem-fsm')}" marker-end="url(#ar)"/>`;
+  s += `<line id="p-fsm" x1="${x + 160}" y1="${y0 + 260}" x2="${rx}" y2="${y0 + 250}" stroke="${col('p-fsm')}" stroke-width="${w('p-fsm')}" marker-end="url(#ar)"/>`;
+  accSvg.innerHTML = s;
+  accOut.textContent = ACC[kind].text + '   |   ' + ACC[kind].ex;
+}
+const accBtns = { accWrite: 'write', accTdm: 'tdm', accFsm: 'fsm' };
+Object.keys(accBtns).forEach(id => {
+  document.getElementById(id).onclick = function () {
+    Object.keys(accBtns).forEach(o => document.getElementById(o).classList.remove('on'));
+    this.classList.add('on');
+    drawAcc(accBtns[id]);
+  };
+});
+drawAcc('write');
+// ---------- 8. DMA ----------
+(function(){
+  const svg = document.getElementById('dmaFsmSvg');
+  const st = [
+    {x:40,  l:'IDLE',    s:'dma_voice prüfen'},
+    {x:270, l:'REQUEST', s:'dma_active = 1'},
+    {x:500, l:'WAIT',    s:'auf dma_ack warten'},
+    {x:730, l:'PUSH',    s:'FIFO schreiben, Zähler ++'}
+  ];
+  let s = '<defs><marker id="da" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#5fb3f0"/></marker></defs>';
+  st.forEach((n, i) => {
+    s += `<rect x="${n.x}" y="60" width="150" height="64" rx="9" fill="#0b0e12" stroke="${i===0?'#f0a04b':'#2a3340'}" stroke-width="1.5"/>`;
+    s += `<text x="${n.x+75}" y="86" fill="#e6edf3" font-size="13" text-anchor="middle" font-weight="600">${n.l}</text>`;
+    s += `<text x="${n.x+75}" y="105" fill="#8b97a6" font-size="10.5" text-anchor="middle">${n.s}</text>`;
+    if (i < 3) s += `<line x1="${n.x+150}" y1="92" x2="${st[i+1].x-6}" y2="92" stroke="#5fb3f0" stroke-width="1.6" marker-end="url(#da)"/>`;
+  });
+  s += `<path d="M 805 60 C 805 18, 115 18, 115 60" fill="none" stroke="#5fb3f0" stroke-width="1.6" marker-end="url(#da)"/>`;
+  s += `<text x="460" y="24" fill="#8b97a6" font-size="10.5" text-anchor="middle">nach jedem Push: nächste Stimme</text>`;
+  s += `<text x="460" y="160" fill="#8b97a6" font-size="11" text-anchor="middle">übersprungen wird eine Stimme, wenn len = 0, sie gestoppt ist oder ihr FIFO ≥ 48 Wörter hat</text>`;
+  svg.innerHTML = s;
+
+  const N = 8, MAXF = 64, THRESH = 48;
+  let v, active, wait, cur, pushes, skips, cycles;
+  function reset(){
+    v = [];
+    for (let i = 0; i < N; i++) v.push({len: 128 + i * 16, len0: 128 + i * 16, ptr: 0x1000 + i * 0x40,
+      ptr0: 0x1000 + i * 0x40, state: (i % 3 === 2) ? 0 : 1, wr: 0, rd: 0, loops: 0});
+    active = false; wait = 0; cur = 0; pushes = 0; skips = 0; cycles = 0; reloads = 0;
+    render('zurückgesetzt');
+  }
+  function fill(i){ return (v[i].wr - v[i].rd) & 63; }
+  function tick(){
+    cycles++;
+    if (active) {
+      if (wait > 0) { wait--; render('warten auf dma_ack für Stimme ' + cur); return; }
+      // Push
+      v[cur].wr = (v[cur].wr + 1) & 63;
+      v[cur].ptr += 1; v[cur].len -= 2; pushes++;
+      active = false; cur = (cur + 1) % N;
+      render('Push für Stimme ' + ((cur + N - 1) % N) + ' erledigt, Zähler steht auf ' + cur);
+      return;
+    }
+    const x = v[cur];
+    const ok = x.len > 0 && x.state === 1 && fill(cur) < THRESH;
+    if (ok) { active = true; wait = 1; render('Anforderung für Stimme ' + cur + ' gestartet'); }
+    if (x.len <= 0 && fill(cur) === 0 && x.state === 1 && x.wr === x.rd) {
+      x.len = x.len0; x.ptr = x.ptr0; x.wr = 0; x.rd = 0; x.loops++; reloads++;
+      render('Stimme ' + cur + ': len = 0, FIFO leer → Loop-Neuladen (Zeiger zurück auf 0x' + x.ptr0.toString(16) + ')');
+      return;
+    }
+    if (!ok) { skips++; cur = (cur + 1) % N; render('Stimme ' + ((cur + N - 1) % N) + ' übersprungen (' + (x.len <= 0 ? 'len = 0, FIFO noch gefüllt' : x.state === 0 ? 'gestoppt' : 'FIFO voll') + ')'); }
+  }
+  function render(msg){
+    let h = '<table><tr><th>Stimme</th><th>Zustand</th><th>len</th><th>Zeiger</th><th>FIFO-Füllstand</th></tr>';
+    for (let i = 0; i < N; i++) {
+      const f = fill(i), pct = f / MAXF * 100;
+      const col = f >= THRESH ? '#e05a5a' : (f > 0 ? '#5ac77e' : '#2a3340');
+      h += `<tr${i === cur ? ' style="background:#1b2430"' : ''}><td>${i}${i === cur ? ' ◄' : ''}</td>` +
+           `<td>${v[i].state ? 'aktiv' : 'gestoppt'}</td><td class="num">${v[i].len}</td>` +
+           `<td class="num">0x${v[i].ptr.toString(16)}</td>` +
+           `<td><div style="background:#0b0e12;border:1px solid #2a3340;border-radius:4px;height:12px;width:100%">` +
+           `<div style="width:${pct}%;height:100%;background:${col};border-radius:3px"></div></div></td></tr>`;
+    }
+    h += '</table>';
+    document.getElementById('dmaTable').innerHTML = h;
+    document.getElementById('dmaInfo').textContent = 'Takt ' + cycles + ' · Pushes ' + pushes + ' · übersprungen ' + skips + ' · Loops ' + reloads;
+    document.getElementById('dmaOut').textContent = msg;
+  }
+  document.getElementById('dmaStep').onclick = tick;
+  document.getElementById('dmaReset').onclick = reset;
+  let run = null;
+  document.getElementById('dmaRun').onclick = function(){
+    if (run) { clearInterval(run); run = null; this.textContent = 'Start'; this.classList.remove('on'); }
+    else { run = setInterval(tick, 70); this.textContent = 'Stop'; this.classList.add('on'); }
+  };
+  reset();
+})();
+</script>
+</body>
+</html>

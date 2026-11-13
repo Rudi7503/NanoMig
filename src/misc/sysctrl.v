@@ -141,23 +141,23 @@ always @(posedge clk) begin
       // OSD value defaults. These should be sane defaults, but the MCU
       // will very likely override these early
       system_floppy_drives <= 2'd0;
-      system_floppy_turbo <= 1'b1;
+      system_floppy_turbo <= AGA ? 1'b1 : 1'b0;
       system_floppy_wrprot <= 1'b1;
-      system_cpu <= 2'b11;
-      system_chipset <= AGA ? 3'd6 : 3'd2;
-      system_video_mode <= 1'b0;
+      system_cpu <= AGA ? 2'b11 : 2'b00; // 68020 for AGA, 68000 for OCS
+      system_chipset <= AGA ? 3'd6 : 3'd0; // AGA (3'd6) or OCS-A500 (3'd0)
+      system_video_mode <= 1'b1; // 1 = NTSC 60Hz (PC-Monitor kompatibel)
       system_video_screen <= 2'd0;
       system_video_filter <= 2'd0;
       system_video_scanlines <= 2'd0;
-      system_chipmem <= AGA ? 2'd2 : 2'd0;
-      system_slowmem <= 2'd1;
-      system_fastmem <= 2'd0;
-      system_turbo <= 3'b011;
-      system_ide_enable <= 1'b0;
+      system_chipmem <= AGA ? 2'd3 : 2'd0; // 2MB Chip-RAM for AGA, 512k for OCS
+      system_slowmem <= AGA ? 2'd0 : 2'd1; // No slowmem for AGA, 512k for OCS
+      system_fastmem <= 2'd2; // 4 MB Fast-RAM (Kickstart 3.1 braucht mehr als 1.3)
+      system_turbo <= AGA ? 3'b011 : 3'b000; // Turbo for AGA, OFF for OCS
+      system_ide_enable <= AGA ? 1'b1 : 1'b0; // IDE enabled for AGA
       system_joy_swap <= 1'b1;
       system_volume <= 3'b010;
 	  system_stereo_mix <= 1'b1;
-      system_kickstart <= 2'b01;
+      system_kickstart <= AGA ? 2'b01 : 2'b00; // 3.1 for AGA, 1.3 for OCS
 	  system_drive_sounds <= 1'b0;
    end
    else

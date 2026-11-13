@@ -504,7 +504,75 @@ sdram_ctrl #(.FOLD_CHIP_ARBITRATION(1)) ram1
 wire audio_dma_req, audio_dma_ack, audio_dma_error;
 wire [31:0] audio_dma_addr;
 wire [15:0] audio_dma_data;
-wire [15:0] audio_ext_l, audio_ext_r;
+wire signed [20:0] audio_ext_l, audio_ext_r;
+
+wire [24:1] arb_sdram_addon_addr;
+wire        arb_sdram_addon_claim;
+wire [28:1] arb_dma_ddr_addr;
+wire        arb_dma_ddr_l;
+wire        arb_dma_ddr_u;
+wire        arb_dma_ddr_we;
+wire        arb_dma_ddr_cs;
+wire [15:0] arb_dma_ddr_wr;
+
+wire        audio_chip_dma_req;
+wire [31:0] audio_chip_dma_addr;
+wire        audio_chip_dma_ack;
+wire [15:0] audio_chip_dma_data;
+wire        audio_chip_dma_error;
+
+wire [28:1] audio_ddr_addr;
+wire        audio_ddr_cs;
+wire        audio_ddr_we;
+wire        audio_ddr_l;
+wire        audio_ddr_u;
+wire [15:0] audio_ddr_wr;
+
+// Dedicated Audio DMA Master (Direct DDR3 FastRAM @ 114 MHz & SDRAM via chipdma_arb)
+audio_dma_master audio_dma_master
+(
+	.clk             (clk_sys              ),
+	.reset           (reset_d              ),
+
+	.audio_dma_req   (audio_dma_req        ),
+	.audio_dma_addr  (audio_dma_addr       ),
+	.audio_dma_ack   (audio_dma_ack        ),
+	.audio_dma_data  (audio_dma_data       ),
+	.audio_dma_error (audio_dma_error      ),
+
+	.z2ram_ena       (z2ram_ena            ),
+	.z3ram_base0     (z3ram_base0          ),
+	.z3ram_ena0      (z3ram_ena0           ),
+	.z3ram_base1     (z3ram_base1          ),
+	.z3ram_ena1      (z3ram_ena1           ),
+
+	.ddr_addr        (audio_ddr_addr       ),
+	.ddr_cs          (audio_ddr_cs         ),
+	.ddr_we          (audio_ddr_we         ),
+	.ddr_l           (audio_ddr_l          ),
+	.ddr_u           (audio_ddr_u          ),
+	.ddr_wr          (audio_ddr_wr         ),
+	.ddr_ack         (dma_ddr_ack          ),
+	.ddr_rd          (dma_ddr_rd           ),
+
+	.chip_dma_req    (audio_chip_dma_req   ),
+	.chip_dma_addr   (audio_chip_dma_addr  ),
+	.chip_dma_ack    (audio_chip_dma_ack   ),
+	.chip_dma_data   (audio_chip_dma_data  ),
+	.chip_dma_error  (audio_chip_dma_error )
+);
+
+// SDRAM addon arbitration handled directly by chipdma_arb (Akiko, CDTV, Audio Chip-RAM)
+assign sdram_addon_addr  = arb_sdram_addon_addr;
+assign sdram_addon_claim = arb_sdram_addon_claim;
+
+wire audio_ddr_sel = audio_ddr_cs;
+assign dma_ddr_addr = audio_ddr_sel ? audio_ddr_addr : arb_dma_ddr_addr;
+assign dma_ddr_l    = audio_ddr_sel ? audio_ddr_l    : arb_dma_ddr_l;
+assign dma_ddr_u    = audio_ddr_sel ? audio_ddr_u    : arb_dma_ddr_u;
+assign dma_ddr_we   = audio_ddr_sel ? audio_ddr_we   : arb_dma_ddr_we;
+assign dma_ddr_cs   = audio_ddr_sel ? audio_ddr_cs   : arb_dma_ddr_cs;
+assign dma_ddr_wr   = audio_ddr_sel ? audio_ddr_wr   : arb_dma_ddr_wr;
 
 chipdma_arb chipdma_arb
 (
@@ -535,15 +603,16 @@ chipdma_arb chipdma_arb
 	.cdtv_dma_wbyte  (cdtv_dma_wbyte       ),
 	.cdtv_dma_rbyte  (                     ),
 	.cdtv_dma_ack    (cdtv_dma_ack         ),
-	.audio_dma_req   (audio_dma_req        ),
-	.audio_dma_addr  (audio_dma_addr       ),
-	.audio_dma_ack   (audio_dma_ack        ),
-	.audio_dma_data  (audio_dma_data       ),
-	.audio_dma_error (audio_dma_error      ),
+
+	.audio_dma_req   (audio_chip_dma_req   ),
+	.audio_dma_addr  (audio_chip_dma_addr  ),
+	.audio_dma_ack   (audio_chip_dma_ack   ),
+	.audio_dma_data  (audio_chip_dma_data  ),
+	.audio_dma_error (audio_chip_dma_error ),
 
 	.chip_out_addr   (arb_chip_addr        ),
-	.sdram_addon_addr(sdram_addon_addr),
-	.sdram_addon_claim(sdram_addon_claim),
+	.sdram_addon_addr(arb_sdram_addon_addr ),
+	.sdram_addon_claim(arb_sdram_addon_claim),
 	.chip_out_l      (arb_chip_l           ),
 	.chip_out_u      (arb_chip_u           ),
 	.chip_out_rw     (arb_chip_rw          ),
@@ -559,12 +628,12 @@ chipdma_arb chipdma_arb
 	.z3ram_base1     (z3ram_base1          ),
 	.z3ram_ena1      (z3ram_ena1           ),
 
-	.ddr_out_addr    (dma_ddr_addr         ),
-	.ddr_out_l       (dma_ddr_l            ),
-	.ddr_out_u       (dma_ddr_u            ),
-	.ddr_out_we      (dma_ddr_we           ),
-	.ddr_out_cs      (dma_ddr_cs           ),
-	.ddr_out_wr      (dma_ddr_wr           ),
+	.ddr_out_addr    (arb_dma_ddr_addr     ),
+	.ddr_out_l       (arb_dma_ddr_l        ),
+	.ddr_out_u       (arb_dma_ddr_u        ),
+	.ddr_out_we      (arb_dma_ddr_we       ),
+	.ddr_out_cs      (arb_dma_ddr_cs       ),
+	.ddr_out_wr      (arb_dma_ddr_wr       ),
 	.ddr_in_ack      (dma_ddr_ack          ),
 	.ddr_in_rd       (dma_ddr_rd           )
 );
@@ -649,6 +718,18 @@ wire        mem2_readdatavalid, mem2_waitrequest;
 wire [28:0] dsnd_addr;
 wire        dsnd_rd, dsnd_busy, dsnd_ready;
 
+wire [28:0] dsnd_s_address;
+wire [7:0]  dsnd_s_burstcount, dsnd_s_byteenable;
+wire        dsnd_s_read, dsnd_s_write;
+wire [63:0] dsnd_s_writedata, dsnd_s_readdata;
+wire        dsnd_s_readdatavalid, dsnd_s_waitrequest;
+
+wire [31:0] spr_mem_address;
+wire [3:0]  spr_mem_burstcount;
+wire        spr_mem_read;
+wire [63:0] spr_mem_readdata;
+wire        spr_mem_readdatavalid, spr_mem_waitrequest;
+
 a2065_ddram_arbiter dsnd_arb
 (
 	.clk             (clk_114),
@@ -673,6 +754,44 @@ a2065_ddram_arbiter dsnd_arb
 	.m1_byteenable   (8'hFF),
 	.m1_write        (1'b0),
 	.m1_waitrequest  (dsnd_busy),
+
+	.s_address       (dsnd_s_address),
+	.s_burstcount    (dsnd_s_burstcount),
+	.s_read          (dsnd_s_read),
+	.s_readdata      (dsnd_s_readdata),
+	.s_readdatavalid (dsnd_s_readdatavalid),
+	.s_writedata     (dsnd_s_writedata),
+	.s_byteenable    (dsnd_s_byteenable),
+	.s_write         (dsnd_s_write),
+	.s_waitrequest   (dsnd_s_waitrequest)
+);
+
+a2065_ddram_arbiter spr_arb
+(
+	.clk             (clk_114),
+	.rst             (reset_d),
+
+	// m0: Audio & Ethernet DMA (High Priority)
+	.m0_address      (dsnd_s_address),
+	.m0_burstcount   (dsnd_s_burstcount),
+	.m0_read         (dsnd_s_read),
+	.m0_readdata     (dsnd_s_readdata),
+	.m0_readdatavalid(dsnd_s_readdatavalid),
+	.m0_writedata    (dsnd_s_writedata),
+	.m0_byteenable   (dsnd_s_byteenable),
+	.m0_write        (dsnd_s_write),
+	.m0_waitrequest  (dsnd_s_waitrequest),
+
+	// m1: Sprite Engine Master
+	.m1_address      (spr_mem_address[31:3]),
+	.m1_burstcount   ({4'd0, spr_mem_burstcount}),
+	.m1_read         (spr_mem_read),
+	.m1_readdata     (spr_mem_readdata),
+	.m1_readdatavalid(spr_mem_readdatavalid),
+	.m1_writedata    (64'd0),
+	.m1_byteenable   (8'hFF),
+	.m1_write        (1'b0),
+	.m1_waitrequest  (spr_mem_waitrequest),
 
 	.s_address       (mem2_address),
 	.s_burstcount    (mem2_burstcount),
@@ -998,6 +1117,13 @@ minimig minimig
 	.a2065_mem_byteenable(a2065_mem_byteenable),
 	.a2065_mem_write(a2065_mem_write),
 	.a2065_mem_waitrequest(a2065_mem_waitrequest),
+
+	.spr_mem_address        (spr_mem_address),
+	.spr_mem_burstcount     (spr_mem_burstcount),
+	.spr_mem_read           (spr_mem_read),
+	.spr_mem_readdata       (spr_mem_readdata),
+	.spr_mem_readdatavalid  (spr_mem_readdatavalid),
+	.spr_mem_waitrequest    (spr_mem_waitrequest),
 	
 	.USER_IN      			(USER_IN),
 	.USER_OUT     			(IndirectUserOutFlop),
@@ -1477,12 +1603,13 @@ always @(posedge CLK_AUDIO) begin
 	if(old_d0 == old_d1) {dsnd_al, dsnd_ar} <= old_d1;
 end
 
-// Coherent stereo mailbox. The source holds both words until the audio
-// clock acknowledges the toggle; neither channel can tear across a sample.
-reg [31:0] ext_mailbox;
+// Coherent stereo mailbox (42-bit: 2x 21-bit signed audio with +18 dB headroom).
+// The source holds both words until the audio clock acknowledges the toggle;
+// neither channel can tear across a sample.
+reg [41:0] ext_mailbox;
 reg ext_toggle, ext_ack;
 (* ASYNC_REG = "TRUE" *) reg [1:0] ext_ack_sync, ext_toggle_sync;
-reg signed [15:0] ext_audio_l, ext_audio_r;
+reg signed [20:0] ext_audio_l, ext_audio_r;
 always @(posedge clk_sys or posedge reset) begin
 	if (reset) begin
 		ext_mailbox <= 0;
@@ -1511,17 +1638,54 @@ always @(posedge CLK_AUDIO or posedge reset) begin
 	end
 end
 
-reg [15:0] out_l, out_r;
+// Master 22-Bit Summer & 48 kHz True-Peak AGC Limiter
+// Sums Paula (4-ch), 32-Voice Ext (+18 dB headroom), Toccata, MT32, CDDA, Drive Sounds.
+// Smoothly limits master peaks to -0.5 dBFS ($7800 = 30,720) with 0 hard clipping.
+reg signed [21:0] tmp_l, tmp_r;
+reg [8:0] audio_strobe_div;
+wire master_sample_strobe = (audio_strobe_div == 9'd0);
+
 always @(posedge CLK_AUDIO) begin
-	reg [18:0] tmp_l, tmp_r;
+	if (reset) begin
+		audio_strobe_div <= 9'd0;
+		tmp_l <= 22'sd0;
+		tmp_r <= 22'sd0;
+	end else begin
+		audio_strobe_div <= audio_strobe_div + 1'b1;
 
-	tmp_l <= {{3{aud_l[15]}},aud_l} + {{3{toccata_aud_left[15]}},toccata_aud_left} + (mt32_mute ? 19'd0 : {{3{mt32_i2s_l[15]}},mt32_i2s_l}) + {{3{cdda_sl[15]}}, cdda_sl} + {{3{dsnd_al[15]}}, dsnd_al} + {{3{ext_audio_l[15]}},ext_audio_l};
-	tmp_r <= {{3{aud_r[15]}},aud_r} + {{3{toccata_aud_right[15]}},toccata_aud_right} + (mt32_mute ? 19'd0 : {{3{mt32_i2s_r[15]}},mt32_i2s_r}) + {{3{cdda_sr[15]}}, cdda_sr} + {{3{dsnd_ar[15]}}, dsnd_ar} + {{3{ext_audio_r[15]}},ext_audio_r};
+	tmp_l <= {{6{aud_l[15]}},aud_l} + 
+	         {{6{toccata_aud_left[15]}},toccata_aud_left} + 
+	         (mt32_mute ? 22'sd0 : {{6{mt32_i2s_l[15]}},mt32_i2s_l}) + 
+	         {{6{cdda_sl[15]}}, cdda_sl} + 
+	         {{6{dsnd_al[15]}}, dsnd_al} + 
+	         {{1{ext_audio_l[20]}},ext_audio_l};
 
-	// clamp the output
-	out_l <= (tmp_l[18:15] == 4'b0000 || tmp_l[18:15] == 4'b1111) ? tmp_l[15:0] : {tmp_l[18], {15{~tmp_l[18]}}};
-	out_r <= (tmp_r[18:15] == 4'b0000 || tmp_r[18:15] == 4'b1111) ? tmp_r[15:0] : {tmp_r[18], {15{~tmp_r[18]}}};
+	tmp_r <= {{6{aud_r[15]}},aud_r} + 
+	         {{6{toccata_aud_right[15]}},toccata_aud_right} + 
+	         (mt32_mute ? 22'sd0 : {{6{mt32_i2s_r[15]}},mt32_i2s_r}) + 
+	         {{6{cdda_sr[15]}}, cdda_sr} + 
+	         {{6{dsnd_ar[15]}}, dsnd_ar} + 
+	         {{1{ext_audio_r[20]}},ext_audio_r};
+	end
 end
+
+wire signed [15:0] out_l, out_r;
+wire master_agc_active;
+wire [15:0] master_peak_hold;
+
+audio_agc_limiter #(
+	.CEILING(22'sd30720)   // -0.5 dBFS ceiling margin
+) master_agc_limiter (
+	.clk(CLK_AUDIO),
+	.reset(reset),
+	.sample_strobe(master_sample_strobe),
+	.in_l(tmp_l),
+	.in_r(tmp_r),
+	.out_l(out_l),
+	.out_r(out_r),
+	.agc_active(master_agc_active),
+	.peak_hold(master_peak_hold)
+);
 
 assign AUDIO_S = 1;
 assign AUDIO_L = out_l;

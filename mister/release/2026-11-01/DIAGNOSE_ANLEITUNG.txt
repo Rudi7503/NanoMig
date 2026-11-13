@@ -1,0 +1,54 @@
+Testanleitung: "rechteck" mit AmigaDOS Shell-Textausgabe (Kickstart 1.3 kompatibel)
+===================================================================================
+Datum: 04.11.2026
+Autor: Rudis KI
+Core: Minimig_6186b83f.rbf (unveraendert, 4.122.716 Bytes)
+      SHA256: 6186B83FBBE3253FA4CD3B0F0B265E6F79121290ACA9A98D7E5FEC3F9795FA60
+
+Kickstart 1.3 Fix:
+------------------
+Das Diagnoseprogramm "rechteck" wurde vollstaendig auf Kickstart 1.3 (OS V34) angepasst.
+Statt des OS 2.0+ PutStr (-948) wird nun der universelle Standard verwendet:
+- OpenLibrary("dos.library", 0) -> akzeptiert Kickstart 1.2, 1.3, 2.0, 3.x
+- _LVOOutput (-60) -> holt den Shell-Standardausgabe-Handle (Stdout)
+- _LVOWrite (-48) -> schreibt direkt in das sichtbare AmigaDOS-Konsolenfenster
+
+Bereits direkt beim Start gibt das Programm die Startmeldung aus, fuehrt den
+Kaskadentest durch, gibt alle Messwerte im Klartext aus und kehrt mit Return Code 0
+(bzw. 20 im Fehlerfall) sauber zur AmigaDOS-Shell zurueck.
+
+Erwartete Shell-Ausgabe in der AmigaDOS-Konsole:
+------------------------------------------------
+==================================================
+*** RECHTECK TEST GESTARTET (KICKSTART 1.3) ***
+rechteck: 32-Stufen-Tiefpass Kaskadentest
+==================================================
+rechteck: [1/4] Stimmen 0..31 initialisiert.
+rechteck: [2/4] Stimmen gestartet (200 Hz sollte toenen)...
+rechteck: [3/4] Hardware-Capture ($DFF802) gestartet...
+rechteck: [3/4] Capture fertig. Analysiere 1024 Samples...
+rechteck: [4/4] Spitzenwert (Peak) = <Messwert>
+rechteck: [4/4] Proben ueber 70% = <Messwert> von 1024
+rechteck: ERFOLG - Sinuswelle nachgewiesen (<75%).
+rechteck: >>> TEST BESTANDEN <<<
+rechteck: Test beendet (Return Code: 0).
+
+Fehlerfaelle im Klartext:
+-------------------------
+- Falls Capture haengt:
+  "rechteck: FEHLER - Timeout! Block A nach 1s nicht fertig." (Bildschirm: Rot, Return Code 20)
+- Falls Stille im Puffer:
+  "rechteck: FEHLER - Kein Signal! Spitzenwert ist 0." (Bildschirm: Rot, Return Code 20)
+- Falls ungefiltertes Rechteck:
+  "rechteck: FEHLER - Ungefiltertes Signal! Noch Rechteck (>75%)." (Bildschirm: Orange, Return Code 20)
+
+Zusaetzlich wird weiterhin COLOR00 gesetzt:
+- GRUEN = Test bestanden (Return-Code 0)
+- ROT = Fehler / Stille / Timeout (Return-Code 20)
+
+Durchfuehrung fuer Tobys KI & Toby:
+----------------------------------
+1. Core Minimig_6186b83f.rbf bleibt unveraendert im MiSTer.
+2. Neues Executable "rechteck" auf die Testdisk/ADF kopieren.
+3. Starten (z.B. via S:Startup-Sequence: FailAt 21 \n rechteck).
+4. Framebuffer-Screenshot der Konsole anfertigen – die Diagnose steht direkt im Fenster.

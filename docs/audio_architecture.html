@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="de" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NanoMig 32-Stimmen Audio-Architektur</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    :root {
+      --bg: #0b0f17;
+      --card: #131b26;
+      --card-hover: #1c2737;
+      --border: #233145;
+      --foreground: #f1f5f9;
+      --muted: #94a3b8;
+      --primary: #38bdf8;
+      --primary-dim: rgba(56, 189, 248, 0.15);
+      --accent: #f59e0b;
+      --accent-dim: rgba(245, 158, 11, 0.15);
+      --success: #10b981;
+      --success-dim: rgba(16, 185, 129, 0.15);
+      --danger: #ef4444;
+      --danger-dim: rgba(239, 68, 68, 0.15);
+      --purple: #a855f7;
+      --purple-dim: rgba(168, 85, 247, 0.15);
+    }
+    body {
+      background-color: var(--bg);
+      color: var(--foreground);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    .pulse-glow { animation: glow 2s infinite ease-in-out; }
+    @keyframes glow {
+      0%, 100% { filter: drop-shadow(0 0 4px var(--primary)); }
+      50% { filter: drop-shadow(0 0 12px var(--primary)); }
+    }
+    .flow-line { stroke-dasharray: 6; animation: dash 1s linear infinite; }
+    @keyframes dash { to { stroke-dashoffset: -12; } }
+  </style>
+</head>
+<body class="min-h-screen p-4 md:p-8">
+  <div class="max-w-7xl mx-auto space-y-6">
+
+    <!-- Header Section -->
+    <header class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-xl relative overflow-hidden">
+      <div class="absolute top-0 right-0 w-96 h-96 bg-sky-500/10 rounded-full blur-3xl pointer-events-none"></div>
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
+        <div>
+          <div class="flex items-center gap-3">
+            <span class="px-2.5 py-1 text-xs font-bold rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/30">NanoMig MiSTer Core</span>
+            <span class="px-2.5 py-1 text-xs font-bold rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">32-Voice High-Definition</span>
+            <span class="px-2.5 py-1 text-xs font-bold rounded-md bg-sky-500/20 text-sky-400 border border-sky-500/30">Option 2 + Option A</span>
+          </div>
+          <h1 class="text-2xl md:text-3xl font-extrabold tracking-tight mt-2 text-white">NanoMig Audio-Hardware-Architektur</h1>
+          <p class="text-sm text-[var(--muted)] mt-1">Interaktive Systemspezifikation &bull; Dual-Biquad DSPs (Links/Rechts) &bull; Direkte 114-MHz-DDR3-Speicheranbindung</p>
+        </div>
+        <div class="flex flex-wrap gap-2 text-xs mono">
+          <div class="bg-slate-900/80 border border-slate-800 rounded-lg px-3 py-2 text-center">
+            <div class="text-[var(--muted)]">DSPs getrennt nach</div>
+            <div class="font-bold text-sky-400">Links (0..31) / Rechts (0..31)</div>
+          </div>
+          <div class="bg-slate-900/80 border border-slate-800 rounded-lg px-3 py-2 text-center">
+            <div class="text-[var(--muted)]">FastRAM DMA-Takt</div>
+            <div class="font-bold text-emerald-400">114 MHz (DDR3)</div>
+          </div>
+          <div class="bg-slate-900/80 border border-slate-800 rounded-lg px-3 py-2 text-center">
+            <div class="text-[var(--muted)]">Voice 31 Status</div>
+            <div class="font-bold text-amber-400">100% Freigeschaltet</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <nav class="flex flex-wrap gap-2 mt-6 pt-4 border-t border-[var(--border)]">
+        <button onclick="switchTab('diagram')" id="tabBtn-diagram" class="px-4 py-2 text-xs md:text-sm font-semibold rounded-lg transition-all bg-[var(--primary)] text-slate-950 shadow-md">1. Gesamtsystem & Signalfluss</button>
+        <button onclick="switchTab('dspsplit')" id="tabBtn-dspsplit" class="px-4 py-2 text-xs md:text-sm font-semibold rounded-lg transition-all bg-[var(--card-hover)] text-[var(--muted)] hover:text-white">2. DSP-Architektur (L/R)</button>
+        <button onclick="switchTab('memory')" id="tabBtn-memory" class="px-4 py-2 text-xs md:text-sm font-semibold rounded-lg transition-all bg-[var(--card-hover)] text-[var(--muted)] hover:text-white">3. Speicheranbindung (Option 2)</button>
+        <button onclick="switchTab('cascade')" id="tabBtn-cascade" class="px-4 py-2 text-xs md:text-sm font-semibold rounded-lg transition-all bg-[var(--card-hover)] text-[var(--muted)] hover:text-white">4. 32-Stufen Kaskaden-Explorer</button>
+        <button onclick="switchTab('registers')" id="tabBtn-registers" class="px-4 py-2 text-xs md:text-sm font-semibold rounded-lg transition-all bg-[var(--card-hover)] text-[var(--muted)] hover:text-white">5. Register-Map (Option A)</button>
+      </nav>
+    </header>
+
+    <!-- TAB 1: Gesamtsystem & Signalfluss -->
+    <div id="tab-diagram" class="space-y-6">
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Interactive Canvas / SVG -->
+        <div class="lg:col-span-2 bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 shadow-lg flex flex-col">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-bold text-white flex items-center gap-2">
+              <span class="w-2.5 h-2.5 rounded-full bg-sky-400 animate-pulse"></span>
+              Interaktives Hardware-Blockschaltbild
+            </h2>
+            <div class="flex gap-2">
+              <button onclick="setFlowMode('playback')" id="modeBtn-playback" class="px-2.5 py-1 text-xs rounded bg-sky-500/20 text-sky-400 border border-sky-500/40">Standard Playback</button>
+              <button onclick="setFlowMode('cascade')" id="modeBtn-cascade" class="px-2.5 py-1 text-xs rounded bg-slate-800 text-slate-400 border border-slate-700">Kaskaden-Kette</button>
+              <button onclick="setFlowMode('dma')" id="modeBtn-dma" class="px-2.5 py-1 text-xs rounded bg-slate-800 text-slate-400 border border-slate-700">114 MHz Fast-RAM DMA</button>
+            </div>
+          </div>
+
+          <div class="relative w-full h-[520px] bg-slate-950/70 border border-slate-800/80 rounded-xl overflow-hidden flex items-center justify-center p-2">
+            <svg id="archSvg" viewBox="0 0 950 560" class="w-full h-full select-none">
+              <defs>
+                <linearGradient id="gradCpu" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#334155"/>
+                  <stop offset="100%" stop-color="#1e293b"/>
+                </linearGradient>
+                <linearGradient id="gradDdr" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#065f46"/>
+                  <stop offset="100%" stop-color="#022c22"/>
+                </linearGradient>
+                <linearGradient id="gradDspL" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#0369a1"/>
+                  <stop offset="100%" stop-color="#082f49"/>
+                </linearGradient>
+                <linearGradient id="gradDspR" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#7e22ce"/>
+                  <stop offset="100%" stop-color="#3b0764"/>
+                </linearGradient>
+                <linearGradient id="gradMix" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#b45309"/>
+                  <stop offset="100%" stop-color="#451a03"/>
+                </linearGradient>
+                <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <path d="M 0 1 L 8 5 L 0 9 z" fill="#38bdf8"/>
+                </marker>
+                <marker id="arrowAmber" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <path d="M 0 1 L 8 5 L 0 9 z" fill="#f59e0b"/>
+                </marker>
+                <marker id="arrowGreen" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <path d="M 0 1 L 8 5 L 0 9 z" fill="#10b981"/>
+                </marker>
+              </defs>
+
+              <!-- Outer Boundary: audio_ext.v (28.375 MHz) -->
+              <rect x="230" y="70" width="560" height="470" rx="14" fill="#0f172a" fill-opacity="0.8" stroke="#334155" stroke-dasharray="4 4" stroke-width="2"/>
+              <text x="245" y="94" fill="#64748b" font-size="12" font-weight="bold" letter-spacing="1">AUDIO_EXT.V &bull; CLK_SYS (28.375 MHz) DOMAIN</text>
+
+              <!-- CPU Block -->
+              <g onclick="selectNode('cpu')" class="cursor-pointer group">
+                <rect x="20" y="30" width="170" height="80" rx="10" fill="url(#gradCpu)" stroke="#475569" stroke-width="2" class="group-hover:stroke-sky-400 transition-all"/>
+                <text x="105" y="62" fill="#f8fafc" font-size="14" font-weight="bold" text-anchor="middle">68000 / 68020 CPU</text>
+                <text x="105" y="82" fill="#94a3b8" font-size="11" text-anchor="middle" class="mono">$DFF400..$DFF80A</text>
+              </g>
+
+              <!-- DDR3 FastRAM (114 MHz) Block -->
+              <g onclick="selectNode('ddr3')" class="cursor-pointer group">
+                <rect x="20" y="160" width="170" height="90" rx="10" fill="url(#gradDdr)" stroke="#10b981" stroke-width="2" class="group-hover:stroke-emerald-300 transition-all"/>
+                <text x="105" y="195" fill="#a7f3d0" font-size="13" font-weight="bold" text-anchor="middle">DDR3 Fast-RAM</text>
+                <text x="105" y="215" fill="#6ee7b7" font-size="11" text-anchor="middle" class="mono">114 MHz &bull; Bis zu 384 MB</text>
+                <text x="105" y="233" fill="#34d399" font-size="10" text-anchor="middle">Kein Agnus / Kein 7MHz Bus</text>
+              </g>
+
+              <!-- SDRAM ChipRAM Block -->
+              <g onclick="selectNode('sdram')" class="cursor-pointer group">
+                <rect x="20" y="290" width="170" height="70" rx="10" fill="#1e293b" stroke="#64748b" stroke-width="1.5" class="group-hover:stroke-sky-400 transition-all"/>
+                <text x="105" y="322" fill="#cbd5e1" font-size="13" font-weight="bold" text-anchor="middle">SDRAM Chip-RAM</text>
+                <text x="105" y="342" fill="#94a3b8" font-size="11" text-anchor="middle" class="mono">&lt; $02000000 (Addon-Port)</text>
+              </g>
+
+              <!-- Audio DMA Master (Option 2) -->
+              <g onclick="selectNode('dma_master')" class="cursor-pointer group">
+                <rect x="250" y="150" width="180" height="90" rx="10" fill="#1e293b" stroke="#38bdf8" stroke-width="2" class="group-hover:stroke-sky-300 transition-all"/>
+                <text x="340" y="180" fill="#38bdf8" font-size="13" font-weight="bold" text-anchor="middle">audio_dma_master</text>
+                <text x="340" y="200" fill="#e2e8f0" font-size="11" text-anchor="middle">32-Bit Adress-Router</text>
+                <text x="340" y="220" fill="#94a3b8" font-size="10" text-anchor="middle">114 MHz DDR3 Direkt-Port</text>
+              </g>
+
+              <!-- TDM Scheduler & FIFO -->
+              <g onclick="selectNode('fifo_tdm')" class="cursor-pointer group">
+                <rect x="250" y="270" width="180" height="90" rx="10" fill="#1e293b" stroke="#f59e0b" stroke-width="2" class="group-hover:stroke-amber-300 transition-all"/>
+                <text x="340" y="300" fill="#f59e0b" font-size="13" font-weight="bold" text-anchor="middle">FIFO & TDM Scheduler</text>
+                <text x="340" y="320" fill="#e2e8f0" font-size="11" text-anchor="middle">2048 x 16 Bit (64w / Voice)</text>
+                <text x="340" y="340" fill="#94a3b8" font-size="10" text-anchor="middle">cur_voice: 0..31 (886 kHz)</text>
+              </g>
+
+              <!-- Decoder (ADPCM & PCM) -->
+              <g onclick="selectNode('decoder')" class="cursor-pointer group">
+                <rect x="250" y="390" width="180" height="80" rx="10" fill="#1e293b" stroke="#a855f7" stroke-width="1.5" class="group-hover:stroke-purple-300 transition-all"/>
+                <text x="340" y="420" fill="#c084fc" font-size="13" font-weight="bold" text-anchor="middle">Dekoder-Stufe</text>
+                <text x="340" y="440" fill="#e2e8f0" font-size="11" text-anchor="middle">8/16-Bit PCM & ADPCM</text>
+                <text x="340" y="456" fill="#94a3b8" font-size="10" text-anchor="middle">Geteilter Stateless Core</text>
+              </g>
+
+              <!-- DSP 0: LINKS (Alle 32 Stimmen) -->
+              <g onclick="selectNode('dsp0')" class="cursor-pointer group">
+                <rect x="480" y="130" width="180" height="110" rx="10" fill="url(#gradDspL)" stroke="#38bdf8" stroke-width="2" class="group-hover:stroke-white transition-all"/>
+                <text x="570" y="160" fill="#7dd3fc" font-size="14" font-weight="bold" text-anchor="middle">biquad_inst0 (DSP 0)</text>
+                <text x="570" y="180" fill="#ffffff" font-size="12" font-weight="bold" text-anchor="middle">LINKS (Voices 0..31)</text>
+                <text x="570" y="200" fill="#bae6fd" font-size="11" text-anchor="middle">5 Koeffizienten RAM</text>
+                <text x="570" y="222" fill="#7dd3fc" font-size="10" text-anchor="middle" class="mono">Kaskade ch0..ch31 intern</text>
+              </g>
+
+              <!-- DSP 1: RECHTS (Alle 32 Stimmen) -->
+              <g onclick="selectNode('dsp1')" class="cursor-pointer group">
+                <rect x="480" y="270" width="180" height="110" rx="10" fill="url(#gradDspR)" stroke="#c084fc" stroke-width="2" class="group-hover:stroke-white transition-all"/>
+                <text x="570" y="300" fill="#e9d5ff" font-size="14" font-weight="bold" text-anchor="middle">biquad_inst1 (DSP 1)</text>
+                <text x="570" y="320" fill="#ffffff" font-size="12" font-weight="bold" text-anchor="middle">RECHTS (Voices 0..31)</text>
+                <text x="570" y="340" fill="#f3e8ff" font-size="11" text-anchor="middle">5 Koeffizienten RAM</text>
+                <text x="570" y="362" fill="#d8b4fe" font-size="10" text-anchor="middle" class="mono">Echtes getrenntes Stereo</text>
+              </g>
+
+              <!-- Stereo Mixer & Accumulator -->
+              <g onclick="selectNode('mixer')" class="cursor-pointer group">
+                <rect x="480" y="410" width="180" height="90" rx="10" fill="url(#gradMix)" stroke="#f59e0b" stroke-width="2" class="group-hover:stroke-amber-300 transition-all"/>
+                <text x="570" y="440" fill="#fde68a" font-size="13" font-weight="bold" text-anchor="middle">Stereo Mixer & AM/Ring</text>
+                <text x="570" y="460" fill="#fef3c7" font-size="11" text-anchor="middle">Lautstärke L/R & Modulation</text>
+                <text x="570" y="480" fill="#fde68a" font-size="10" text-anchor="middle">21-Bit Akkumulator & Clipper</text>
+              </g>
+
+              <!-- Output & Capture Stage -->
+              <g onclick="selectNode('output')" class="cursor-pointer group">
+                <rect x="730" y="270" width="180" height="120" rx="10" fill="#1e293b" stroke="#10b981" stroke-width="2" class="group-hover:stroke-emerald-300 transition-all"/>
+                <text x="820" y="300" fill="#6ee7b7" font-size="13" font-weight="bold" text-anchor="middle">Ausgang & Capture</text>
+                <text x="820" y="322" fill="#e2e8f0" font-size="11" text-anchor="middle">Mailbox &rarr; CLK_AUDIO</text>
+                <text x="820" y="342" fill="#94a3b8" font-size="10" text-anchor="middle">MiSTer 48kHz I2S DAC</text>
+                <text x="820" y="365" fill="#a7f3d0" font-size="11" text-anchor="middle" class="mono">2x 4KB Capture RAM</text>
+              </g>
+
+              <!-- Connection Lines & Arrows -->
+              <!-- CPU to audio_ext -->
+              <path d="M 190 70 L 250 70" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)"/>
+              <!-- FastRAM to DMA Master -->
+              <path id="path-ddr" d="M 190 200 L 250 200" stroke="#10b981" stroke-width="2.5" marker-end="url(#arrowGreen)"/>
+              <!-- SDRAM to DMA Master -->
+              <path d="M 190 320 L 220 320 L 220 220 L 250 220" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow)"/>
+              <!-- DMA Master to FIFO -->
+              <path d="M 340 240 L 340 270" stroke="#38bdf8" stroke-width="2" marker-end="url(#arrow)"/>
+              <!-- FIFO to Decoder -->
+              <path d="M 340 360 L 340 390" stroke="#f59e0b" stroke-width="2" marker-end="url(#arrowAmber)"/>
+              <!-- Decoder to DSP 0 (Left) -->
+              <path id="path-dec-l" d="M 430 410 L 455 410 L 455 180 L 480 180" stroke="#38bdf8" stroke-width="2" marker-end="url(#arrow)"/>
+              <!-- Decoder to DSP 1 (Right) -->
+              <path id="path-dec-r" d="M 430 430 L 455 430 L 455 320 L 480 320" stroke="#c084fc" stroke-width="2" marker-end="url(#arrow)"/>
+              <!-- DSP 0 to Mixer -->
+              <path id="path-dsp0-mix" d="M 660 180 L 685 180 L 685 435 L 660 435" stroke="#38bdf8" stroke-width="2"/>
+              <!-- DSP 1 to Mixer -->
+              <path id="path-dsp1-mix" d="M 660 325 L 675 325 L 675 455 L 660 455" stroke="#c084fc" stroke-width="2"/>
+              <!-- Mixer to Output -->
+              <path id="path-mix-out" d="M 660 460 L 705 460 L 705 330 L 730 330" stroke="#10b981" stroke-width="2.5" marker-end="url(#arrowGreen)"/>
+              <!-- Cascade Feedback Loop (Virtual) -->
+              <path id="path-cascade-loop" d="M 610 240 C 610 260, 470 260, 470 220" stroke="#f59e0b" stroke-width="2" stroke-dasharray="4" fill="none" opacity="0.3"/>
+            </svg>
+          </div>
+          <div class="flex items-center justify-between text-xs text-[var(--muted)] mt-2 px-1">
+            <span>&bull; Klicke auf einen Hardware-Block für Detail-Spezifikation und RTL-Quellen</span>
+            <span class="mono">Quartus Seed 11 &bull; TNS = 0.000</span>
+          </div>
+        </div>
+
+        <!-- Detail Inspector Panel -->
+        <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-lg flex flex-col justify-between">
+          <div id="inspectorContent" class="space-y-4">
+            <div class="flex items-center gap-2">
+              <span id="inspBadge" class="px-2 py-0.5 text-xs font-bold rounded bg-sky-500/20 text-sky-400">Verilog RTL</span>
+              <h3 id="inspTitle" class="text-lg font-bold text-white">biquad_inst0 & biquad_inst1</h3>
+            </div>
+            <div id="inspSub" class="text-xs text-[var(--muted)] mono">mister/rtl/audio_ext/audio_ext.v (L391-L436)</div>
+            
+            <p id="inspDesc" class="text-sm text-slate-300 leading-relaxed">
+              Zwei vollständig parallele Biquad-Filterkerne 2. Ordnung, <strong>strikt aufgeteilt nach Stereokanälen (Links/Rechts)</strong>. Jede Instanz bedient alle 32 Stimmen, sodass Kaskadenketten über alle 32 Stufen ohne Instanz-Grenzüberschreitung in einem einzigen Zyklus aufgelöst werden.
+            </p>
+
+            <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-4 space-y-2">
+              <h4 class="text-xs font-bold text-[var(--primary)] uppercase tracking-wider">Kern-Spezifikationen</h4>
+              <ul id="inspSpecs" class="text-xs space-y-1.5 text-slate-300">
+                <li class="flex justify-between"><span class="text-slate-400">DSP 0 Zuordnung:</span> <strong class="text-sky-400">Linker Kanal (Voices 0..31)</strong></li>
+                <li class="flex justify-between"><span class="text-slate-400">DSP 1 Zuordnung:</span> <strong class="text-purple-400">Rechter Kanal (Voices 0..31)</strong></li>
+                <li class="flex justify-between"><span class="text-slate-400">Arithmetik:</span> <span>Direct Form II Transposed</span></li>
+                <li class="flex justify-between"><span class="text-slate-400">Akkumulator:</span> <span>34-Bit Fixed-Point Q2.14</span></li>
+                <li class="flex justify-between"><span class="text-slate-400">Koeffizienten:</span> <span>5 Wörter je Stimme im Block-RAM</span></li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="mt-6 pt-4 border-t border-[var(--border)] text-xs text-[var(--muted)] flex items-center justify-between">
+            <span>Branch: <code class="text-slate-300">rudi/chain-stereo</code></span>
+            <span>Bitstream: <code class="text-amber-400">00e6a049</code></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2: DSP-Architektur (L/R) -->
+    <div id="tab-dspsplit" class="hidden space-y-6">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-lg">
+        <h2 class="text-xl font-bold text-white mb-2">Die Dual-DSP Trennung nach Stereokanälen (Links / Rechts)</h2>
+        <p class="text-sm text-[var(--muted)] mb-6">
+          Im NanoMig Audio-Kern rechnen die beiden Hardware-DSPs <strong>nicht</strong> nach Stimmenhälften (0..15 / 16..31), sondern <strong>strikt nach Stereokanälen</strong>. Jede Instanz bedient alle 32 Stimmen auf ihrer jeweiligen Stereoseite.
+        </p>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <!-- DSP 0 Card -->
+          <div class="bg-gradient-to-br from-sky-950/40 to-slate-900 border border-sky-500/30 rounded-xl p-5 space-y-3">
+            <div class="flex items-center justify-between">
+              <span class="px-2.5 py-1 text-xs font-bold rounded bg-sky-500/20 text-sky-400 border border-sky-500/40">DSP 0</span>
+              <span class="text-xs text-sky-300 mono">biquad_inst0</span>
+            </div>
+            <h3 class="text-lg font-bold text-white">Linker Audio-Pfad (Stimmen 0..31)</h3>
+            <p class="text-xs text-slate-300">
+              Berechnet exklusiv alle linken Audio-Samples sämtlicher 32 Stimmen.
+            </p>
+            <div class="bg-slate-950/80 p-3 rounded-lg font-mono text-xs text-sky-300 space-y-1">
+              <div>.cur_voice(cur_voice),   // 0..31</div>
+              <div>.filter_en_l(v_flt_l),   // 1 = aktiv</div>
+              <div>.filter_en_r(1'b0),      // ungenutzt</div>
+              <div>.out_pcm_l(biquad0_pcm_l)</div>
+            </div>
+            <div class="text-xs text-slate-400">
+              <strong>Vorteil Kaskade:</strong> Verknüpft eine Stimme ihr Signal mit dem Ausgang der Vorstufe (<code class="text-sky-300">v_input_src = 2'b10</code>), verbleibt die gesamte 32-Stufen-Kette innerhalb dieses einen DSP-Kerns.
+            </div>
+          </div>
+
+          <!-- DSP 1 Card -->
+          <div class="bg-gradient-to-br from-purple-950/40 to-slate-900 border border-purple-500/30 rounded-xl p-5 space-y-3">
+            <div class="flex items-center justify-between">
+              <span class="px-2.5 py-1 text-xs font-bold rounded bg-purple-500/20 text-purple-400 border border-purple-500/40">DSP 1</span>
+              <span class="text-xs text-purple-300 mono">biquad_inst1</span>
+            </div>
+            <h3 class="text-lg font-bold text-white">Rechter Audio-Pfad (Stimmen 0..31)</h3>
+            <p class="text-xs text-slate-300">
+              Berechnet exklusiv alle rechten Audio-Samples sämtlicher 32 Stimmen.
+            </p>
+            <div class="bg-slate-950/80 p-3 rounded-lg font-mono text-xs text-purple-300 space-y-1">
+              <div>.cur_voice(cur_voice),   // 0..31</div>
+              <div>.filter_en_l(1'b0),      // ungenutzt</div>
+              <div>.filter_en_r(v_flt_r),   // 1 = aktiv</div>
+              <div>.out_pcm_r(biquad1_pcm_r)</div>
+            </div>
+            <div class="text-xs text-slate-400">
+              <strong>Echtes Stereo:</strong> Filterkurven, Resonanzen und Dämpfungen können links und rechts völlig unabhängig moduliert werden (z. B. Stereo-Bandpass mit versetzten Grenzfrequenzen).
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-6 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs flex items-start gap-3">
+          <span class="text-base font-bold text-amber-400">!</span>
+          <div>
+            <strong>Warum nicht nach Stimmenhälfte teilen?</strong> Würde man DSP 0 für Stimmen 0..15 und DSP 1 für Stimmen 16..31 verwenden, müsste bei einer 32-Stufen-Kaskade das Sample von Stimme 15 auf Stimme 16 zwischen den DSP-Instanzen synchronisiert werden. Das erzeugt Pipeline-Hazards, Latenz und Phasenknacken. Durch die <strong>Links/Rechts-Teilung</strong> läuft jede Kaskade 100% lokal.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 3: Speicheranbindung (Option 2) -->
+    <div id="tab-memory" class="hidden space-y-6">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-lg space-y-6">
+        <div>
+          <h2 class="text-xl font-bold text-white">Speicheranbindung Option 2: Dedizierter 114-MHz-DDR3-Master</h2>
+          <p class="text-sm text-[var(--muted)] mt-1">
+            Vollständige Entkopplung der Audio-DMA von Agnus und dem 7-MHz-Amiga-Chip-Bus.
+          </p>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div class="bg-slate-900 border border-red-500/30 rounded-xl p-5 space-y-3">
+            <span class="px-2 py-0.5 text-xs font-bold rounded bg-red-500/20 text-red-400">Vorher: Agnus-Chip-Bus Arbitrierung</span>
+            <ul class="text-xs space-y-2 text-slate-300">
+              <li class="flex items-start gap-2"><span class="text-red-400 font-bold">&times;</span> Audio-DMA konkurrierte mit Blitter, Kupfer und CPU auf 7 MHz.</li>
+              <li class="flex items-start gap-2"><span class="text-red-400 font-bold">&times;</span> Starre 2-MB-Grenze (<code class="text-slate-400">baddr[31:21]</code>) verhinderte Samples im Fast-RAM.</li>
+              <li class="flex items-start gap-2"><span class="text-red-400 font-bold">&times;</span> Bei 32 gleichzeitigen Stimmen traten DMA-Underflows und Aussetzer auf.</li>
+            </ul>
+          </div>
+
+          <div class="bg-slate-900 border border-emerald-500/30 rounded-xl p-5 space-y-3">
+            <span class="px-2 py-0.5 text-xs font-bold rounded bg-emerald-500/20 text-emerald-400">Jetzt: Option 2 (audio_dma_master.v)</span>
+            <ul class="text-xs space-y-2 text-slate-300">
+              <li class="flex items-start gap-2"><span class="text-emerald-400 font-bold">&check;</span> <strong>Voller 32-Bit-Adressraum:</strong> Samples beliebig im DDR3 Fast-RAM oder SDRAM.</li>
+              <li class="flex items-start gap-2"><span class="text-emerald-400 font-bold">&check;</span> <strong>Direkter 114-MHz-Zugriff:</strong> DDR3-Speicherzugriffe dauern nur 3–5 Takte.</li>
+              <li class="flex items-start gap-2"><span class="text-emerald-400 font-bold">&check;</span> <strong>Null Belastung für Agnus:</strong> Der Amiga-Chip-Bus bleibt komplett frei.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="bg-slate-950 border border-slate-800 rounded-xl p-4 font-mono text-xs text-slate-300">
+          <div class="text-[var(--primary)] font-bold mb-2">// Adress-Routing in audio_dma_master.v:</div>
+          <div>wire is_ddr = (live_baddr >= 32'h08000000); // Fast-RAM / DDR3 Speicherbereich</div>
+          <div>wire is_sdr = (live_baddr <  32'h02000000); // Chip-RAM / SDRAM Bereich</div>
+          <div class="text-slate-500 mt-2">// DDR3 Fast-RAM wird im 114 MHz Takt direkt über dma_ddr_* bedient.</div>
+          <div class="text-slate-500">// SDRAM wird transparent über sdram_addon_* beansprucht.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 4: Kaskaden-Explorer -->
+    <div id="tab-cascade" class="hidden space-y-6">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-lg space-y-4">
+        <div>
+          <h2 class="text-xl font-bold text-white">32-Stufen Filterkaskade & Routing</h2>
+          <p class="text-sm text-[var(--muted)]">
+            Stimme 0 erzeugt das Primärsignal (z. B. Rechteck oder Rauschen). Die Folgestufen 1..31 greifen über das Routing-Bit 10 (<code class="text-amber-400">$0400</code>) auf den gefilterten Ausgang der Vorstufe zu.
+          </p>
+        </div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-8 gap-2" id="cascadeGrid">
+          <!-- Populated by JS -->
+        </div>
+
+        <div class="p-4 bg-slate-950 border border-slate-800 rounded-xl flex flex-col md:flex-row items-center justify-between gap-4 text-xs">
+          <div>
+            <span class="text-slate-400">Aktuell ausgewählte Stufe:</span>
+            <strong id="cascSelVoice" class="text-sky-400 ml-1">Stimme 0</strong>
+            <span id="cascSelRole" class="ml-2 text-emerald-400">(Primär-Generator &bull; DMA aktiv)</span>
+          </div>
+          <div class="flex gap-2">
+            <button onclick="setCascadeView(0)" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded">Stufe 0 (Root)</button>
+            <button onclick="setCascadeView(15)" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded">Stufe 15 (Mitte)</button>
+            <button onclick="setCascadeView(31)" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded">Stufe 31 (Endstufe)</button>
+          </div>
+        </div>
+
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4 text-xs space-y-2 text-slate-300">
+          <h4 class="font-bold text-amber-400 uppercase tracking-wider">Kritische Konfigurationsregeln für Kaskaden:</h4>
+          <ol class="list-decimal list-inside space-y-1 text-slate-400">
+            <li><strong class="text-white">Stufe 0:</strong> Setzt <code class="text-slate-200">AUD0CTRL[10:9] = 2'b00</code> (DMA-Eingang) und lädt Sample-Daten aus dem RAM.</li>
+            <li><strong class="text-white">Stufen 1..31:</strong> Müssen zwingend mit <code class="text-amber-300">AUDxLEN = 0</code> konfiguriert werden, damit sie kein überflüssiges DMA anfordern.</li>
+            <li><strong class="text-white">Routing-Bit:</strong> Post-Filter-Quelle ist Bit 10 (<code class="text-sky-300">2'b10 &equiv; $0400</code>).</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 5: Register-Map (Option A) -->
+    <div id="tab-registers" class="hidden space-y-6">
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-6 shadow-lg space-y-6">
+        <div>
+          <h2 class="text-xl font-bold text-white">Register-Spezifikation (Option A)</h2>
+          <p class="text-sm text-[var(--muted)]">
+            Durch Verlegung der globalen Interrupt-Register nach <code class="text-amber-400">$DFF804..$DFF80A</code> ist <strong>Voice 31 uneingeschränkt nutzbar</strong>.
+          </p>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr class="border-b border-slate-700 text-slate-400 uppercase">
+                <th class="py-2.5 px-3">Offset</th>
+                <th class="py-2.5 px-3">Wort-Addr</th>
+                <th class="py-2.5 px-3">Symbol</th>
+                <th class="py-2.5 px-3">Format</th>
+                <th class="py-2.5 px-3">Beschreibung</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800 text-slate-300 font-mono">
+              <tr class="hover:bg-slate-800/40"><td class="py-2 px-3">+0</td><td class="py-2 px-3 text-sky-400">$00</td><td>AUDxPTRH</td><td>Bits 31..16</td><td>Sample-Startadresse High-Word (voller 32-Bit-Adressraum)</td></tr>
+              <tr class="hover:bg-slate-800/40"><td class="py-2 px-3">+2</td><td class="py-2 px-3 text-sky-400">$01</td><td>AUDxPTRL</td><td>Bits 15..1</td><td>Sample-Startadresse Low-Word (Wortgrenze)</td></tr>
+              <tr class="hover:bg-slate-800/40"><td class="py-2 px-3">+4</td><td class="py-2 px-3 text-sky-400">$02</td><td>AUDxLENH</td><td>Bits 31..16</td><td>Sample-Länge High-Word (bei Kaskade 1..31 = 0)</td></tr>
+              <tr class="hover:bg-slate-800/40"><td class="py-2 px-3">+6</td><td class="py-2 px-3 text-sky-400">$03</td><td>AUDxLENL</td><td>Bits 15..0</td><td>Sample-Länge Low-Word (in 16-Bit-Wörtern)</td></tr>
+              <tr class="hover:bg-slate-800/40"><td class="py-2 px-3">+8</td><td class="py-2 px-3 text-amber-400">$04</td><td>AUDxPER</td><td>Bits 15..0</td><td>Paula-Abtastperiode (Farbtakt-Teiler)</td></tr>
+              <tr class="hover:bg-slate-800/40"><td class="py-2 px-3">+10</td><td class="py-2 px-3 text-amber-400">$05</td><td>AUDxVOL</td><td>L: 15..8, R: 7..0</td><td>Unabhängige Lautstärkeregelung für Links und Rechts</td></tr>
+              <tr class="hover:bg-slate-800/40"><td class="py-2 px-3">+12</td><td class="py-2 px-3 text-purple-400">$06</td><td>AUDxCTRL</td><td>Bits 10..0</td><td>Steuerbits: Bit 10..9=Input, Bit 8=Flt L, Bit 7=Flt R, Bit 3=ADPCM, Bit 2=Stereo</td></tr>
+              <tr class="hover:bg-slate-800/40"><td class="py-2 px-3">+14</td><td class="py-2 px-3 text-purple-400">$07</td><td>AUDxPRED</td><td>Bits 15..0</td><td>ADPCM Prädiktor Initialwert</td></tr>
+              <tr class="hover:bg-slate-800/40"><td class="py-2 px-3">+16..24</td><td class="py-2 px-3 text-emerald-400">$08..$0C</td><td>AUDxB0..A2</td><td>Q2.14 signed</td><td>Biquad-Koeffizienten (b0, b1, b2, a1, a2)</td></tr>
+              <tr class="hover:bg-slate-800/40"><td class="py-2 px-3">+26</td><td class="py-2 px-3 text-rose-400">$0D</td><td>AUDxCMD</td><td>Bit 0/1</td><td>Kanal-Kommando: Bit 0 = START, Bit 1 = STOP</td></tr>
+              <tr class="hover:bg-slate-800/40"><td class="py-2 px-3">+28</td><td class="py-2 px-3 text-rose-400">$0E</td><td>AUDxDEL</td><td>Bits 15..0</td><td>Hardware-Startverzögerung in 32.768-kHz-Schritten</td></tr>
+              <tr class="hover:bg-slate-800/40"><td class="py-2 px-3">+30</td><td class="py-2 px-3 text-rose-400">$0F</td><td>AUDxSTAT</td><td>Bit 2..0</td><td>Status: Bit 0 = DELAYING, Bit 1 = PREFILL, Bit 2 = PLAYING</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="mt-4 pt-4 border-t border-slate-800">
+          <h3 class="text-sm font-bold text-amber-400 mb-2">Option A: Globale Interrupt-Register ($DFF804..$DFF80A)</h3>
+          <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs mono">
+            <div class="bg-slate-900 border border-slate-800 p-3 rounded-lg">
+              <div class="text-slate-400">$DFF804</div>
+              <strong class="text-white">AUDINTENAH</strong>
+              <div class="text-slate-500 text-[11px]">IRQ Enable Stimmen 31..16</div>
+            </div>
+            <div class="bg-slate-900 border border-slate-800 p-3 rounded-lg">
+              <div class="text-slate-400">$DFF806</div>
+              <strong class="text-white">AUDINTENAL</strong>
+              <div class="text-slate-500 text-[11px]">IRQ Enable Stimmen 15..0</div>
+            </div>
+            <div class="bg-slate-900 border border-slate-800 p-3 rounded-lg">
+              <div class="text-slate-400">$DFF808</div>
+              <strong class="text-white">AUDINTREQH</strong>
+              <div class="text-slate-500 text-[11px]">IRQ Request/W1C 31..16</div>
+            </div>
+            <div class="bg-slate-900 border border-slate-800 p-3 rounded-lg">
+              <div class="text-slate-400">$DFF80A</div>
+              <strong class="text-white">AUDINTREQL</strong>
+              <div class="text-slate-500 text-[11px]">IRQ Request/W1C 15..0</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // Tab Switching Logic
+    function switchTab(tabId) {
+      const tabs = ['diagram', 'dspsplit', 'memory', 'cascade', 'registers'];
+      tabs.forEach(t => {
+        const el = document.getElementById('tab-' + t);
+        const btn = document.getElementById('tabBtn-' + t);
+        if (t === tabId) {
+          el.classList.remove('hidden');
+          btn.className = 'px-4 py-2 text-xs md:text-sm font-semibold rounded-lg transition-all bg-[var(--primary)] text-slate-950 shadow-md';
+        } else {
+          el.classList.add('hidden');
+          btn.className = 'px-4 py-2 text-xs md:text-sm font-semibold rounded-lg transition-all bg-[var(--card-hover)] text-[var(--muted)] hover:text-white';
+        }
+      });
+    }
+
+    // Node Inspector Info
+    const nodeData = {
+      cpu: {
+        badge: 'Amiga 68k Bus',
+        title: 'CPU 68000 / 68020 Interface',
+        sub: 'minimig.v / audio_ext.v',
+        desc: 'Bedient alle Steuer- und Koeffizientenregister der 32 Stimmen über den internen Amiga-Bus ($DFF400..$DFF7FE). Dank Option A liegen die globalen IRQs separat bei $DFF804..$DFF80A.',
+        specs: [
+          ['Adressbereich:', '$DFF400 - $DFF80A'],
+          ['Zugriffsbreite:', '16 Bit (Word) / Byte-Enables'],
+          ['Register pro Stimme:', '16 Wörter (32 Bytes)']
+        ]
+      },
+      ddr3: {
+        badge: '114 MHz Bus',
+        title: 'DDR3 Fast-RAM Speicherbereich',
+        sub: 'Minimig.sv & ddram_ctrl',
+        desc: 'Bis zu 384 MB schneller Fast-RAM. Der neue Audio-DMA-Master greift mit 114 MHz direkt darauf zu, ohne Agnus zu fragen oder den 7-MHz-Chip-Bus zu belasten.',
+        specs: [
+          ['Basistakt:', '114.75 MHz'],
+          ['Latenz:', '3 - 5 Taktzyklen'],
+          ['Bandbreite:', 'Volle DDR3 Burst-Geschwindigkeit']
+        ]
+      },
+      sdram: {
+        badge: 'Addon-Port',
+        title: 'SDRAM Chip-RAM Speicherbereich',
+        sub: 'sdram_ctrl / audio_sdr_claim',
+        desc: 'Standard Chip-RAM für klassische Amiga-Samples (< $02000000). Zugriff erfolgt transparent über den dedizierten SDRAM-Addon-Port.',
+        specs: [
+          ['Bereich:', '$00000000 - $01FFFFFF'],
+          ['Arbitrierung:', 'audio_sdr_claim'],
+          ['Kompatibilität:', '100% Paula-kompatibel']
+        ]
+      },
+      dma_master: {
+        badge: 'Option 2',
+        title: 'Dedizierter Audio DMA Master',
+        sub: 'mister/rtl/audio_dma_master.v',
+        desc: 'Vollständig autonomer 32-Bit DMA-Master. Erkennt anhand der Adresse, ob DDR3 Fast-RAM oder SDRAM Chip-RAM angefordert wird, und bedient die FIFO-Puffer reihum.',
+        specs: [
+          ['Adressraum:', 'Volle 32 Bit (4 GB)'],
+          ['Taktung:', '114 MHz Fast-Path / 28 MHz TDM-Sync'],
+          ['FIFO-Trigger:', 'Round-Robin über 32 Stimmen']
+        ]
+      },
+      fifo_tdm: {
+        badge: 'TDM Core',
+        title: 'FIFO & TDM Scheduler',
+        sub: 'mister/rtl/audio_ext/audio_ext.v',
+        desc: 'Ein duales Block-RAM mit 2048 x 16 Bit stellt jeder der 32 Stimmen einen 64-Wort-Puffer zur Verfügung. Der TDM-Zähler rotiert mit 886.7 kHz über alle 32 Slots.',
+        specs: [
+          ['Puffergröße:', '2048 x 16 Bit (4 M10K)'],
+          ['Wörter je Stimme:', '64 Wörter FIFO'],
+          ['Slot-Periode:', '32 Takte @ 28.375 MHz (~886.7 kHz)']
+        ]
+      },
+      decoder: {
+        badge: 'Stateless Core',
+        title: 'Audio Dekoder-Stufe',
+        sub: 'mister/rtl/audio_ext/adpcm_decoder_shared.v',
+        desc: 'Dekodiert 8-Bit / 16-Bit PCM sowie komprimiertes Hardware-ADPCM im selben Taktzyklus, in dem die Stimme am TDM-Slot an der Reihe ist.',
+        specs: [
+          ['PCM Formate:', '8-Bit signed, 16-Bit signed'],
+          ['ADPCM:', 'Stateless IMA-ADPCM Core'],
+          ['Prädiktor:', 'Hardware-Prädiktor je Stimme im RAM']
+        ]
+      },
+      dsp0: {
+        badge: 'DSP Links',
+        title: 'Biquad Engine 0 (Linker Kanal)',
+        sub: 'mister/rtl/audio_ext/biquad_iir_ringbuffer.v',
+        desc: 'Filtert exklusiv den linken Audiopfad ALLER 32 Stimmen. Eine 32-Stufen-Kaskade von Stimme 0 bis Stimme 31 bleibt komplett in dieser Instanz und wird sofort aufgelöst.',
+        specs: [
+          ['Kanal:', 'Links (Voices 0..31)'],
+          ['Multiplizierer:', '1 dedizierter DSP-Block (18x18)'],
+          ['Koeffizienten:', '5 Wörter je Stimme im internen RAM'],
+          ['Latenz:', '14 Takte pro aktiver Filterung']
+        ]
+      },
+      dsp1: {
+        badge: 'DSP Rechts',
+        title: 'Biquad Engine 1 (Rechter Kanal)',
+        sub: 'mister/rtl/audio_ext/biquad_iir_ringbuffer.v',
+        desc: 'Filtert exklusiv den rechten Audiopfad ALLER 32 Stimmen. Ermöglicht völlig unabhängiges Filtern und Modulieren der Stereokanäle.',
+        specs: [
+          ['Kanal:', 'Rechts (Voices 0..31)'],
+          ['Multiplizierer:', '1 dedizierter DSP-Block (18x18)'],
+          ['Koeffizienten:', '5 Wörter je Stimme im internen RAM'],
+          ['Latenz:', '14 Takte pro aktiver Filterung']
+        ]
+      },
+      mixer: {
+        badge: 'Mixer Core',
+        title: 'Stereo Mixer, AM & Ringmodulation',
+        sub: 'mister/rtl/audio_ext/audio_ext.v',
+        desc: 'Wendet Lautstärken getrennt auf L/R an, führt AM/Tremolo oder Ringmodulation zwischen Nachbarkanälen aus und summiert alle 32 Stimmen im 21-Bit Master-Akkumulator.',
+        specs: [
+          ['Headroom:', '5 Bits Übersteuerungsschutz (21 Bit)'],
+          ['Modulation:', 'AM / Tremolo & Ringmod'],
+          ['Limiter:', 'Soft-Saturation Clipper auf 16 Bit']
+        ]
+      },
+      output: {
+        badge: 'MiSTer I2S',
+        title: 'Ausgangs-Stufe & Capture-RAM',
+        sub: 'Minimig.sv & audio_capture.v',
+        desc: 'Übergabe der Audiosamples an den 48-kHz-Mixer via Dual-Clock-Mailbox. Parallel zeichnet audio_capture bis zu 2x 4096 Samples für automatisierte Bitstream-Tests auf.',
+        specs: [
+          ['Domain-Crossing:', 'clk_sys (28M) -> CLK_AUDIO (48k)'],
+          ['Capture-Puffer:', '2x 4 KB Ringpuffer / Single-Shot'],
+          ['Auflösung:', '16-Bit Stereo @ 48 kHz']
+        ]
+      }
+    };
+
+    function selectNode(key) {
+      const data = nodeData[key];
+      if (!data) return;
+      document.getElementById('inspBadge').textContent = data.badge;
+      document.getElementById('inspTitle').textContent = data.title;
+      document.getElementById('inspSub').textContent = data.sub;
+      document.getElementById('inspDesc').textContent = data.desc;
+      const specsEl = document.getElementById('inspSpecs');
+      specsEl.innerHTML = '';
+      data.specs.forEach(s => {
+        const li = document.createElement('li');
+        li.className = 'flex justify-between';
+        li.innerHTML = `<span class="text-slate-400">${s[0]}</span> <strong class="text-white">${s[1]}</strong>`;
+        specsEl.appendChild(li);
+      });
+    }
+
+    // Signal Flow Animation Mode
+    function setFlowMode(mode) {
+      const modes = ['playback', 'cascade', 'dma'];
+      modes.forEach(m => {
+        const btn = document.getElementById('modeBtn-' + m);
+        if (m === mode) {
+          btn.className = 'px-2.5 py-1 text-xs rounded bg-sky-500/20 text-sky-400 border border-sky-500/40 font-bold';
+        } else {
+          btn.className = 'px-2.5 py-1 text-xs rounded bg-slate-800 text-slate-400 border border-slate-700';
+        }
+      });
+
+      const ddrPath = document.getElementById('path-ddr');
+      const cascLoop = document.getElementById('path-cascade-loop');
+
+      if (mode === 'cascade') {
+        cascLoop.setAttribute('opacity', '1');
+        cascLoop.classList.add('flow-line');
+        cascLoop.setAttribute('stroke', '#f59e0b');
+        selectNode('dsp0');
+      } else if (mode === 'dma') {
+        cascLoop.setAttribute('opacity', '0.1');
+        cascLoop.classList.remove('flow-line');
+        ddrPath.classList.add('flow-line');
+        selectNode('dma_master');
+      } else {
+        cascLoop.setAttribute('opacity', '0.2');
+        cascLoop.classList.remove('flow-line');
+        ddrPath.classList.remove('flow-line');
+        selectNode('dsp0');
+      }
+    }
+
+    // Populate Cascade 32 Grid
+    const cascGrid = document.getElementById('cascadeGrid');
+    for (let i = 0; i < 32; i++) {
+      const box = document.createElement('div');
+      box.id = 'cascBox-' + i;
+      box.className = 'p-2 rounded-lg border text-center cursor-pointer transition-all ' + 
+        (i === 0 ? 'bg-sky-950/60 border-sky-500/50 text-sky-300' : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700');
+      box.innerHTML = `<div class="font-mono text-xs font-bold">Ch ${i}</div><div class="text-[10px] mt-0.5">${i === 0 ? 'DMA In' : 'Flt In'}</div>`;
+      box.onclick = () => setCascadeView(i);
+      cascGrid.appendChild(box);
+    }
+
+    function setCascadeView(idx) {
+      for (let i = 0; i < 32; i++) {
+        const b = document.getElementById('cascBox-' + i);
+        if (i === idx) {
+          b.className = 'p-2 rounded-lg border text-center cursor-pointer transition-all bg-amber-500/20 border-amber-500 text-amber-300 font-bold shadow-lg';
+        } else if (i === 0) {
+          b.className = 'p-2 rounded-lg border text-center cursor-pointer transition-all bg-sky-950/60 border-sky-500/50 text-sky-300';
+        } else {
+          b.className = 'p-2 rounded-lg border text-center cursor-pointer transition-all bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700';
+        }
+      }
+      document.getElementById('cascSelVoice').textContent = 'Stimme ' + idx;
+      const role = document.getElementById('cascSelRole');
+      if (idx === 0) {
+        role.textContent = '(Primär-Generator • DMA aktiv • Quelle: RAM)';
+        role.className = 'ml-2 text-sky-400 font-semibold';
+      } else {
+        role.textContent = `(Kaskadenstufe ${idx} • AUD_LEN = 0 • Quelle: Post-Filter Ch ${idx-1})`;
+        role.className = 'ml-2 text-amber-400 font-semibold';
+      }
+    }
+
+    // Default selection
+    selectNode('dsp0');
+  </script>
+</body>
+</html>

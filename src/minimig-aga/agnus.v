@@ -84,6 +84,7 @@ module agnus
 	output        strhor_denise,   // horizontal strobe for Denise (due to not cycle exact implementation of Denise it must be delayed by one CCK)
 	output        strhor_paula,    // horizontal strobe for Paula
 	output  [8:0] htotal,          // video line length
+	output [10:0] vpos,            // vertical beam counter
 	output        harddis,
 	output        varbeamen,
 	output        int3,            // blitter finished interrupt (to Paula)
@@ -312,7 +313,7 @@ wire ena_cop = ~dma_bpl;
 wire ena_blt = ~(dma_ref | dma_dsk | dma_aud | dma_spr | dma_bpl | dma_cop) && bls_cnt!=BLS_CNT_MAX ? 1'b1 : 1'b0;
 
 wire  [8:0] hpos;      //alternative horizontal beam counter
-wire [10:0] vpos;      //vertical beam counter
+// wire [10:0] vpos;      //vertical beam counter (module output)
 wire        vbl;       //JB: vertical blanking
 wire        vblend;    //JB: last line of vertical blanking
    
