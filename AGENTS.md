@@ -90,3 +90,4 @@ dokumentierter Weg, und die vorherige Sitzung wusste es. Siehe
 - `docs/HANDOVER.md` — Stand, Werkzeuge, offene Aufgaben.
 - `docs/SCRIPTS.md` — die Skriptübersicht aus Regel 1.
 - `docs/FLASHING.md` — wie der Bitstream auf das Gerät kommt (Regel 10).
+- `docs/HARDWARE.md` — was auf echter Hardware tatsächlich passiert ist.
