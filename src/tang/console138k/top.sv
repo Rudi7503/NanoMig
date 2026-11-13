@@ -883,6 +883,31 @@ sdram #(
 // --------------------------------------------------------------------
 //  Sprite-Engine am SDRAM-Anschluss p2
 //  Der Arbiter teilt sich den einen Anschluss mit dem Prozessor.
+//
+//  Fehlersuche 2026-11-13: Mit `SPR_MEM_DISABLE wird die Engine vom
+//  Speicher getrennt und der Prozessor haengt wie vorher direkt am
+//  SDRAM. Bootet dieser Stand, liegt der Fehler im Arbiter.
+// --------------------------------------------------------------------
+`ifdef SPR_MEM_DISABLE
+
+assign p2_addr       = {1'b0, fastram_addr};
+assign p2_ds         = fastram_be;
+assign p2_cs         = fastram_sel;
+assign p2_we         = fastram_wr;
+assign fastram_dout   = p2_dout;
+assign fastram_dout48 = p2_dout48;
+assign fastram_ready  = p2_ack;
+
+// Engine ohne Speicher: sie kann nichts holen und bleibt stumm
+assign spr_mem_readdata      = 64'd0;
+assign spr_mem_readdatavalid = 1'b0;
+assign spr_mem_waitrequest   = 1'b0;
+
+`else
+
+// --------------------------------------------------------------------
+//  Sprite-Engine am SDRAM-Anschluss p2
+//  Der Arbiter teilt sich den einen Anschluss mit dem Prozessor.
 // --------------------------------------------------------------------
 sdram_p2_arbiter spr_arb (
 	.clk        ( clk_85m       ),
@@ -927,6 +952,8 @@ sprite_mem_adapter spr_adapter (
 	.sd_dout48          ( spr_sd_dout48 ),
 	.sd_ack             ( spr_sd_ack    )
 );
+`endif
+
 
 // run the flash a 85MHz. This is only used at power-up to copy kickstart
 // from flash to sdram
