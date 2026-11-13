@@ -20,7 +20,7 @@ Spalten:
 
 | Pfad | Status | Zweck | Anmerkung |
 |---|---|---|---|
-| `mister/tools/check_toby_updates.py` | **aktiv**, Ersatz für die frühere Fassung | Meldet neue Beiträge von `toby01019` auf vier Kanälen: Issue #9/#10, PR-Kommentare, Diff-Kommentare, formale Reviews. | Zustandslos, schreibt keine Datei. `--minutes` steuert das Zeitfenster. Ersetzt die Fassung, die nur Issue-Kommentare auf #9/#10 las und PR-Reviews übersah. |
+| `mister/tools/check_toby_updates.py` | **aktiv**, Ersatz für die frühere Fassung | Meldet neue Beiträge von `toby01019` auf vier Kanälen: Issue #9/#10, PR-Kommentare, Diff-Kommentare, formale Reviews. | Zustandslos, schreibt keine Datei. `--minutes` steuert das Zeitfenster, `--out` schreibt Treffer zusätzlich in eine Datei (und nur dann). Läuft alle 15 Minuten über die Windows-Aufgabe `NanoMig TobyWatch`, siehe Abschnitt 6. |
 | `mister/tools/toby_chat.py` | aktiv | Client für Tobys Austausch-Server: Chat lesen (`GET /austausch/api/chat`) und schreiben (`POST`). Basic Auth aus `austausch_config.json`. | Braucht die Zugangsdaten. Achtung: die Datei ist **UTF-8**; wer sie mit Windows-1252 liest, bekommt ein falsches Passwort (Umlaut). |
 | `mister/tools/watch_toby_chat.py` | aktiv | Dauerbeobachter für den Austausch-Chat, ruft `toby_chat.py` im Takt auf. | Endlosschleife, nur in einer eigenen Sitzung starten. |
 | `mister/tools/austausch_config.json` | aktiv | Zugangsdaten für den Austausch-Server. | **Nicht** ins Repo gehört das Passwort in Klartext — derzeit liegt es dort. Sollte durch Umgebungsvariablen ersetzt werden. |
@@ -94,6 +94,29 @@ geschrieben. Sie bleiben, weil die Upstream-Simulationen sie brauchen.
 | `src/lattice/icesugar-pro/programmer.bat` | aktiv | Flash-Anleitung per `ecpdap`. |
 | `src/update_minimig.ps1` | aktiv | Übernimmt Änderungen aus dem Upstream-Minimig. |
 | `sim/fx68x_verilator/make.sh` | aktiv | Verilator-Build für die CPU-Simulation. |
+
+---
+
+## 6. Zeitpläne ausserhalb des Repos
+
+Nicht versioniert, aber wichtig zu kennen — sonst sucht man später, wer
+diese Datei schreibt.
+
+| Ort | Was | Zweck |
+|---|---|---|
+| Windows-Aufgabe `NanoMig TobyWatch` | ruft alle 15 Minuten `C:\Python314\pythonw.exe mister\tools\check_toby_updates.py --minutes 20 --out "%LOCALAPPDATA%\dsh-toby\news.txt"` auf | Prüft Tobys Rückmeldungen ohne DSH und **ohne Tokenverbrauch**. Schreibt nur dann eine Datei, wenn es wirklich etwas Neues gibt. |
+| `%LOCALAPPDATA%\dsh-toby\news.txt` | Ergebnisdatei der Aufgabe | Existiert nur, wenn Toby geschrieben hat. Inhalt ist der jeweilige Beitrag mit Zeitstempel. |
+
+Anlegen, prüfen, entfernen:
+
+```powershell
+schtasks /query /tn "NanoMig TobyWatch" /v /fo LIST
+schtasks /run   /tn "NanoMig TobyWatch"
+schtasks /delete /tn "NanoMig TobyWatch" /f
+```
+
+Der Python-Lauf kostet keine Tokens. Tokens entstehen erst, wenn jemand die
+Ergebnisdatei liest oder die Aufgabe in DSH ausgewertet wird.
 
 ---
 

@@ -18,6 +18,12 @@ KANAELE
 AUFRUF
     python mister/tools/check_toby_updates.py
     python mister/tools/check_toby_updates.py --pr 11 --issues 9,10 --minutes 60
+    python mister/tools/check_toby_updates.py --minutes 20 --out "%LOCALAPPDATA%\\dsh-toby\\news.txt"
+
+    Mit --out wird das Ergebnis zusaetzlich in eine Datei geschrieben, und
+    zwar nur dann, wenn es etwas Neues gibt. Damit kann ein Zeitplan den
+    Aufruf uebernehmen, ohne dass jemand den Bildschirmausgabe lesen muss:
+    Es entsteht nur eine Datei, wenn Toby wirklich geschrieben hat.
 
 AUSGABE
     [SILENT_NO_UPDATE]            nichts Neues, Exit 0
@@ -128,6 +134,8 @@ def main():
     ap.add_argument('--pr', type=int, default=11, help='Nummer des Pull Requests (Standard 11)')
     ap.add_argument('--issues', default='9,10', help='Komma-Liste der Issues (Standard 9,10)')
     ap.add_argument('--minutes', type=int, default=120, help='Zeitfenster in Minuten (Standard 120)')
+    ap.add_argument('--out', default=None,
+                    help='Datei, in die neue Beitraege geschrieben werden (nur bei Treffer)')
     args = ap.parse_args()
 
     issues = [int(x) for x in args.issues.split(',') if x.strip()]
@@ -157,8 +165,27 @@ def main():
         return 0
 
     print('[NEW_UPDATE_FOUND]')
+    text = []
     for name, item in sorted(found, key=lambda x: str(x[1].get('created_at') or x[1].get('submitted_at'))):
-        print(describe(name, item))
+        block = describe(name, item)
+        print(block)
+        text.append(block)
+
+    if args.out:
+        try:
+            import os as _os
+            target = _os.path.expandvars(args.out)
+            folder = _os.path.dirname(target)
+            if folder and not _os.path.isdir(folder):
+                _os.makedirs(folder, exist_ok=True)
+            stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+            with open(target, 'a', encoding='utf-8') as f:
+                f.write('\n##### %s  (%d neue Beitraege)\n' % (stamp, len(text)))
+                f.write('\n'.join(text))
+                f.write('\n')
+        except Exception as exc:
+            print('[CHECK_ERROR] --out nicht schreibbar: %s' % exc)
+
     return 0
 
 
