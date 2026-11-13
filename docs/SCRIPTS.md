@@ -35,7 +35,8 @@ Spalten:
 
 | Pfad | Status | Zweck | Anmerkung |
 |---|---|---|---|
-| `mister/build_bitstream.ps1` | aktiv | Vollständiger Quartus-Build für Minimig auf MiSTer. | Führt `build_id.tcl` und den Compile-Flow aus. Ohne den ersten Schritt scheitert `quartus_map` an `build_id.v`. |
+| `src/build_tc138k.tcl` | **aktiv** | Gowin-Build für die Tang Console 138K: öffnet `nanomig_tc138k.gprj`, läuft `syn` und `pnr`. Ergebnis: `src/impl/pnr/nanomig_tc138k.fs`. | Aufruf: `C:\Gowin\Gowin_V1.9.12.04_x64\IDE\bin\gw_sh.exe src\build_tc138k.tcl`. Dauer rund 8 Minuten. **Achtung: überschreibt immer `nanomig_tc138k.fs`** — Varianten vor dem nächsten Build umbenennen. |
+| `src/run_pnr.tcl` | **aktiv** | Wie oben, aber `run all` statt getrennt `syn` + `pnr`. | Kürzerer Aufruf, gleiches Ergebnis. || `mister/build_bitstream.ps1` | aktiv | Vollständiger Quartus-Build für Minimig auf MiSTer. | Führt `build_id.tcl` und den Compile-Flow aus. Ohne den ersten Schritt scheitert `quartus_map` an `build_id.v`. |
 | `mister/tools/seed_sweep.ps1` | aktiv | Baut denselben Stand mit mehreren Fitter-Seeds, meldet ALMs/Register/RAM/Setup/Hold/RBF je Seed. | 40–50 Minuten je Seed. `-Seeds` als Komma-String, wenn per `-File` aufgerufen. |
 | `mister/verify/2026-11-13-review17/run_extended_local.py` | aktiv | Führt Tobys Review17-Tests gegen dieses Repo aus (9 Tests). | Erwartet `9 / 9`. Auf dem Vor-Fix-Stand 7/9 — die Suite unterscheidet also. |
 | `mister/verify/2026-10-31-capture-stereo/check_capture.py` | aktiv | Wertet die Capture-Rohdaten aus PR #1 aus. | |
