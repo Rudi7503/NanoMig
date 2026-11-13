@@ -151,7 +151,7 @@ always @(posedge clk) begin
       system_video_scanlines <= 2'd0;
       system_chipmem <= AGA ? 2'd3 : 2'd0; // 2MB Chip-RAM for AGA, 512k for OCS
       system_slowmem <= AGA ? 2'd0 : 2'd1; // No slowmem for AGA, 512k for OCS
-      system_fastmem <= 2'd0; // No Fast-RAM
+      system_fastmem <= 2'd2; // 4 MB Fast-RAM (Kickstart 3.1 braucht mehr als 1.3)
       system_turbo <= AGA ? 3'b011 : 3'b000; // Turbo for AGA, OFF for OCS
       system_ide_enable <= AGA ? 1'b1 : 1'b0; // IDE enabled for AGA
       system_joy_swap <= 1'b1;

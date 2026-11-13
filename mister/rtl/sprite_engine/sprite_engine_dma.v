@@ -81,10 +81,20 @@ module sprite_engine_dma (
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             reg_ptr_h    <= 16'h0000;
+`ifdef SPR_BRAM_TEST
+            // Testbetrieb: Liste fest auf 0x1000, Engine dauerhaft an.
+            // Damit laesst sich das Block-RAM-Muster ohne Amiga-Software
+            // anzeigen (Toby, 2026-11-13).
+            staged_ptr   <= 32'h0000_1000;
+            active_ptr   <= 32'h0000_1000;
+            ptr_updated  <= 1'b1;
+            engine_en    <= 1'b1;
+`else
             staged_ptr   <= 32'h0000_0000;
             active_ptr   <= 32'h0000_0000;
             ptr_updated  <= 1'b0;
             engine_en    <= 1'b0;
+`endif
             zero_skip_en <= 1'b0;
             cap_en       <= 1'b0;
         end else begin

@@ -50,6 +50,7 @@ module sdram_p2_arbiter (
     output reg  [15:0] b_dout,
     output reg  [47:0] b_dout48,
     output reg         b_ack,
+    output reg         b_active_seen,   // Merkbit: war b_active jemals 1?
 
     // SDRAM-Anschluss
     output wire [22:0] p2_addr,
@@ -99,6 +100,7 @@ module sdram_p2_arbiter (
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             b_active   <= 1'b0;
+            b_active_seen <= 1'b0;
             a_ack_hold <= 1'b0;
             b_ack      <= 1'b0;
             p2_ack_d   <= 1'b0;
@@ -114,7 +116,10 @@ module sdram_p2_arbiter (
             // Engine uebernimmt den Anschluss nur, wenn der Prozessor
             // gerade nichts will.
             if (!b_active) begin
-                if (b_cs && !a_cs) b_active <= 1'b1;
+                if (b_cs && !a_cs) begin
+                    b_active      <= 1'b1;
+                    b_active_seen <= 1'b1;
+                end
             end else begin
                 // Ende des Engine-Zugriffs: cs faellt, nachdem das Ack kam.
                 if (!b_cs) b_active <= 1'b0;
