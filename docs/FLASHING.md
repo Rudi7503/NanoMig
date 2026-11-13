@@ -64,23 +64,76 @@ Ablauf:
 `--operation_index` bedeutet: `0` Gerätecodes lesen, `1` Reprogram (Flash),
 `2` SRAM (flüchtig).
 
-### B) Ohne Taste — über die Companion-Firmware
+### B) Ohne Taste — über den JTAG-Anschluss (der Weg, der funktioniert hat)
 
 **Das ist der Weg, den Rudi beschrieben hat: die andere KI konnte flashen,
-ohne eine Taste zu drücken.**
+ohne eine Taste zu drücken.** Der entscheidende Punkt ist `--cable-index`:
+`--scan-cables` findet nichts, das Kabel wird aber über seinen Index direkt
+angesprochen.
 
-Die Companion-Firmware bringt dafür zwei Möglichkeiten mit:
+```powershell
+$cli = 'C:\Gowin\Gowin_V1.9.12.04_x64\Programmer\bin\programmer_cli.exe'
 
-- **OSD-Loader:** Für die Console 138K gibt es eigene Bitstreams mit
-  aktiviertem OSD-Loader („integrated onboard BL616 MPU only"). Damit wird der
-  Core von SD-Karte oder USB-Stick geladen, ohne jeden Flashvorgang.
-- **Serielle Übertragung über den BL616:** Der PC schickt den Bitstream über
-  COM8 an den Companion, dieser programmiert den FPGA über seine JTAG-Pins.
+& $cli --cable-index 4 -d GW5AST-138C -r 53 `
+       --fsFile "D:\programmier_ordner\FPGA\NanoMig\src\impl\pnr\nanomig_tc138k.fs" `
+       --spiaddr 0x000000 `
+       --output "$env:TEMP\flash_out.txt"
+```
 
-**Der genaue Befehl für Weg B ist hier noch nicht dokumentiert.** Solange das
-so ist, gilt: Wer ihn benutzt, trägt ihn mit vollständiger Befehlszeile,
-Werkzeugversion und Ergebnis hier ein. Ein „hat funktioniert" ohne Befehl ist
-keine Dokumentation.
+Belegter Erfolgslauf (Rudi, 2026-11-13):
+
+```
+ Programning Flash ends at 0x0461600.
+ Program Flash finished.
+ Finished.
+ Cost 78.72 second(s)
+```
+
+Also rund 79 Sekunden für die 37 MB.
+
+## `programmer_cli` — was die Schalter bedeuten
+
+```
+--cable-index 4        Kabel direkt ansprechen; --scan-cables findet nichts
+-d GW5AST-138C         Zielbaustein
+-r <n>                 Operation, siehe Tabelle
+--fsFile <datei>       Bitstream
+--spiaddr 0x000000     Startadresse im externen Flash
+--output <datei>       Bericht
+```
+
+Operationen, die hier gebraucht werden:
+
+| `-r` | Bedeutung |
+|---|---|
+| 0 | Device Codes lesen (funktioniert immer, gut zum Verbindungstest) |
+| 1 | Reprogram |
+| 2 | SRAM Program (flüchtig, gut für den ersten Test) |
+| 51 | exFlash Detect ID |
+| 52 | exFlash Bulk Erase Arora V |
+| 53 | exFlash Erase,Program Arora V |
+| 54 | exFlash Erase,Program,Verify Arora V |
+
+## Zustand am 2026-11-13, 13:17 — Schreibzugriffe blockiert
+
+Nach dem erfolgreichen Lauf oben schlugen **alle** Schreiboperationen fehl:
+
+| Aufruf | Datei | Ergebnis |
+|---|---|---|
+| `-r 53` | unser `nanomig_tc138k.fs` | exit 50, 0,0 s |
+| `-r 53` | offiziell `nanomig_tc138k_official.fs` | exit 50, 0,0 s |
+| `-r 2` | unser | exit 50, 0,0 s |
+| `-r 2` | offiziell | exit 50, 0,02 s |
+| `-r 51` | — | exit 50, 0,01 s |
+| `-r 0` | — | **exit 0**, 0,02 s |
+
+Lesen geht, schreiben nicht — und die offizielle Datei scheitert genauso wie
+unsere. Der Bitstream ist damit als Ursache ausgeschlossen.
+
+**Nächster Schritt in diesem Zustand: Konsole stromlos machen und neu
+anstecken**, dann erneut versuchen. Ein `jtagserver`-Prozess (PID 4612) lief
+zu diesem Zeitpunkt noch und liess sich nicht beenden.
+
 
 ## Was am 2026-11-13 gemessen wurde
 
