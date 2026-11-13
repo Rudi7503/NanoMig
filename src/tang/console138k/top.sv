@@ -544,6 +544,31 @@ wire [15:0] sdram_dout;
 wire [47:0] chip48;
 wire [47:0] fastram_dout48;
 
+// Sprite-Engine: eigener Speicher-Master (Avalon-MM, 64 Bit, Burst 4).
+// Der Adapter unten uebersetzt ihn auf den 16-Bit-SDRAM-Anschluss p2.
+wire [31:0] spr_mem_address;
+wire [3:0]  spr_mem_burstcount;
+wire        spr_mem_read;
+wire [63:0] spr_mem_readdata;
+wire        spr_mem_readdatavalid;
+wire        spr_mem_waitrequest;
+
+// Einziger physischer p2-Anschluss, vom Arbiter verwaltet
+wire [22:0] p2_addr;
+wire [1:0]  p2_ds;
+wire        p2_cs;
+wire        p2_we;
+wire [15:0] p2_dout;
+wire [47:0] p2_dout48;
+wire        p2_ack;
+
+// Engine-Seite des Arbiters
+wire [22:0] spr_sd_addr;
+wire        spr_sd_cs;
+wire [15:0] spr_sd_dout;
+wire [47:0] spr_sd_dout48;
+wire        spr_sd_ack;
+
 assign ram_din = sdram_dout;
 
 // pack config values into minimig config
@@ -641,7 +666,15 @@ nanomig nanomig
 `endif
  .fastram_din(fastram_din),
  .fastram_wr(fastram_wr),
- .fastram_ready(fastram_ready)
+ .fastram_ready(fastram_ready),
+
+ // Sprite-Engine: Speicher-Master zum Adapter
+ .spr_mem_address(spr_mem_address),
+ .spr_mem_burstcount(spr_mem_burstcount),
+ .spr_mem_read(spr_mem_read),
+ .spr_mem_readdata(spr_mem_readdata),
+ .spr_mem_readdatavalid(spr_mem_readdatavalid),
+ .spr_mem_waitrequest(spr_mem_waitrequest)
 );
 
 wire           flash_ready;  
@@ -838,13 +871,61 @@ sdram #(
 	.we         ( sdram_we      ), // cpu/chipset requests write
 			 
 	.p2_din        ( fastram_din     ), // data input from chipset/cpu
-	.p2_dout       ( fastram_dout    ),
-	.p2_dout48     ( fastram_dout48  ),
-	.p2_addr       ( fastram_addr    ), // 22 bit word address
-	.p2_ds         ( fastram_be      ), // upper/lower data strobe
-	.p2_cs         ( fastram_sel     ), // cpu/chipset requests read/wrie
-	.p2_we         ( fastram_wr      ),  // cpu/chipset requests write
-	.p2_ack        ( fastram_ready   )
+	.p2_dout       ( p2_dout         ),
+	.p2_dout48     ( p2_dout48       ),
+	.p2_addr       ( p2_addr         ), // 23 bit word address
+	.p2_ds         ( p2_ds           ), // upper/lower data strobe
+	.p2_cs         ( p2_cs           ), // cpu/chipset requests read/wrie
+	.p2_we         ( p2_we           ), // cpu/chipset requests write
+	.p2_ack        ( p2_ack          )
+);
+
+// --------------------------------------------------------------------
+//  Sprite-Engine am SDRAM-Anschluss p2
+//  Der Arbiter teilt sich den einen Anschluss mit dem Prozessor.
+// --------------------------------------------------------------------
+sdram_p2_arbiter spr_arb (
+	.clk        ( clk_85m       ),
+	.rst_n      ( pll_lock      ),
+
+	.a_addr     ( fastram_addr  ),
+	.a_ds       ( fastram_be    ),
+	.a_cs       ( fastram_sel   ),
+	.a_we       ( fastram_wr    ),
+	.a_dout     ( fastram_dout  ),
+	.a_dout48   ( fastram_dout48),
+	.a_ack      ( fastram_ready ),
+
+	.b_addr     ( spr_sd_addr   ),
+	.b_cs       ( spr_sd_cs     ),
+	.b_dout     ( spr_sd_dout   ),
+	.b_dout48   ( spr_sd_dout48 ),
+	.b_ack      ( spr_sd_ack    ),
+
+	.p2_addr    ( p2_addr       ),
+	.p2_ds      ( p2_ds         ),
+	.p2_cs      ( p2_cs         ),
+	.p2_we      ( p2_we         ),
+	.p2_dout    ( p2_dout       ),
+	.p2_dout48  ( p2_dout48     ),
+	.p2_ack     ( p2_ack        )
+);
+
+sprite_mem_adapter spr_adapter (
+	.clk                ( clk_85m ),
+	.rst_n              ( pll_lock ),
+
+	.avm_address        ( spr_mem_address       ),
+	.avm_read           ( spr_mem_read          ),
+	.avm_waitrequest    ( spr_mem_waitrequest   ),
+	.avm_readdata       ( spr_mem_readdata      ),
+	.avm_readdatavalid  ( spr_mem_readdatavalid ),
+
+	.sd_addr            ( spr_sd_addr   ),
+	.sd_cs              ( spr_sd_cs     ),
+	.sd_dout            ( spr_sd_dout   ),
+	.sd_dout48          ( spr_sd_dout48 ),
+	.sd_ack             ( spr_sd_ack    )
 );
 
 // run the flash a 85MHz. This is only used at power-up to copy kickstart

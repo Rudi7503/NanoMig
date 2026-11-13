@@ -109,7 +109,17 @@ module nanomig (
    input [47:0]	 fastram_dout48, // upper 48 bits of a 64 bit aligned read (cache line fill)
    output [15:0] fastram_din,
    output	 fastram_wr,
-   input	 fastram_ready
+   input	 fastram_ready,
+
+   // Sprite-Engine: eigener Speicher-Master (Avalon-MM, 64 Bit, Burst 4).
+   // Wird in top.sv ueber sprite_mem_adapter auf den SDRAM-Anschluss p2
+   // gelegt. Auf der MiSTer-Variante haengt derselbe Master am DDR3.
+   output [31:0] spr_mem_address,
+   output [3:0]  spr_mem_burstcount,
+   output        spr_mem_read,
+   input  [63:0] spr_mem_readdata,
+   input         spr_mem_readdatavalid,
+   input         spr_mem_waitrequest
 ); 
 `ifndef GATEMATE
  `ifndef LATTICE
@@ -1658,7 +1668,15 @@ minimig minimig
 	.sdc_byte_in_strobe ( sdc_byte_in_strobe    ),
 	.sdc_byte_addr      ( sdc_byte_addr         ),
 	.sdc_byte_in_data   ( sdc_byte_in_data      ),
- 	.sdc_byte_out_data  ( sdc_byte_out_data_fdc ) 
+ 	.sdc_byte_out_data  ( sdc_byte_out_data_fdc ),
+
+        // Sprite-Engine: Speicher-Master nach aussen fuehren
+        .spr_mem_address      ( spr_mem_address      ),
+        .spr_mem_burstcount   ( spr_mem_burstcount   ),
+        .spr_mem_read         ( spr_mem_read         ),
+        .spr_mem_readdata     ( spr_mem_readdata     ),
+        .spr_mem_readdatavalid( spr_mem_readdatavalid),
+        .spr_mem_waitrequest  ( spr_mem_waitrequest  )
 );
 
 Amber AMBER
