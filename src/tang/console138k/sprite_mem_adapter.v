@@ -42,7 +42,7 @@ module sdram_p2_arbiter (
     input  wire        a_we,
     output reg  [15:0] a_dout,
     output reg  [47:0] a_dout48,
-    output reg         a_ack,
+    output wire        a_ack,
 
     // Teilnehmer B: Sprite-Engine (nur lesend)
     input  wire [22:0] b_addr,
@@ -88,22 +88,28 @@ module sdram_p2_arbiter (
     // Der Prozessor darf keine Flanke sehen, die von der Engine stammt.
     // ------------------------------------------------------------------
     reg p2_ack_d;
+    reg a_ack_hold;   // letzter Stand, bevor die Engine den Bus uebernahm
+
+    // WICHTIG: Solange der Prozessor den Anschluss hat, bekommt er das
+    // Ack UNVERAENDERT - nicht registriert. nanomig wertet es phasenkritisch
+    // aus (ram_ready = cpu_ph1 && flanke). Ein Takt Verzoegerung verschiebt
+    // es aus dem Fenster, der Prozessor wartet ewig - schwarzes Bild.
+    assign a_ack = b_active ? a_ack_hold : p2_ack;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            b_active <= 1'b0;
-            a_ack    <= 1'b0;
-            b_ack    <= 1'b0;
-            p2_ack_d <= 1'b0;
+            b_active   <= 1'b0;
+            a_ack_hold <= 1'b0;
+            b_ack      <= 1'b0;
+            p2_ack_d   <= 1'b0;
         end else begin
             p2_ack_d <= p2_ack;
 
+            if (!b_active) a_ack_hold <= p2_ack;
+
             // Flanke am SDRAM-Anschluss: gehoert sie dem Prozessor oder
             // der Engine? Nur der jeweilige Teilnehmer bekommt sie.
-            if (p2_ack != p2_ack_d) begin
-                if (b_active) b_ack <= ~b_ack;
-                else          a_ack <= ~a_ack;
-            end
+            if (b_active && (p2_ack != p2_ack_d)) b_ack <= ~b_ack;
 
             // Engine uebernimmt den Anschluss nur, wenn der Prozessor
             // gerade nichts will.
