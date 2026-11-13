@@ -64,29 +64,44 @@ Ablauf:
 `--operation_index` bedeutet: `0` Gerätecodes lesen, `1` Reprogram (Flash),
 `2` SRAM (flüchtig).
 
-### B) Ohne Taste — über den JTAG-Anschluss (der Weg, der funktioniert hat)
+### B) Ohne Taste — über den JTAG-Anschluss (der Weg, der funktioniert)
 
-**Das ist der Weg, den Rudi beschrieben hat: die andere KI konnte flashen,
-ohne eine Taste zu drücken.** Der entscheidende Punkt ist `--cable-index`:
-`--scan-cables` findet nichts, das Kabel wird aber über seinen Index direkt
-angesprochen.
+**Das ist der Weg, der funktioniert, und zwar ohne jede Taste.** Entscheidend
+ist der **Kabelname**, nicht der Index:
 
 ```powershell
 $cli = 'C:\Gowin\Gowin_V1.9.12.04_x64\Programmer\bin\programmer_cli.exe'
 
-& $cli --cable-index 4 -d GW5AST-138C -r 53 `
+& $cli --cable "Gowin USB Cable(FT2CH)" -d GW5AST-138C -r 53 `
        --fsFile "D:\programmier_ordner\FPGA\NanoMig\src\impl\pnr\nanomig_tc138k.fs" `
-       --spiaddr 0x000000 `
-       --output "$env:TEMP\flash_out.txt"
+       --spiaddr 0x000000
 ```
 
-Belegter Erfolgslauf (Rudi, 2026-11-13):
+Belegte Erfolgsläufe am 2026-11-13:
 
 ```
- Programning Flash ends at 0x0461600.
+ Programning Flash ends at 0x0461600.   (offizieller Core, 78,72 s)
+ Programning Flash ends at 0x049D800.   (unser Core,       82,02 s)
  Program Flash finished.
- Finished.
- Cost 78.72 second(s)
+```
+
+#### Warum `--cable-index 4` scheitert
+
+`--cable-index 4` meldet zwar `USB Debugger A`, ist aber die **falsche
+Rückende**:
+
+| Aufruf | Lesen (`-r 0`) | SRAM (`-r 2`) | Flash (`-r 53`) |
+|---|---|---|---|
+| `--cable-index 4` | geht | geht | **exit 50, 0,0 s** |
+| `--cable "Gowin USB Cable(FT2CH)"` | geht | geht | **geht, 82 s** |
+
+Der Index zeigt auf einen anderen Kabeltreiber, der zwar JTAG-Kommandos
+absetzen, aber den externen Flash nicht erreichen kann. Deshalb kam bei
+`-r 12` auch „actual flash storage size is **1 bytes**" — der Flash wurde nie
+angesprochen, nicht weil er gesperrt war.
+
+**Merke: `--cable "Gowin USB Cable(FT2CH)"` verwenden, nicht `--cable-index`.**
+
 ```
 
 Also rund 79 Sekunden für die 37 MB.
@@ -128,23 +143,20 @@ Die ausführlichen Regeln stehen in `.agent/rules/nanomig-lessons.md`
 geht weiter, Schreiben nicht. Für erneutes Flashen muss die Konsole **mit
 gehaltenen Tasten S1/S2 eingeschaltet** werden.
 
-### Die Reihenfolge ist entscheidend
+### Was am 13.11. zunächst falsch gedeutet wurde
 
-Gemessen am 2026-11-13 im selben Einschaltzustand:
+Aus den Messungen `-r 2` läuft, `-r 53` scheitert, `-r 12` meldet 1 Byte
+wurde zunächst geschlossen, ein konfigurierter FPGA sperre den Flash. **Das
+war falsch.** Die eigentliche Ursache war `--cable-index 4`: ein anderer
+Kabeltreiber, der JTAG-Kommandos absetzt, aber den externen Flash nicht
+erreicht.
 
-| Operation | Ergebnis |
-|---|---|
-| `-r 2` SRAM Program | **läuft durch** („Frequency Updated: 15MHz", Fortschritt bis 100 %) |
-| `-r 53` exFlash | **exit 50**, 0,0 s |
-| `-r 12` exFlash in bscan | „actual flash storage size is **1 bytes**" |
+Mit `--cable "Gowin USB Cable(FT2CH)"` funktioniert `-r 53` im selben
+Gerätezustand sofort, ohne Tasten und ohne Kaltstart.
 
-Sobald der FPGA **konfiguriert** ist — durch Boot aus dem Flash oder durch
-einen SRAM-Programmiervorgang — sind die SPI-Pins vom Boot-Design belegt und
-der externe Flash ist über JTAG nicht mehr erreichbar.
-
-**Also: erst flashen, dann SRAM testen.** Wer zuerst `-r 2` macht, kann
-danach nicht mehr in den Flash schreiben, ohne die Konsole erneut mit S1/S2
-einzuschalten.
+Lehre: bei einem `exit 50` in 0,0 Sekunden zuerst das **Kabel** prüfen, nicht
+den Gerätezustand. Ein sofortiger Abbruch ohne Zeitverbrauch ist ein
+Schichtproblem, kein Flash-Problem.
 
 
 ### Die Befehle, die funktionieren
