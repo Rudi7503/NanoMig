@@ -93,6 +93,8 @@ def main():
     ap.add_argument('--device', default='GW5AST-138C')
     ap.add_argument('--timeout', type=int, default=120)
     ap.add_argument('--interval', type=float, default=0.7)
+    ap.add_argument('--settle', type=float, default=3.0, help='Wartezeit nach JTAG_OK, bevor geschrieben wird')
+    ap.add_argument('--tries', type=int, default=2, help='Schreibversuche innerhalb eines JTAG-Fensters')
     args = ap.parse_args()
 
     fs = Path(args.fs).resolve()   # programmer_cli braucht einen absoluten Pfad
@@ -109,6 +111,9 @@ def main():
             ident = [ln.strip() for ln in out.splitlines() if 'Flash' in ln or 'Detected' in ln]
             beep(1200, 120, 1)   # JTAG offen: ein hoher Ton
             print('[JTAG_OK] %s' % (' | '.join(ident[:2]) if ident else 'Flash antwortet'))
+            if args.settle > 0:
+                print('[SETTLE] %.1f s warten, damit die Verbindung steht' % args.settle)
+                time.sleep(args.settle)
             break
         note = 'Device not found' if 'not found' in out else out.strip().splitlines()[-1:] or ['keine Antwort']
         note = note[0] if isinstance(note, list) else note
@@ -122,17 +127,24 @@ def main():
         time.sleep(args.interval)
 
     # Bitstream schreiben
-    t0 = time.time()
-    rc, out = run(['--cable', args.cable, '--device', args.device,
-                   '--run', '53', '--fsFile', str(fs), '--spiaddr', '0x000000'])
-    dauer = time.time() - t0
-    if 'finished' in out.lower() and rc == 0:
-        beep(900, 120, 3)     # fertig: drei aufsteigende Toene waeren schoener, drei gleiche reichen
-        print('[FLASH_OK] Bitstream geschrieben in %.1f s' % dauer)
+    rc = 1
+    for versuch in range(1, args.tries + 1):
+        t0 = time.time()
+        rc, out = run(['--cable', args.cable, '--device', args.device,
+                       '--run', '53', '--fsFile', str(fs), '--spiaddr', '0x000000'])
+        dauer = time.time() - t0
+        if 'finished' in out.lower() and rc == 0:
+            beep(900, 120, 3)
+            print('[FLASH_OK] Bitstream geschrieben in %.1f s' % dauer)
+            break
+        print('[FLASH_TRY%d] rc=%d nach %.1f s' % (versuch, rc, dauer))
+        if versuch < args.tries:
+            print('[RETRY] neuer Versuch')
+            time.sleep(1.0)
     else:
-        beep(300, 500, 1)     # Fehler: tiefer, langer Ton
-        print('[FLASH_FAIL] rc=%d nach %.1f s' % (rc, dauer))
-        print('\n'.join(out.strip().splitlines()[-6:]))
+        beep(300, 500, 1)
+        print('[FLASH_FAIL] rc=%d' % rc)
+        print(chr(10).join(out.strip().splitlines()[-6:]))
         return 1
 
     # Kickstart optional
