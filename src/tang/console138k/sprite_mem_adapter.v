@@ -210,8 +210,19 @@ module sprite_mem_adapter (
                     end
                 end
 
+                // Review 18: Nach dem letzten Beat faellt waitrequest, und
+                // der Master darf im naechsten Takt einen neuen Auftrag
+                // stellen. Wird er hier nicht angenommen, geht er verloren.
+                // DONE nimmt deshalb genauso an wie IDLE.
                 DONE: begin
-                    state <= IDLE;
+                    if (avm_read) begin
+                        base_word       <= avm_address[23:1];
+                        beat            <= 2'd0;
+                        avm_waitrequest <= 1'b1;
+                        state           <= ISSUE;
+                    end else begin
+                        state <= IDLE;
+                    end
                 end
 
                 default: state <= IDLE;
