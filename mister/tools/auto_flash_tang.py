@@ -77,7 +77,7 @@ def main():
     ap.add_argument('--interval', type=float, default=0.7)
     args = ap.parse_args()
 
-    fs = Path(args.fs)
+    fs = Path(args.fs).resolve()   # programmer_cli braucht einen absoluten Pfad
     if not fs.exists():
         print('[FEHLER] Bitstream nicht gefunden: %s' % fs)
         return 1
@@ -115,7 +115,7 @@ def main():
 
     # Kickstart optional
     if args.kick:
-        rom = Path(args.kick)
+        rom = Path(args.kick).resolve()
         if not rom.exists():
             print('[FEHLER] Kickstart nicht gefunden: %s' % rom)
             return 1
