@@ -45,3 +45,9 @@ __pycache__/
 *_credentials.json
 *chat_state.json
 
+# Kickstart-ROMs: urheberrechtlich geschuetzt, gehoeren nicht ins Repo.
+# Erwartete Pruefsummen stehen in doc/KICKSTART_ROMS.md.
+src/kick*.bin
+src/kick*.hex
+*.rbf
+src/impl/
