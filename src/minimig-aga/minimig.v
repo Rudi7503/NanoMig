@@ -643,6 +643,22 @@ assign {_fire1_dat,_fire0_dat,_led} = porta_out[3:1];
 wire [7:0] denise_r, denise_g, denise_b;
 wire denise_sprsel, denise_pf_front, denise_pf_any;
 
+// Sprite-Engine abschaltbar: mit `SPR_ENGINE_BYPASS wird sie gar nicht
+// erstattet und das Denise-Bild direkt durchgereicht. Damit laesst sich
+// trennen, ob ein schwarzes Bild vom Speicherpfad oder vom Videopfad der
+// Engine kommt (2026-11-13).
+`ifdef SPR_ENGINE_BYPASS
+
+assign red   = denise_r;
+assign green = denise_g;
+assign blue  = denise_b;
+
+assign spr_mem_address      = 32'd0;
+assign spr_mem_burstcount   = 4'd0;
+assign spr_mem_read         = 1'b0;
+
+`else
+
 (* syn_noprune = 1 *) sprite_engine SPRITE_ENGINE (
 	.clk_render      (clk),
 	.clk_sys         (clk),
@@ -682,6 +698,8 @@ wire denise_sprsel, denise_pf_front, denise_pf_any;
 	// Final Video Output
 	.out_rgb         ({red, green, blue})
 );
+`endif
+
 
 ciaa CIAA1
 (
