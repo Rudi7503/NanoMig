@@ -55,7 +55,7 @@ module tb;
     wire        p2_we;
     wire [15:0] p2_dout;
     wire [47:0] p2_dout48;
-    reg         p2_ack = 0;
+    reg         p2_ack = 0;   // Toggle wie in sdram.sv
 
     // Speichermodell: 64 Bit je Wortadresse
     //   obere 32 Bit = Adresse, untere 32 Bit = ~Adresse
@@ -66,7 +66,7 @@ module tb;
     reg [1:0] latency = 0;
 
     always @(posedge clk) begin
-        p2_ack <= 1'b0;
+        p2_ack <= ~p2_ack;   // sdram.sv toggelt, es ist kein Impuls
         if (p2_cs) begin
             if (latency == 2'd2) begin
                 p2_ack <= 1'b1;
@@ -134,8 +134,9 @@ module tb;
         expect_word[2] = 23'h000808;
         expect_word[3] = 23'h00080C;
 
-        // waehrend des Bursts fordert der Prozessor ebenfalls an
-        @(posedge clk);
+        // Prozessor fordert erst NACH dem Burst an (er hat Vorrang,
+        // wuerde die Engine sonst verdraengen)
+        repeat (40) @(posedge clk);
         a_addr = 23'h001000; a_cs = 1'b1;
 
         repeat (80) @(posedge clk);

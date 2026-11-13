@@ -4,24 +4,25 @@
 //  Bruecke zwischen der Sprite-Engine (Avalon-MM, 64 Bit, Burst 4) und
 //  dem SDRAM-Anschluss p2 der Tang-Konsole.
 //
-//  Warum das noetig ist
-//  --------------------
-//  Die Sprite-Engine fordert 32-Byte-Bursts mit 64-Bit-Breite an. Der
-//  SDRAM-Baustein der Tang-Konsole haengt an einem 16-Bit-Anschluss. Er
-//  liefert bei einem ausgerichteten 8-Byte-Lesezugriff aber bereits
-//  64 Bit: {p2_dout48, p2_dout}. Genau darauf setzt dieser Adapter auf.
+//  Aufbau
+//  ------
+//  Der p2-Anschluss gehoert dem Prozessor. Die Engine darf ihn nur
+//  zwischen zwei Prozessortransaktionen benutzen.
 //
-//  Der p2-Anschluss ist der CPU-/Fast-RAM-Anschluss und kann nur von
-//  einem Teilnehmer benutzt werden. Der Arbiter teilt ihn zwischen dem
-//  Prozessor und der Engine. Beide Seiten arbeiten mit einem
-//  Anforderungs-/Bestaetigungs-Handshake (cs -> ack), deshalb darf eine
-//  Anforderung warten, ohne dass Daten verloren gehen.
+//  Fassung 2 (2026-11-13)
+//  ----------------------
+//  Die erste Fassung hat den Bus fuer beide Seiten registriert und das
+//  Ack als Ein-Takt-Impuls erzeugt. Auf der Konsole bootete der Core
+//  damit nicht: LED gruen, Bild schwarz. Ursache:
 //
-//  Adressen
-//  --------
-//  Die Engine arbeitet mit Amiga-Byte-Adressen. Der SDRAM-Anschluss will
-//  Wortadressen (p2_addr = byte >> 1). Ein Burst von 4 Beats a 8 Byte
-//  sind also 4 Wortadressen im Abstand von 4.
+//    sdram.sv erzeugt p2_ack als TOGGLE  (p2_ack_i <= ~p2_ack_i),
+//    nanomig erkennt den Abschluss per Flankenvergleich
+//    (fastram_ready != fastram_ready_d).
+//
+//  Aus einem Impuls werden damit zwei Flanken - der Cache-Automat
+//  springt pro Transfer zweimal weiter. Jetzt spiegelt der Arbiter die
+//  Toggle-Semantik je Teilnehmer, und der Prozessorpfad wird
+//  kombinatorisch durchgereicht, solange die Engine ruht.
 //
 // ====================================================================
 
@@ -51,96 +52,67 @@ module sdram_p2_arbiter (
     output reg         b_ack,
 
     // SDRAM-Anschluss
-    output reg  [22:0] p2_addr,
-    output reg  [1:0]  p2_ds,
-    output reg         p2_cs,
-    output reg         p2_we,
+    output wire [22:0] p2_addr,
+    output wire [1:0]  p2_ds,
+    output wire        p2_cs,
+    output wire        p2_we,
     input  wire [15:0] p2_dout,
     input  wire [47:0] p2_dout48,
     input  wire        p2_ack
 );
 
-    localparam OWNER_NONE = 2'd0;
-    localparam OWNER_A    = 2'd1;
-    localparam OWNER_B    = 2'd2;
+    // Wer besitzt den Anschluss gerade? Nur die Engine muss ihn
+    // uebernehmen, der Prozessor hat Vorrang und wird nie verzoegert.
+    reg b_active;
 
-    reg [1:0] owner;
-    reg       last_was_b;      // Fairness: bei Gleichzeitigkeit abwechseln
+    // ------------------------------------------------------------------
+    // Bus-Multiplexer: ohne Engine-Aktivitaet sieht der Prozessor den
+    // Anschluss unveraendert - kein zusaetzlicher Takt, keine Flanke.
+    // ------------------------------------------------------------------
+    assign p2_addr = b_active ? b_addr : a_addr;
+    assign p2_ds   = b_active ? 2'b11  : a_ds;
+    assign p2_cs   = b_active ? b_cs   : a_cs;
+    assign p2_we   = b_active ? 1'b0   : a_we;
+
+    // Daten fliessen immer zu beiden Seiten; jede nimmt nur, was sie
+    // angefordert hat.
+    always @(*) begin
+        a_dout   = p2_dout;
+        a_dout48 = p2_dout48;
+        b_dout   = p2_dout;
+        b_dout48 = p2_dout48;
+    end
+
+    // ------------------------------------------------------------------
+    // Ack: Toggle-Semantik wie sdram.sv, aber je Teilnehmer getrennt.
+    // Der Prozessor darf keine Flanke sehen, die von der Engine stammt.
+    // ------------------------------------------------------------------
+    reg p2_ack_d;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            owner      <= OWNER_NONE;
-            last_was_b <= 1'b0;
-            p2_addr    <= 23'd0;
-            p2_ds      <= 2'b00;
-            p2_cs      <= 1'b0;
-            p2_we      <= 1'b0;
-            a_ack      <= 1'b0;
-            b_ack      <= 1'b0;
-            a_dout     <= 16'd0;
-            a_dout48   <= 48'd0;
-            b_dout     <= 16'd0;
-            b_dout48   <= 48'd0;
+            b_active <= 1'b0;
+            a_ack    <= 1'b0;
+            b_ack    <= 1'b0;
+            p2_ack_d <= 1'b0;
         end else begin
-            a_ack <= 1'b0;
-            b_ack <= 1'b0;
+            p2_ack_d <= p2_ack;
 
-            case (owner)
-                OWNER_NONE: begin
-                    p2_cs <= 1'b0;
-                    if (a_cs && b_cs) begin
-                        if (last_was_b) begin
-                            owner   <= OWNER_A;
-                            p2_addr <= a_addr;
-                            p2_ds   <= a_ds;
-                            p2_we   <= a_we;
-                            p2_cs   <= 1'b1;
-                        end else begin
-                            owner   <= OWNER_B;
-                            p2_addr <= b_addr;
-                            p2_ds   <= 2'b11;
-                            p2_we   <= 1'b0;
-                            p2_cs   <= 1'b1;
-                        end
-                    end else if (a_cs) begin
-                        owner   <= OWNER_A;
-                        p2_addr <= a_addr;
-                        p2_ds   <= a_ds;
-                        p2_we   <= a_we;
-                        p2_cs   <= 1'b1;
-                    end else if (b_cs) begin
-                        owner   <= OWNER_B;
-                        p2_addr <= b_addr;
-                        p2_ds   <= 2'b11;
-                        p2_we   <= 1'b0;
-                        p2_cs   <= 1'b1;
-                    end
-                end
+            // Flanke am SDRAM-Anschluss: gehoert sie dem Prozessor oder
+            // der Engine? Nur der jeweilige Teilnehmer bekommt sie.
+            if (p2_ack != p2_ack_d) begin
+                if (b_active) b_ack <= ~b_ack;
+                else          a_ack <= ~a_ack;
+            end
 
-                OWNER_A: begin
-                    if (p2_ack) begin
-                        a_dout   <= p2_dout;
-                        a_dout48 <= p2_dout48;
-                        a_ack    <= 1'b1;
-                        p2_cs    <= 1'b0;
-                        owner    <= OWNER_NONE;
-                        last_was_b <= 1'b0;
-                    end
-                end
-
-                OWNER_B: begin
-                    if (p2_ack) begin
-                        b_dout   <= p2_dout;
-                        b_dout48 <= p2_dout48;
-                        b_ack    <= 1'b1;
-                        p2_cs    <= 1'b0;
-                        owner    <= OWNER_NONE;
-                        last_was_b <= 1'b1;
-                    end
-                end
-
-                default: owner <= OWNER_NONE;
-            endcase
+            // Engine uebernimmt den Anschluss nur, wenn der Prozessor
+            // gerade nichts will.
+            if (!b_active) begin
+                if (b_cs && !a_cs) b_active <= 1'b1;
+            end else begin
+                // Ende des Engine-Zugriffs: cs faellt, nachdem das Ack kam.
+                if (!b_cs) b_active <= 1'b0;
+            end
         end
     end
 
@@ -178,9 +150,13 @@ module sprite_mem_adapter (
     reg [2:0]  state;
     reg [22:0] base_word;      // Wortadresse des ersten Beats
     reg [1:0]  beat;
+    reg        ack_d;
 
     // Byte-Adresse -> Wortadresse; die Engine liefert 8-Byte-Bursts
     wire [22:0] beat_word = base_word + {beat, 2'b00};
+
+    // Das Ack ist ein Toggle: auf Flankenwechsel reagieren.
+    wire ack_edge = (sd_ack != ack_d);
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -189,11 +165,13 @@ module sprite_mem_adapter (
             beat              <= 2'd0;
             sd_addr           <= 23'd0;
             sd_cs             <= 1'b0;
+            ack_d             <= 1'b0;
             avm_waitrequest   <= 1'b0;
             avm_readdata      <= 64'd0;
             avm_readdatavalid <= 1'b0;
         end else begin
             avm_readdatavalid <= 1'b0;
+            ack_d             <= sd_ack;
 
             case (state)
                 IDLE: begin
@@ -214,7 +192,7 @@ module sprite_mem_adapter (
                 end
 
                 WAIT: begin
-                    if (sd_ack) begin
+                    if (ack_edge) begin
                         avm_readdata      <= {sd_dout48, sd_dout};
                         avm_readdatavalid <= 1'b1;
                         sd_cs             <= 1'b0;
