@@ -285,7 +285,15 @@ module minimig
 	output [15:0] ide_readdata,
 `endif
 	//user i/o
-	input [1:0]   cpucfg
+	input [1:0]   cpucfg,
+
+	// Sprite-Engine: eigener Speicher-Master (Avalon-MM, 64 Bit, Burst 4)
+	output [31:0] spr_mem_address,
+	output [3:0]  spr_mem_burstcount,
+	output        spr_mem_read,
+	input  [63:0] spr_mem_readdata,
+	input         spr_mem_readdatavalid,
+	input         spr_mem_waitrequest
 	);
 `ifndef GATEMATE
  `ifndef LATTICE
@@ -634,12 +642,6 @@ assign {_fire1_dat,_fire0_dat,_led} = porta_out[3:1];
 // ====================================================================
 wire [7:0] denise_r, denise_g, denise_b;
 wire denise_sprsel, denise_pf_front, denise_pf_any;
-wire [31:0] spr_mem_address;
-wire [3:0]  spr_mem_burstcount;
-wire        spr_mem_read;
-wire [63:0] spr_mem_readdata = 64'd0;
-wire        spr_mem_readdatavalid = 1'b0;
-wire        spr_mem_waitrequest = 1'b0;
 
 (* syn_noprune = 1 *) sprite_engine SPRITE_ENGINE (
 	.clk_render      (clk),
