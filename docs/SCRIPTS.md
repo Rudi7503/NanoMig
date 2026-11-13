@@ -39,9 +39,10 @@ Spalten:
 | `mister/verify/2026-11-13-review17/run_extended_local.py` | aktiv | Führt Tobys Review17-Tests gegen dieses Repo aus (9 Tests). | Erwartet `9 / 9`. Auf dem Vor-Fix-Stand 7/9 — die Suite unterscheidet also. |
 | `mister/verify/2026-10-31-capture-stereo/check_capture.py` | aktiv | Wertet die Capture-Rohdaten aus PR #1 aus. | |
 | `mister/verify/testbenches/verify_adpcm.py` | aktiv | Prüft den ADPCM-Codec gegen eine Referenz. | |
-| `mister/verify/testbenches/calc.py` | **undokumentiert** | Unbekannt, 0,4 KB. | Entweder beschreiben oder löschen. |
-| `mister/verify/testbenches/test_cascade_fixedpoint.py` | **undokumentiert** | Vermutlich Festkomma-Test der Filterkaskade. | Prüfen und beschreiben. |
-| `src/temp_res.py` | **löschbar** | Kein Kopfkommentar, Name deutet auf Wegwerfskript. | Nicht mehr referenziert. |
+| `mister/verify/testbenches/calc.py` | aktiv | Rechnet den Frequenzgang einer Biquad-Stufe und der 32-fach-Kaskade für fest eingetragene Koeffizienten aus (5 Hz bis 1 kHz). | Reines Rechenwerkzeug für die Filterdimensionierung, keine Dateien, keine Ausgabe ausser Zahlen. Koeffizienten sind hartcodiert; für andere Filter die Werte oben im Skript ersetzen. |
+| `mister/verify/testbenches/test_cascade_fixedpoint.py` | aktiv | Simuliert 32 Festkomma-Biquad-Stufen hintereinander und gibt je Stufe den Spitzenwert aus. | Prüft, ob eine Kaskade bei Vollaussteuerung überläuft. Rechteck bei 200 Hz, Koeffizienten wie in `calc.py`. Damit wurde der Rechteck-Test auf Headroom geprüft. |
+| `mister/tests/filter_compare/` | aktiv | A/B-Direktvergleich desselben ADPCM-Tracks ungefiltert gegen die 32-Band-Filterbank, mit Hardware-Capture je Sekunde. | Vollständiges Testprogramm mit Quelle (22,8 KB), `build.bat`, fertigem Executable und `README.txt`, das den 22-Sekunden-Ablauf beschreibt. Der Build ruft zusätzlich `lint_m68k.py` auf. |
+| `src/temp_res.py` | aktiv, Wegwerfwerkzeug | Liest den Gowin-Synthesebericht (`nanomig_syn_resource.html`) und listet alle Zellen mit mehr als 100 LUTs. | Nützlich für die Tang-Ressourcenanalyse. Pfad ist absolut hartcodiert; vor Benutzung anpassen. Kein Zustand, keine Nebenwirkungen. |
 | `src/gowin_pll_parser.py` (unter `src/tang/`) | aktiv | Liest Gowin-PLL-Konfigurationen aus. | |
 
 ## 3. Testprogramme (68000) und ihre Datengeneratoren
@@ -59,10 +60,10 @@ Python-Generator für die Datentabelle und das fertige Executable.
 | `mister/tests/am/` | aktiv | 440 Hz mit 2-Hz-Tremolo. |
 | `mister/tests/adpcm/` | aktiv | Echte 4-Bit-ADPCM-Datei aus dem Apollo-Projekt. |
 | `mister/tests/showcase/` | aktiv | Mono-Regression, das ursprüngliche Demo-Programm. |
+| `mister/tests/filter_compare/` | aktiv | Biquad-Filterbank gegen Direktvergleich, siehe Abschnitt 2. | A/B-Test mit Hardware-Capture, 22 Sekunden Ablauf. |
 | `mister/tests/showcase_32ch/` | überholt | 32-Kanal-Variante des Showcase. | Durch `showcase` und die gezielten Tests abgelöst. |
 | `mister/tests/horror_demo/` | aktiv | Horrordemo-Daten (V14), von Toby auf Hardware bestätigt. |
 | `mister/tests/argon_demo/` | aktiv | Argon-Demo-Daten und Testsuite. |
-| `mister/tests/filter_compare/` | **undokumentiert** | Nur `build.bat`, keine Quelle im Verzeichnis. | Prüfen oder löschen. |
 
 ## 4. Sprite-Engine-Tests
 
@@ -98,15 +99,15 @@ geschrieben. Sie bleiben, weil die Upstream-Simulationen sie brauchen.
 
 ## Was fehlt noch
 
-Vier Skripte sind undokumentiert und brauchen entweder eine Beschreibung oder
-die Löschung:
+Keine Skripte mehr undokumentiert. Offen sind nur die `build.bat` in
+`mister/tests/*`, die keinen eigenen Kopfkommentar haben — sie sind in
+Abschnitt 3 über ihr Verzeichnis beschrieben.
+
+Offene Aufräumarbeiten:
 
 ```
-mister/verify/testbenches/calc.py
-mister/verify/testbenches/test_cascade_fixedpoint.py
-mister/tests/filter_compare/build.bat
-src/temp_res.py
+mister/tools/toby_monitor_state.json   löschbar, auf diesem Rechner schreibgeschützt
+mister/tools/toby_check_state.json     löschbar, Zwischenstand eines Versuchs
+mister/tests/showcase_32ch/            überholt
+mister/tests/toby_comments.json        überholt, nur noch Nachschlagewerk
 ```
-
-Dazu gehören alle `build.bat` in `mister/tests/*`, die keinen Kopfkommentar
-haben. Sie sind in Abschnitt 3 über ihr Verzeichnis beschrieben.
