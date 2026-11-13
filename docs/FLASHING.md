@@ -4,6 +4,122 @@ Stand: 2026-11-13. Diese Datei existiert, weil der Flashvorgang sonst jedes
 Mal neu erraten werden muss. **Wer ihn ändert oder ergänzt, schreibt es hier
 hinein** (Regel 11 in `AGENTS.md`).
 
+## Verifizierte Erkenntnisse vom 2026-11-13 (Gerätetest, in dieser Sitzung)
+
+Alles in diesem Block wurde am Gerät ausgeführt und das Ergebnis gelesen. Wo es
+den Abschnitten weiter unten widerspricht, gilt dieser Block.
+
+### Welche USB-Zustände es gibt (alles über denselben MCU-USB-C-Anschluss)
+
+| Zustand am PC | Bedeutung | Was geht |
+|---|---|---|
+| `Serielles USB-Gerät (COM8)`, `VID_349B:PID_6160` | BL616 im **Bootloader** (BOOT-Taste beim Einstecken gehalten) | nur BL616 flashen (`bflb_mcu_tool`), **kein JTAG** |
+| `USB Serial Converter A/B`, COM11 + COM12 (`VID_0403:PID_6010`) | BL616 läuft normal mit der JTAG-Brücke aus `0x0` = **Debugger** | `programmer_cli` für den FPGA |
+| kein Gerät | Kabel ohne Daten, falscher Anschluss oder Stromproblem | nichts |
+
+Wer den BL616 mit gedrückter BOOT-Taste geflasht hat, muss das Kabel danach
+**ohne BOOT-Taste neu einstecken**, sonst bleibt er im Bootloader und der
+Debugger (COM11/12) erscheint nie. Das hat uns mehrere Stunden gekostet.
+
+### JTAG zum FPGA: nur kurz nach dem Einschalten
+
+Läuft ein Core, benutzt er die JTAG-Pins als GPIO (`-use_jtag_as_gpio 1`).
+Dann antwortet `programmer_cli` mit `Gowin Device not found` oder bricht ein
+Schreiben bei 0 % mit `Error found!` ab, obwohl der Debugger (COM11/12) da ist.
+
+* Dock **ohne S1/S2** (nur die **Mode-Taste** erreichbar): Strom abziehen,
+  **Mode-Taste halten**, wieder anstecken, nach ca. 3 s loslassen → JTAG ist
+  **kurz** offen.
+* Das Fenster schließt sich wieder, sobald der Core aus dem Flash neu bootet.
+  Nach einem erfolgreichen Schreibvorgang ist es meist zu. Deshalb pro
+  Einschalten **eine** Operation, und die zuerst.
+* Zeit zum Reagieren nach „bereit" reicht nicht. Eine **Auto-Flash-Schleife**
+  starten, die das Fenster selbst erwischt (`-r 51` alle 0,7 s, bei
+  `Detected Flash id` sofort `-r 53`):
+
+```powershell
+$p   = 'C:\Gowin\Gowin_V1.9.12.04_x64\Programmer\bin\programmer_cli.exe'
+$fs  = 'D:\programmier_ordner\FPGA\NanoMig\src\impl\pnr\nanomig_tc138k_spr.fs'
+for ($i = 0; $i -lt 300; $i++) {
+    $o = & $p --cable-index 4 -d GW5AST-138C -r 51 2>&1 | Out-String
+    if ($o -match 'Detected Flash id') {
+        & $p --cable-index 4 -d GW5AST-138C -r 53 --fsFile $fs --spiaddr 0x000000
+        break
+    }
+    Start-Sleep -Milliseconds 700
+}
+```
+
+Danach Strom aus/an (ohne Taste), der Core bootet aus dem Flash.
+
+### Ergebnis der Messungen
+
+| Aktion | Ergebnis |
+|---|---|
+| `--cable-index 4` mit `-r 51`, `-r 53`, `-r 55` | **funktioniert** (Core 81 s, Kickstart 10 s). Der Hinweis weiter unten, `--cable-index 4` scheitere beim Schreiben, ließ sich hier **nicht reproduzieren**; dort fehlte vermutlich nur das offene JTAG-Fenster |
+| Core `-r 53 --fsFile` an `0x000000` | `ends at 0x0461600` (offizieller v0.9, 78,7 s), `0x04A7D00` (unser 14:03-Build, 81,5 s) |
+| Kickstart `-r 55 --mcuFile <bin> --spiaddr 0x600000` | `ends at 0x0680000`, 9,8 s |
+| `-r 55 --fsFile <bin>` | schreibt 0 Bytes (`ends at 0x0600000`) |
+| `-r 56` (Verify, Rohdaten) | `Program and Verify Flash Failed`, `-r 55` genügt |
+| `-r 1` Reprogram | geht nur bei offenem JTAG-Fenster |
+| Operation 53 gegen Stromausfall des Fensters | `Error found!` bei 0 % |
+
+Kopierhinweis für Kickstart-Dateien mit Klammern im Namen
+(`...[o].rom`): `Copy-Item -LiteralPath`. Ohne `-LiteralPath` schlägt die
+Kopie wegen `[o]` still fehl (Wildcard).
+
+### Kickstart und Core müssen zusammenpassen
+
+| Core | Kickstart an `0x600000` | Ergebnis |
+|---|---|---|
+| Original NanoMig v0.9 (OCS/ECS, 68000) | 1.3, 512 KB, MD5 `192d6d950d0ed3df8040b788502831c2` | **läuft**, Diskettenhand auf HDMI |
+| unser AGA/68020-Core | 3.1 A1200, `kick40068.A1200`, SHA256 `6D43840D4099A74170EA0F0425B6257C3891EBCAA39C4D1840075A9AB22B5707` | siehe `nanomig-lessons.md` Punkt 11 |
+
+Das 3.1-ROM stammt aus `Amiga-WHDLOAD-Kick-files-kickstart-rom-pack.zip`
+(`kick40068.A1200`, 524 288 Bytes). SHA256 immer per Skript bestimmen
+(`Get-FileHash`), nicht abtippen.
+
+### Diagnose-LED im erweiterten Core (`top.sv`)
+
+| Muster | Bedeutung |
+|---|---|
+| schnelles Flackern | PLL ohne Lock |
+| 1x lang blinken | SDRAM-Init fehlgeschlagen |
+| 2x lang blinken | Flash-Init fehlgeschlagen |
+| 3x lang blinken | ROM-Kopie hängt |
+| dauer an | Kickstart kopiert, CPU läuft (sagt nichts über das Bild aus) |
+
+**„LED dauer grün" heißt nur: ROM kopiert. Ein schwarzes Bild kann trotzdem
+am AGA-Video- oder Speicherpfad liegen.**
+
+### BL616-Firmware flashen (OSD/Tastatur)
+
+Der BL616 hat zwei Teile: `0x0` = JTAG-Brücke
+(`bl616_fpga_partner_console138k.bin`, nicht anfassen), `0x40000` = App.
+
+| App an `0x40000` | Wirkung |
+|---|---|
+| `tangcore_console138k.bin` | TangCore-Menü, **nicht** für NanoMig-OSD |
+| `fpga_companion_console60k.bin` (v1.4.33) | FPGA-Companion für NanoMig. Für 138K gibt es kein eigenes Asset; das Dock ist gleich |
+
+```
+python -m bflb_mcu_tool --chipname bl616 --interface uart --port COM8 `
+       --baudrate 2000000 --firmware <bin> --addr 0x40000
+```
+
+* BLFlashCube ist nur eine GUI. Das Kommandozeilen-Werkzeug ist
+  `bflb-mcu-tool` (`pip install bflb-mcu-tool`).
+* Python 3.14 braucht zusätzlich `pip install standard-telnetlib`, sonst
+  `ModuleNotFoundError: telnetlib`.
+* **Niemals `--erase`** (Chip-Erase).
+* Nebenwirkung der pip-Installation: `cryptography` wird auf 37.0.4
+  gesenkt, `esptool` 5.6.0 verlangt ≥ 43.
+* Verify per SHA256 steht im Ausgabelog (`verification succeeded`).
+* Nach dem Flash Kabel **ohne BOOT-Taste** neu einstecken (siehe oben).
+
+Offen: OSD per F12 funktioniert nicht, Tastatur-LED bleibt aus. Welche
+USB-Buchse am Dock den BL616 als Host anspricht, ist ungeklärt.
+
 ## Was gebaut wird
 
 ```
