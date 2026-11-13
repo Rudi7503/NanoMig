@@ -86,3 +86,26 @@ das `ifdef` in `minimig.v`; Verilog-Defines gelten je Datei.
 Toby's Befund vom 13:41 ist noch nicht umgesetzt: bei `beat == 3` direkt nach
 `IDLE`, Vergabe in `OWNER_NONE` mit `b_cs && !b_ack` qualifizieren, und die
 doppelte Vergabe verhindern, solange das Ack unterwegs ist.
+
+## 2026-11-14, 00:xx — Kickstart 3.1 bootet nicht
+
+| Build | Konfiguration | ROM an 0x600000 | Bild |
+|---|---|---|---|
+| `nospr` (13:35) | AGA, 68020, 2 MB Chip, **kein** Fast-RAM | 1.3 | **Hand** |
+| derselbe | dito | 3.1 | schwarz |
+| `a1200` (00:37) | AGA, 68020, 2 MB Chip, **4 MB Fast-RAM** | 3.1 | schwarz |
+
+Bitstream, Offset und ROM-Übertragung sind belegt: mit 1.3 an derselben Stelle
+kommt ein Bild. `ENABLE_AGA` ist definiert, `sysctrl` bekommt `.AGA(1)`, die
+Defaults sind 68020/AGA/2 MB/Kickstart 3.1.
+
+**Fehler in der bisherigen Deutung:** Ich hatte behauptet, `AGA = 0` sei
+aktiv. Das war falsch — der Parameter-Vorgabewert in `sysctrl.v` wird durch
+die Instanziierung überschrieben.
+
+**Fehler im Versuchsaufbau:** Beim Wechsel auf 3.1 wurde gleichzeitig
+Fast-RAM von 0 auf 4 MB geändert. Zwei Variablen auf einmal.
+
+**Nächster Schritt:** 4 MB Fast-RAM mit Kickstart **1.3** flashen. Bootet das,
+ist der Speicher unschuldig und nur 3.1 das Problem. Bootet es nicht, war das
+Fast-RAM die Ursache.
