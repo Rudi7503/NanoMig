@@ -104,8 +104,13 @@ diese Datei schreibt.
 
 | Ort | Was | Zweck |
 |---|---|---|
-| Windows-Aufgabe `NanoMig TobyWatch` | ruft alle 15 Minuten `C:\Python314\pythonw.exe mister\tools\check_toby_updates.py --minutes 20 --out "%LOCALAPPDATA%\dsh-toby\news.txt"` auf | Prüft Tobys Rückmeldungen ohne DSH und **ohne Tokenverbrauch**. Schreibt nur dann eine Datei, wenn es wirklich etwas Neues gibt. |
-| `%LOCALAPPDATA%\dsh-toby\news.txt` | Ergebnisdatei der Aufgabe | Existiert nur, wenn Toby geschrieben hat. Inhalt ist der jeweilige Beitrag mit Zeitstempel. |
+| **DSH-Hintergrundauftrag** `python check_toby_updates.py --watch 30 --minutes 2` | prüft alle 30 Sekunden und **endet beim ersten Treffer** | Der Hauptweg. Solange Toby schweigt, läuft der Auftrag ohne Tokenverbrauch. Beim Treffer endet er, und DSH meldet das dem Agenten — das ist der Weckruf. Nach der Behandlung neu starten. |
+| Windows-Aufgabe `NanoMig TobyWatch` | ruft alle 15 Minuten `C:\Python314\pythonw.exe mister\tools\check_toby_updates.py --minutes 20 --out "%LOCALAPPDATA%\dsh-toby\news.txt"` auf | Sicherheitsnetz, falls DSH nicht läuft. Schreibt nur dann eine Datei, wenn es wirklich etwas Neues gibt. |
+| `%LOCALAPPDATA%\dsh-toby\news.txt` | Ergebnisdatei der Windows-Aufgabe | Existiert nur, wenn Toby geschrieben hat. Inhalt ist der jeweilige Beitrag mit Zeitstempel. |
+
+Das Zeitfenster muss beim Dauerbetrieb klein sein (`--minutes 2` bei 30 Sekunden
+Takt), sonst liegt ein bereits behandelter Beitrag noch im Fenster und löst beim
+Neustart sofort wieder aus.
 
 Anlegen, prüfen, entfernen:
 

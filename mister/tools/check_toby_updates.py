@@ -25,6 +25,11 @@ AUFRUF
     Aufruf uebernehmen, ohne dass jemand den Bildschirmausgabe lesen muss:
     Es entsteht nur eine Datei, wenn Toby wirklich geschrieben hat.
 
+    Mit --watch laeuft das Skript in einer Schleife und beendet sich beim
+    ersten Treffer. Als DSH-Hintergrundauftrag gestartet ist das die
+    sparsamste Bauart: solange Toby schweigt, laeuft es ohne Tokenverbrauch,
+    und beim Treffer endet der Auftrag - das ist das Signal an den Agenten.
+
 AUSGABE
     [SILENT_NO_UPDATE]            nichts Neues, Exit 0
     [NEW_UPDATE_FOUND]            gefolgt von den Beitraegen, Exit 0
@@ -54,6 +59,7 @@ import datetime
 import json
 import subprocess
 import sys
+import time
 import urllib.request
 
 if hasattr(sys.stdout, 'reconfigure'):
@@ -129,15 +135,8 @@ def describe(kind, item):
     return '\n'.join(out)
 
 
-def main():
-    ap = argparse.ArgumentParser(description='Neue Beitraege von Tobys KI melden')
-    ap.add_argument('--pr', type=int, default=11, help='Nummer des Pull Requests (Standard 11)')
-    ap.add_argument('--issues', default='9,10', help='Komma-Liste der Issues (Standard 9,10)')
-    ap.add_argument('--minutes', type=int, default=120, help='Zeitfenster in Minuten (Standard 120)')
-    ap.add_argument('--out', default=None,
-                    help='Datei, in die neue Beitraege geschrieben werden (nur bei Treffer)')
-    args = ap.parse_args()
-
+def collect(args):
+    """Einmal pruefen. Rueckgabe: Liste (Kanal, Beitrag) oder None bei Fehler."""
     issues = [int(x) for x in args.issues.split(',') if x.strip()]
     cutoff = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - datetime.timedelta(minutes=args.minutes)
     since_iso = cutoff.strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -149,7 +148,7 @@ def main():
             items = fetch(url, token)
         except Exception as exc:
             print('[CHECK_ERROR] %s: %s' % (name, exc))
-            return 1
+            return None
         for it in items:
             if (it.get('user') or {}).get('login') != AUTHOR:
                 continue
@@ -159,11 +158,11 @@ def main():
             if ts is None or ts < cutoff:
                 continue
             found.append((name, it))
+    return found
 
-    if not found:
-        print('[SILENT_NO_UPDATE]')
-        return 0
 
+def report(args, found):
+    """Gibt einen Treffer aus und schreibt ihn bei --out in die Datei."""
     print('[NEW_UPDATE_FOUND]')
     text = []
     for name, item in sorted(found, key=lambda x: str(x[1].get('created_at') or x[1].get('submitted_at'))):
@@ -173,11 +172,10 @@ def main():
 
     if args.out:
         try:
-            import os as _os
-            target = _os.path.expandvars(args.out)
-            folder = _os.path.dirname(target)
-            if folder and not _os.path.isdir(folder):
-                _os.makedirs(folder, exist_ok=True)
+            target = os.path.expandvars(args.out)
+            folder = os.path.dirname(target)
+            if folder and not os.path.isdir(folder):
+                os.makedirs(folder, exist_ok=True)
             stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
             with open(target, 'a', encoding='utf-8') as f:
                 f.write('\n##### %s  (%d neue Beitraege)\n' % (stamp, len(text)))
@@ -186,7 +184,47 @@ def main():
         except Exception as exc:
             print('[CHECK_ERROR] --out nicht schreibbar: %s' % exc)
 
-    return 0
+
+def main():
+    ap = argparse.ArgumentParser(description='Neue Beitraege von Tobys KI melden')
+    ap.add_argument('--pr', type=int, default=11, help='Nummer des Pull Requests (Standard 11)')
+    ap.add_argument('--issues', default='9,10', help='Komma-Liste der Issues (Standard 9,10)')
+    ap.add_argument('--minutes', type=int, default=120, help='Zeitfenster in Minuten (Standard 120)')
+    ap.add_argument('--out', default=None,
+                    help='Datei, in die neue Beitraege geschrieben werden (nur bei Treffer)')
+    ap.add_argument('--watch', type=int, default=0, metavar='SEKUNDEN',
+                    help='In einer Schleife pruefen und beim ersten Treffer enden')
+    args = ap.parse_args()
+
+    if not args.watch:
+        found = collect(args)
+        if found is None:
+            return 1
+        if not found:
+            print('[SILENT_NO_UPDATE]')
+            return 0
+        report(args, found)
+        return 0
+
+    # Schleifenbetrieb: ruhig bleiben, bis Toby schreibt.
+    print('[WATCH_START] Intervall %d s, Zeitfenster %d min' % (args.watch, args.minutes),
+          flush=True)
+    rounds = 0
+    while True:
+        rounds += 1
+        found = collect(args)
+        if found is None:
+            # Netzfehler sind kein Ereignis - weiter warten.
+            time.sleep(args.watch)
+            continue
+        if found:
+            print('[WATCH_HIT] nach %d Runden' % rounds, flush=True)
+            report(args, found)
+            return 0
+        if rounds % 120 == 0:
+            # Lebenszeichen jede Stunde, damit man sieht: laeuft noch.
+            print('[WATCH_ALIVE] %d Runden' % rounds, flush=True)
+        time.sleep(args.watch)
 
 
 if __name__ == '__main__':
