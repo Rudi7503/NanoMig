@@ -128,6 +128,25 @@ Die ausführlichen Regeln stehen in `.agent/rules/nanomig-lessons.md`
 geht weiter, Schreiben nicht. Für erneutes Flashen muss die Konsole **mit
 gehaltenen Tasten S1/S2 eingeschaltet** werden.
 
+### Die Reihenfolge ist entscheidend
+
+Gemessen am 2026-11-13 im selben Einschaltzustand:
+
+| Operation | Ergebnis |
+|---|---|
+| `-r 2` SRAM Program | **läuft durch** („Frequency Updated: 15MHz", Fortschritt bis 100 %) |
+| `-r 53` exFlash | **exit 50**, 0,0 s |
+| `-r 12` exFlash in bscan | „actual flash storage size is **1 bytes**" |
+
+Sobald der FPGA **konfiguriert** ist — durch Boot aus dem Flash oder durch
+einen SRAM-Programmiervorgang — sind die SPI-Pins vom Boot-Design belegt und
+der externe Flash ist über JTAG nicht mehr erreichbar.
+
+**Also: erst flashen, dann SRAM testen.** Wer zuerst `-r 2` macht, kann
+danach nicht mehr in den Flash schreiben, ohne die Konsole erneut mit S1/S2
+einzuschalten.
+
+
 ### Die Befehle, die funktionieren
 
 ```
