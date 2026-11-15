@@ -287,6 +287,8 @@ localparam PORT_REFRESH = 2'd2;
 localparam PORT_IDLE    = 2'd3;
 
 reg [1:0] sdram_port;
+reg [2:0] p2_cs_sync;
+reg       p2_req;
 
 always @(posedge clk, negedge reset_n) begin
   if (!reset_n)
@@ -296,8 +298,14 @@ always @(posedge clk, negedge reset_n) begin
 end
 
 always @(posedge clk) begin
-  sd_cmd <= CMD_NOP;
-  sd_dq  <= 0;
+  sd_cmd     <= CMD_NOP;
+  sd_dq      <= 0;
+  p2_cs_sync <= {p2_cs_sync[1:0], p2_cs};
+
+  if (state == STATE_INIT)
+    p2_req <= 1'b0;
+  else if (p2_cs_sync[1] && !p2_cs_sync[2])
+    p2_req <= 1'b1;
 
   case (state)
     STATE_INIT: begin
@@ -332,7 +340,7 @@ always @(posedge clk) begin
 
         addr_0  <= addr[0];
 
-      end else if (p2_cs) begin
+      end else if (p2_req) begin
         sd_addr <= p2_addr32[RAS_WIDTH+CAS_WIDTH-1:CAS_WIDTH];
 
         sd_addr_cas[RAS_WIDTH-1:0] <= {RAS_WIDTH{1'b0}};
@@ -362,9 +370,10 @@ always @(posedge clk) begin
 
           refreshcnt <= SYNC_CYCLES_PER_REFRESH[REFRESHCNT_MAX_WIDTH-1:0];
 
-        end else if (p2_cs) begin
+        end else if (p2_req) begin
           sdram_port <= PORT_2;
           sd_cmd     <= CMD_ACTIVE;
+          p2_req     <= 1'b0;
         end
       end
     end

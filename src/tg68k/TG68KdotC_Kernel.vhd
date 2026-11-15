@@ -118,12 +118,12 @@ entity TG68KdotC_Kernel is
 		);
 	port(clk						: in std_logic;
 		nReset					: in std_logic;			--low active
-		clkena_in				: in std_logic:='1';
+		clkena_in				: in std_logic;
 		data_in					: in std_logic_vector(15 downto 0);
-		IPL						: in std_logic_vector(2 downto 0):="111";
-		IPL_autovector			: in std_logic:='0';
-		berr						: in std_logic:='0';					-- only 68000 Stackpointer dummy
-		CPU						: in std_logic_vector(1 downto 0):="00";  -- 00->68000  01->68010  11->68020(only some parts - yet)
+		IPL						: in std_logic_vector(2 downto 0);
+		IPL_autovector			: in std_logic;
+		berr						: in std_logic;					-- only 68000 Stackpointer dummy
+		CPU						: in std_logic_vector(1 downto 0);  -- 00->68000  01->68010  11->68020(only some parts - yet)
 		addr_out					: out std_logic_vector(31 downto 0);
 		data_write				: out std_logic_vector(15 downto 0);
 		nWr						: out std_logic;
@@ -138,7 +138,8 @@ entity TG68KdotC_Kernel is
 		skipFetch				: out std_logic;
 		regin_out				: out std_logic_vector(31 downto 0);
 		CACR_out					: out std_logic_vector( 3 downto 0);
-		VBR_out					: out std_logic_vector(31 downto 0)
+		VBR_out					: out std_logic_vector(31 downto 0);
+		diag_tg68k				: out std_logic_vector( 2 downto 0)
 		);
 end TG68KdotC_Kernel;
 
@@ -442,6 +443,9 @@ ALU: TG68K_ALU
 	busstate <= state;
 	nResetOut <= '0' WHEN exec(opcRESET)='1' ELSE '1';
 	Reset <= NOT syncReset(3);
+	diag_tg68k(0) <= NOT Reset;
+	diag_tg68k(1) <= clkena_lw;
+	diag_tg68k(2) <= '1' WHEN setstate /= "01" ELSE '0';
 
 	-- does shift for byte access. note active low me
 	-- should produce address error on 68000

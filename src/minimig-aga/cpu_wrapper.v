@@ -95,7 +95,8 @@ module cpu_wrapper
 	output reg [1:0]  cpustate,
 	output reg [3:0]  cacr,
 	output reg [31:0] nmi_addr,
-	output		  cpu_clkena  // the tg68k advances on this enable (bus handshake consumption)
+	output		  cpu_clkena,  // the tg68k advances on this enable (bus handshake consumption)
+	output [2:0]	  diag_tg68k
 );
 
 wire cpu_req = cpustate != 2'b01 && !skip_fetch;
@@ -400,7 +401,10 @@ assign cpu_clkena = (~cpu_req & tg68_armed) | chipready | ramready
 ;
 `endif
 
+// wire cpu_clkena_keep removed
+
 `ifdef ENABLE_TG68K
+wire tg68k_clkena = cpu_internal_ack | chipready | ramready;
 TG68KdotC_Kernel
 `ifndef VERILATOR
 // verilator runs the verilog translated variant which doesn't support configuration but
@@ -445,7 +449,7 @@ cpu_inst_p
  `else
   .nReset(reset),
  `endif
-  .clkena_in(cpu_clkena),
+  .clkena_in(tg68k_clkena),
   .data_in(cpu_din),
   .IPL(cpu_ipl),
   .IPL_autovector(1'b1),
@@ -464,7 +468,8 @@ cpu_inst_p
   .skipFetch(skip_fetch_i),
   .regin_out(),
   .CACR_out(cacr_p),
-  .VBR_out(vbr_p)
+  .VBR_out(vbr_p),
+  .diag_tg68k(diag_tg68k)
 `endif
 );
 `endif

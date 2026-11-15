@@ -219,11 +219,11 @@ wire       rom_done;
 
 // generate a reset for some time after rom has been initialized
 reg [15:0] reset_cnt;
-always @(negedge clk_28m) begin
+always @(posedge clk_28m) begin
     if(!pll_lock || !rom_done || kbd_reset)
         reset_cnt <= 16'hffff;
     else if(reset_cnt != 0)
-        reset_cnt = reset_cnt - 16'd1;
+        reset_cnt <= reset_cnt - 16'd1;
 end
 
 // this is the reset that goes into the nanomig itself
@@ -552,6 +552,9 @@ wire        spr_mem_read;
 wire [63:0] spr_mem_readdata;
 wire        spr_mem_readdatavalid;
 wire        spr_mem_waitrequest;
+wire        diag_cpu_rst_n;
+wire        diag_cpu_rd_ack;
+wire [2:0]  diag_bus_stage;
 
 // Einziger physischer p2-Anschluss, vom Arbiter verwaltet
 wire [22:0] p2_addr;
@@ -674,7 +677,11 @@ nanomig nanomig
  .spr_mem_read(spr_mem_read),
  .spr_mem_readdata(spr_mem_readdata),
  .spr_mem_readdatavalid(spr_mem_readdatavalid),
- .spr_mem_waitrequest(spr_mem_waitrequest)
+ .spr_mem_waitrequest(spr_mem_waitrequest),
+
+ .diag_cpu_rst_n(diag_cpu_rst_n),
+ .diag_cpu_rd_ack(diag_cpu_rd_ack),
+ .diag_bus_stage(diag_bus_stage)
 );
 
 wire           flash_ready;  
@@ -888,22 +895,10 @@ sdram #(
 //  Speicher getrennt und der Prozessor haengt wie vorher direkt am
 //  SDRAM. Bootet dieser Stand, liegt der Fehler im Arbiter.
 // --------------------------------------------------------------------
-`ifdef SPR_MEM_DISABLE
+`define SPR_BRAM_TEST
+// `define USE_SPR_ARB
 
-assign p2_addr       = {1'b0, fastram_addr};
-assign p2_ds         = fastram_be;
-assign p2_cs         = fastram_sel;
-assign p2_we         = fastram_wr;
-assign fastram_dout   = p2_dout;
-assign fastram_dout48 = p2_dout48;
-assign fastram_ready  = p2_ack;
-
-// Engine ohne Speicher: sie kann nichts holen und bleibt stumm
-assign spr_mem_readdata      = 64'd0;
-assign spr_mem_readdatavalid = 1'b0;
-assign spr_mem_waitrequest   = 1'b0;
-
-`else
+`ifdef USE_SPR_ARB
 
 // --------------------------------------------------------------------
 //  Sprite-Engine am SDRAM-Anschluss p2
@@ -952,6 +947,36 @@ sprite_mem_adapter spr_adapter (
 	.sd_dout48          ( spr_sd_dout48 ),
 	.sd_ack             ( spr_sd_ack    )
 );
+
+`else
+
+// Prozessor haengt direkt am SDRAM-Anschluss p2 (kein Arbiter)
+assign p2_addr       = {1'b0, fastram_addr};
+assign p2_ds         = fastram_be;
+assign p2_cs         = fastram_sel;
+assign p2_we         = fastram_wr;
+assign fastram_dout   = p2_dout;
+assign fastram_dout48 = p2_dout48;
+assign fastram_ready  = p2_ack;
+
+`ifdef SPR_BRAM_TEST
+// Block-RAM-Testmuster fuer die Sprite-Engine (Toby, 2026-11-13)
+spr_test_pattern spr_bram_test (
+	.clk               ( clk_28m               ),
+	.rst_n             ( !cpu_reset            ),
+	.avm_address       ( spr_mem_address       ),
+	.avm_read          ( spr_mem_read          ),
+	.avm_waitrequest   ( spr_mem_waitrequest   ),
+	.avm_readdata      ( spr_mem_readdata      ),
+	.avm_readdatavalid ( spr_mem_readdatavalid )
+);
+`else
+// Engine ohne Speicher: sie kann nichts holen und bleibt stumm
+assign spr_mem_readdata      = 64'd0;
+assign spr_mem_readdatavalid = 1'b0;
+assign spr_mem_waitrequest   = 1'b0;
+`endif
+
 `endif
 
 
@@ -1189,53 +1214,162 @@ ELVDS_OBUF tmds_bufds [3:0] (
         .OB({tmds_clk_n, tmds_d_n})
 );
    
-// ==================== Diagnostic State Blinker ====================
-// User LED Pattern (CFG RGB LED on Tang Console):
-// 1) !pll_lock                              -> Fast strobe (5 Hz, 100ms toggle)
-// 2) pll_lock && !sdram_ready               -> 1x langsam (400ms an, 3.6s Pause) [SDRAM init failed]
-// 3) sdram_ready && !flash_ready            -> 2x langsam (400ms an/aus x2)       [Flash init failed]
-// 4) flash_ready && !rom_done               -> 3x langsam (400ms an/aus x3)       [ROM copy stuck]
-// 5) rom_done == 1 (SUCCESS / CPU running)  -> DAUERHAFT AN (Solid ON, kein Blinken!)
+// ==================== 3-Farben-LED-Diagnose (Toby, PR #11) ====================
+// Startkennzeichnung (erste 1,6 s): 2x kurz Weiss AN (0,4s an / 0,4s aus x2)
+// Danach (Active-low: 0 = AN, 1 = AUS):
+//   Rot   (leds[1]): AN solange tatsaechlicher CPU-Reset anliegt (!diag_cpu_rst_n)
+//   Gruen (leds[2]): AN sobald rom_done einmal erreicht (gespeichert bis !pll_lock)
+//   Blau  (leds[0]): AUS bis zum ersten CPU-Leseabschluss; danach im 250ms-Fenster:
+//                    blinkt (2 Hz) bei laufenden Reads, DAUERLICHT bei Stillstand
 
-reg [22:0] diag_sub_cnt = 23'd0;
-reg [5:0]  diag_slot = 6'd0;
+reg diag_rd_tgl = 1'b0;
+always @(posedge clk_28m) begin
+    if (diag_cpu_rd_ack)
+        diag_rd_tgl <= ~diag_rd_tgl;
+end
+
+reg [1:0] diag_rst_sync = 2'b00;
+reg [1:0] diag_rom_sync = 2'b00;
+reg [1:0] diag_pll_sync = 2'b00;
+reg [2:0] diag_rd_sync  = 3'b000;
+
+reg        diag_rom_latched = 1'b0;
+reg        diag_seen_rd     = 1'b0;
+reg        diag_rd_in_win   = 1'b0;
+reg        diag_rd_active   = 1'b0;
+reg        diag_blue_phase  = 1'b0;
+reg [23:0] diag_win_cnt     = 24'd0; // 250 ms = 12_500_000 @ 50 MHz
+reg [26:0] diag_boot_cnt    = 27'd0; // 1,6 s  = 80_000_000 @ 50 MHz
+reg [23:0] diag_slot_cnt    = 24'd0; // 300 ms = 15_000_000 @ 50 MHz
+reg [4:0]  diag_slot        = 5'd0;  // 0..29 = 9,0 s Periode
+reg [2:0]  diag_stage_sync  = 3'd0;
+reg [1:0]  diag_cpu_cfg_sync = 2'b11;
+
+wire diag_rd_edge = (diag_rd_sync[2] != diag_rd_sync[1]);
 
 always @(posedge clk) begin
-    if (diag_sub_cnt >= 23'd4_999_999) begin // 100ms @ 50MHz
-        diag_sub_cnt <= 23'd0;
-        if (diag_slot >= 6'd39)              // 40 slots = 4.0s Periode
-            diag_slot <= 6'd0;
-        else
-            diag_slot <= diag_slot + 6'd1;
+    diag_rst_sync   <= {diag_rst_sync[0], diag_cpu_rst_n};
+    diag_rom_sync   <= {diag_rom_sync[0], rom_done};
+    diag_pll_sync   <= {diag_pll_sync[0], pll_lock};
+    diag_rd_sync      <= {diag_rd_sync[1:0], diag_rd_tgl};
+    diag_stage_sync   <= diag_bus_stage;
+    diag_cpu_cfg_sync <= cpu_config;
+
+    if (diag_boot_cnt < 27'd80_000_000)
+        diag_boot_cnt <= diag_boot_cnt + 27'd1;
+
+    if (diag_slot_cnt >= 24'd14_999_999) begin
+        diag_slot_cnt <= 24'd0;
+        diag_slot     <= (diag_slot >= 5'd29) ? 5'd0 : (diag_slot + 5'd1);
     end else begin
-        diag_sub_cnt <= diag_sub_cnt + 23'd1;
+        diag_slot_cnt <= diag_slot_cnt + 24'd1;
+    end
+
+    if (!diag_pll_sync[1]) begin
+        diag_rom_latched <= 1'b0;
+        diag_seen_rd     <= 1'b0;
+        diag_rd_in_win   <= 1'b0;
+        diag_rd_active   <= 1'b0;
+    end else begin
+        if (diag_rom_sync[1])
+            diag_rom_latched <= 1'b1;
+
+        if (!diag_rst_sync[1]) begin
+            // Im CPU-Reset Read-Detektor fuer den frischen Anlauf zuruecksetzen
+            diag_seen_rd   <= 1'b0;
+            diag_rd_in_win <= 1'b0;
+            diag_rd_active <= 1'b0;
+        end else if (diag_rd_edge) begin
+            diag_seen_rd   <= 1'b1;
+            diag_rd_in_win <= 1'b1;
+        end
+    end
+
+    if (diag_win_cnt >= 24'd12_499_999) begin
+        diag_win_cnt    <= 24'd0;
+        diag_blue_phase <= ~diag_blue_phase;
+        diag_rd_active  <= diag_rd_in_win;
+        diag_rd_in_win  <= 1'b0;
+    end else begin
+        diag_win_cnt <= diag_win_cnt + 24'd1;
     end
 end
 
-reg diag_blink;
+wire diag_boot_sig = (diag_boot_cnt < 27'd80_000_000);
+wire diag_boot_on  = (diag_boot_cnt < 27'd20_000_000) ||
+                     (diag_boot_cnt >= 27'd40_000_000 && diag_boot_cnt < 27'd60_000_000);
+
+// Eindeutige Blau -> Rot -> Gruen Abfolge auf den 3 Einzel-LEDs (keine Mischfarben):
+//   Boot-Signatur (erste 2 s): Blau 3x schnell
+//   !rom_done                : Rot 5 Hz schnell
+//   !diag_cpu_rst_n (Reset)  : Rot Dauer-AN
+//   !diag_seen_rd (0 Reads)  :
+//     Stage 1 (TG68K Reset=1)          : 1x Blau -> Pause
+//     Stage 2 (clkena_lw=0)            : 1x Blau -> 1x Rot -> Pause
+//     Stage 3 (setstate="01")          : 1x Blau -> 1x Rot -> 1x Gruen -> Pause
+//     Stage 4 (cpustate!="01", Bus)    : 2x Blau -> 1x Gruen -> Pause
+//     Stage 5 (ACK ohne diag_seen_rd)  : 3x Blau -> 1x Gruen -> Pause
+//   diag_seen_rd == 1:
+//     Aktiv (Reads laufen)             : Gruen 1 Hz blinkend (25% PWM)
+//     Stillstand nach erstem Read      : Gruen Dauer-AN (25% PWM)
+reg diag_blue_code, diag_red_code, diag_green_code;
 always @(*) begin
-    if (!pll_lock) begin
-        diag_blink = diag_slot[0]; // schnelles Flackern
-    end else if (!sdram_ready) begin
-        // 1x langsam: 400ms an (Slots 0..3)
-        diag_blink = (diag_slot <= 6'd3);
-    end else if (!flash_ready) begin
-        // 2x langsam: 400ms an, 400ms aus, 400ms an
-        diag_blink = (diag_slot <= 6'd3 || (diag_slot >= 6'd8 && diag_slot <= 6'd11));
-    end else if (!rom_done) begin
-        // 3x langsam: 400ms an, 400ms aus, 400ms an, 400ms aus, 400ms an
-        diag_blink = (diag_slot <= 6'd3 || (diag_slot >= 6'd8 && diag_slot <= 6'd11) || (diag_slot >= 6'd16 && diag_slot <= 6'd19));
+    diag_blue_code  = 1'b0;
+    diag_red_code   = 1'b0;
+    diag_green_code = 1'b0;
+    if (diag_boot_sig) begin
+        diag_blue_code = diag_boot_on;
+    end else if (!diag_rom_latched) begin
+        diag_red_code = diag_slot[0];
+    end else if (!diag_rst_sync[1]) begin
+        diag_red_code = 1'b1;
+    end else if (diag_cpu_cfg_sync != 2'b11 && !diag_seen_rd) begin
+        // fx68k (68000/68010) aktiv statt TG68K (68020): Rot -> Gruen -> Pause
+        diag_red_code   = (diag_slot == 5'd0 || diag_slot == 5'd1);
+        diag_green_code = (diag_slot == 5'd4 || diag_slot == 5'd5);
+    end else if (!diag_seen_rd || diag_stage_sync != 3'd5) begin
+        case (diag_stage_sync)
+            3'd1: begin
+                diag_blue_code = (diag_slot == 5'd0 || diag_slot == 5'd1);
+            end
+            3'd2: begin
+                diag_blue_code = (diag_slot == 5'd0 || diag_slot == 5'd1);
+                diag_red_code  = (diag_slot == 5'd4 || diag_slot == 5'd5);
+            end
+            3'd3: begin
+                diag_blue_code  = (diag_slot == 5'd0 || diag_slot == 5'd1);
+                diag_red_code   = (diag_slot == 5'd4 || diag_slot == 5'd5);
+                diag_green_code = (diag_slot == 5'd8 || diag_slot == 5'd9);
+            end
+            3'd4: begin
+                diag_blue_code  = (diag_slot == 5'd0 || diag_slot == 5'd1 || diag_slot == 5'd4 || diag_slot == 5'd5);
+                diag_green_code = (diag_slot == 5'd8 || diag_slot == 5'd9);
+            end
+            default: begin
+                diag_blue_code  = (diag_slot == 5'd0 || diag_slot == 5'd1 || diag_slot == 5'd4 || diag_slot == 5'd5 || diag_slot == 5'd8 || diag_slot == 5'd9);
+                diag_green_code = (diag_slot == 5'd12 || diag_slot == 5'd13);
+            end
+        endcase
+    end else if (diag_rd_active) begin
+        diag_green_code = (diag_slot < 5'd10);
     end else begin
-        // SUCCESS: Kickstart geladen & CPU läuft -> DAUERHAFT AN (Solid ON!)
-        diag_blink = 1'b1;
+        diag_green_code = 1'b1;
     end
 end
 
-// Drive all 3 CFG RGB channels:
-// Active-low: 0 = ON, 1 = OFF
-assign leds[0] = !diag_blink;
-assign leds[1] = !diag_blink;
-assign leds[2] = !diag_blink;
+// Gruen (V13 hat keinen Vorwiderstand) auf 25% PWM dimmen, damit es nicht ueberstrahlt
+wire diag_green_pwm = (diag_slot_cnt[15:14] == 2'b00);
+
+wire diag_blue_on  = diag_blue_code;
+wire diag_red_on   = diag_red_code;
+wire diag_green_on = diag_green_code && diag_green_pwm;
+
+// Tang Console 138K LED-Polaritaet (hardware-verifiziert):
+// leds[0] (G11/Blau) & leds[1] (U12/Rot): Active-HIGH (1 = AN, 0 = AUS)
+// leds[2] (V13/Gruen):                    Active-LOW  (0 = AN, 1 = AUS)
+assign leds[0] = diag_blue_on;
+assign leds[1] = diag_red_on;
+assign leds[2] = !diag_green_on;
 
 endmodule
 
