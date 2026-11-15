@@ -719,6 +719,10 @@ wire        flash_busy;
 reg [21:0]  flash_ram_addr;   
 reg         flash_ram_cs;
 reg         flash_ram_sync;
+reg         flash_p2_cs;
+reg         verify_ack_prev;
+reg [63:0]  diag_flash_64;
+reg [63:0]  diag_sdram_64;
 reg [5:0]   flash_cnt;  
 reg [4:0]   ram_cnt;
 reg [2:0]   fsm_state;
@@ -732,6 +736,7 @@ localparam FSM_WAIT_FLASH = 3'd2;
 localparam FSM_WRITE_RAM  = 3'd3;
 localparam FSM_NEXT_WORD  = 3'd4;
 localparam FSM_DONE       = 3'd5;
+localparam FSM_VERIFY_RAM = 3'd6;
 
 always @(posedge clk_85m) begin
     if (!mem_ready) begin
@@ -741,6 +746,10 @@ always @(posedge clk_85m) begin
         flash_cs        <= 1'b0;
         flash_ram_cs    <= 1'b0;
         flash_ram_sync  <= 1'b0;
+        flash_p2_cs     <= 1'b0;
+        verify_ack_prev <= 1'b0;
+        diag_flash_64   <= 64'd0;
+        diag_sdram_64   <= 64'd0;
         flash_cnt       <= 6'd0;
         ram_cnt         <= 5'd0;
         rom_done_reg    <= 1'b0;
@@ -772,6 +781,11 @@ always @(posedge clk_85m) begin
                         flash_doutD <= flash_dout & 16'hf0ff;
                     else
                         flash_doutD <= flash_dout;
+
+                    if (flash_addr == 23'h300000) diag_flash_64[63:48] <= flash_dout;
+                    if (flash_addr == 23'h300001) diag_flash_64[47:32] <= flash_dout;
+                    if (flash_addr == 23'h300002) diag_flash_64[31:16] <= flash_dout;
+                    if (flash_addr == 23'h300003) diag_flash_64[15:0]  <= flash_dout;
                     
                     ram_cnt     <= 5'd0;
                     fsm_state   <= FSM_WRITE_RAM;
@@ -797,12 +811,36 @@ always @(posedge clk_85m) begin
             FSM_NEXT_WORD: begin
                 flash_addr <= flash_addr + 23'd1;
                 if (word_count <= 22'd1) begin
-                    word_count   <= 22'd0;
-                    rom_done_reg <= 1'b1;
-                    fsm_state    <= FSM_DONE;
+                    word_count      <= 22'd0;
+                    ram_cnt         <= 5'd0;
+                    flash_p2_cs     <= 1'b0;
+                    flash_ram_sync  <= 1'b0;
+                    verify_ack_prev <= p2_ack;
+                    fsm_state       <= FSM_VERIFY_RAM;
                 end else begin
                     word_count   <= word_count - 22'd1;
                     fsm_state    <= FSM_READ_FLASH;
+                end
+            end
+
+            FSM_VERIFY_RAM: begin
+                ram_cnt <= ram_cnt + 5'd1;
+                if (ram_cnt == 5'd1) flash_p2_cs    <= 1'b1;
+                if (ram_cnt == 5'd5) flash_ram_sync <= 1'b1;
+                if (ram_cnt == 5'd8) flash_ram_sync <= 1'b0;
+
+                if (ram_cnt >= 5'd9 && (p2_ack != verify_ack_prev)) begin
+                    diag_sdram_64   <= {p2_dout, p2_dout48};
+                    flash_p2_cs     <= 1'b0;
+                    flash_ram_sync  <= 1'b0;
+                    rom_done_reg    <= 1'b1;
+                    fsm_state       <= FSM_DONE;
+                end else if (ram_cnt == 5'd31) begin
+                    diag_sdram_64   <= 64'hDEAD_BEEF_DEAD_BEEF;
+                    flash_p2_cs     <= 1'b0;
+                    flash_ram_sync  <= 1'b0;
+                    rom_done_reg    <= 1'b1;
+                    fsm_state       <= FSM_DONE;
                 end
             end
 
@@ -811,6 +849,7 @@ always @(posedge clk_85m) begin
                 flash_cs        <= 1'b0;
                 flash_ram_cs    <= 1'b0;
                 flash_ram_sync  <= 1'b0;
+                flash_p2_cs     <= 1'b0;
             end
 
             default: fsm_state <= FSM_INIT;
@@ -953,10 +992,10 @@ sprite_mem_adapter spr_adapter (
 `else
 
 // Prozessor haengt direkt am SDRAM-Anschluss p2 (kein Arbiter)
-assign p2_addr       = {1'b0, fastram_addr};
-assign p2_ds         = fastram_be;
-assign p2_cs         = fastram_sel;
-assign p2_we         = fastram_wr;
+assign p2_addr       = rom_done ? {1'b0, fastram_addr} : 23'h3C0000;
+assign p2_ds         = rom_done ? fastram_be           : 2'b00;
+assign p2_cs         = rom_done ? fastram_sel          : flash_p2_cs;
+assign p2_we         = rom_done ? fastram_wr           : 1'b0;
 assign fastram_dout   = p2_dout;
 assign fastram_dout48 = p2_dout48;
 assign fastram_ready  = p2_ack;
@@ -1196,9 +1235,9 @@ wire diag_ovl_y = (hdmi_cy >= 10'd64) && (hdmi_cy < 10'd192) && (hdmi_cy[4:0] < 
 wire [10:0] diag_x_rel  = hdmi_cx - 11'd96;
 wire [4:0] diag_bit_pos = diag_x_rel[8:4];
 wire [1:0] diag_row     = hdmi_cy[6:5] - 2'd2;
-wire [31:0] diag_row_word = (diag_row == 2'd0) ? diag_snap[127:96] :
-                            (diag_row == 2'd1) ? diag_snap[95:64]  :
-                            (diag_row == 2'd2) ? diag_snap[63:32]  : diag_snap[31:0];
+wire [31:0] diag_row_word = (diag_row == 2'd0) ? diag_flash_64[63:32] :
+                            (diag_row == 2'd1) ? diag_flash_64[31:0]  :
+                            (diag_row == 2'd2) ? diag_sdram_64[63:32] : diag_sdram_64[31:0];
 wire diag_bit_val = diag_row_word[5'd31 - diag_bit_pos];
 wire diag_tick    = (diag_bit_pos[1:0] == 2'b11) && (diag_x_rel[3:0] >= 4'd14);
 wire diag_bar     = (diag_x_rel[3:0] < 4'd12);
