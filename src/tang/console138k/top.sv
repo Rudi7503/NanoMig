@@ -806,8 +806,9 @@ always @(posedge clk_85m) begin
                 if (ram_cnt == 7'd2)  flash_ram_sync <= 1'b1;
                 // Deassert sync pulse (falling edge triggers sync_i 2 cycles later in sdram.sv while CS is solidly 1)
                 if (ram_cnt == 7'd5)  flash_ram_sync <= 1'b0;
-                // At ram_cnt == 7: sync_i fires in sdram.sv, capture exact flash_doutD presented to ram_din!
-                if (ram_cnt == 7'd7)  diag_flash_64 <= {diag_flash_64[47:0], flash_doutD};
+                // Capture controller-side ram_din and DQM at actual CMD_WRITE
+                if (diag_cmd_write)
+                    diag_flash_64 <= {diag_flash_64[47:0], (diag_write_dqm == 2'b00) ? diag_write_din : {14'h2BAD, diag_write_dqm}};
                 // At ram_cnt == 7: sync_i fires in sdram.sv, cs is 1, CMD_ACTIVE issued!
                 // At ram_cnt == 8: CMD_WRITE issued to SDRAM chip!
                 // At ram_cnt == 9..15: SDRAM finishes write cycle.
@@ -907,6 +908,10 @@ localparam CHIP48_BURST = 0
 `endif
     ;
 
+wire        diag_cmd_write;
+wire [15:0] diag_write_din;
+wire  [1:0] diag_write_dqm;
+
 sdram #(
     .CHIP48_BURST(CHIP48_BURST)
 ) sdram (
@@ -941,7 +946,11 @@ sdram #(
 	.p2_ds         ( p2_ds           ), // upper/lower data strobe
 	.p2_cs         ( p2_cs           ), // cpu/chipset requests read/wrie
 	.p2_we         ( p2_we           ), // cpu/chipset requests write
-	.p2_ack        ( p2_ack          )
+	.p2_ack        ( p2_ack          ),
+
+	.diag_cmd_write( diag_cmd_write  ),
+	.diag_write_din( diag_write_din  ),
+	.diag_write_dqm( diag_write_dqm  )
 );
 
 // --------------------------------------------------------------------

@@ -91,7 +91,12 @@ module sdram #(
   input  wire  [1:0] p2_ds,    // upper/lower data strobe
   input  wire        p2_cs,    // cpu requests read/wrie
   input  wire        p2_we,    // cpu requests write
-  output wire        p2_ack    // cpu ack
+  output wire        p2_ack,   // cpu ack
+
+  // read-only debug outputs for write verification
+  output wire        diag_cmd_write,
+  output wire [15:0] diag_write_din,
+  output wire  [1:0] diag_write_dqm
 );
 
 localparam WIDTH32 = (DATA_WIDTH == 32);
@@ -280,6 +285,10 @@ generate
     assign sd_data     = sd_dq ? ram_din : {DATA_WIDTH{1'bz}};
   end
 endgenerate
+
+assign diag_cmd_write = (sd_cmd == CMD_WRITE) && sd_dq;
+assign diag_write_din = ram_din;
+assign diag_write_dqm = sd_dqm;
 
 localparam PORT_1       = 2'd0;
 localparam PORT_2       = 2'd1;
