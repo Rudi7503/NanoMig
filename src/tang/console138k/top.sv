@@ -791,11 +791,11 @@ always @(posedge clk_85m) begin
                 if (flash_busy_seen && !flash_busy_s2) begin
                     flash_cs <= 1'b0;
                     if (word_count > 22'd4) begin
+                        flash_doutD <= flash_dout;
+                    end else begin
                         flash_doutD <= (flash_addr[1:0] == 2'd0) ? 16'h1114 :
                                        (flash_addr[1:0] == 2'd1) ? 16'h4EF9 :
                                        (flash_addr[1:0] == 2'd2) ? 16'h00F8 : 16'h00D2;
-                    end else begin
-                        flash_doutD <= flash_dout;
                     end
                     
                     ram_cnt     <= 7'd0;
