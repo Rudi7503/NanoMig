@@ -583,7 +583,7 @@ wire [7:0] memory_config  = { 4'b0_000, osd_slowmem, osd_chipmem };
 wire [2:0] fastram_config = { 1'b0, osd_fastmem };   
 wire [3:0] floppy_config  = { osd_floppy_drives, osd_floppy_wrprot, osd_floppy_turbo };
 wire [3:0] video_config   = { osd_video_filter, osd_video_scanlines };   
-wire [5:0] ide_config     = { 5'b00000, osd_ide_enable };   
+wire [5:0] ide_config     = { 5'b10000, osd_ide_enable };   
    
 nanomig nanomig
 (
@@ -946,7 +946,8 @@ wire		sdram_refresh = rom_done ? ram_refresh  : 1'b0;
 wire [21:0] sdram_addr    = rom_done ? ram_a[22:1]  : flash_ram_addr;
 wire [15:0] sdram_din     = rom_done ? ram_dout     : flash_doutD;
 wire [1:0]  sdram_be      = rom_done ? ram_be       : 2'b00;
-wire		sdram_we      = rom_done ? sdram_rw     : flash_ram_we; 
+wire        minimig_is_accessing_rom = (ram_a[22:19] == 4'b1111);
+wire		sdram_we      = rom_done ? (sdram_rw && !minimig_is_accessing_rom) : flash_ram_we; 
 
 localparam CHIP48_BURST = 0
 `ifdef ENABLE_AGA
@@ -1308,9 +1309,9 @@ wire diag_ovl_y = (hdmi_cy >= 10'd64) && (hdmi_cy < 10'd192) && (hdmi_cy[4:0] < 
 wire [10:0] diag_x_rel  = hdmi_cx - 11'd96;
 wire [4:0] diag_bit_pos = diag_x_rel[8:4];
 wire [1:0] diag_row     = hdmi_cy[6:5] - 2'd2;
-wire [31:0] diag_row_word = (diag_row == 2'd0) ? diag_flash_64[63:32] :
-                            (diag_row == 2'd1) ? diag_flash_64[31:0]  :
-                            (diag_row == 2'd2) ? diag_sdram_64[63:32] : diag_sdram_64[31:0];
+wire [31:0] diag_row_word = (diag_row == 2'd0) ? diag_snap[127:96] :
+                            (diag_row == 2'd1) ? diag_snap[95:64]  :
+                            (diag_row == 2'd2) ? diag_snap[63:32]  : diag_snap[31:0];
 wire diag_bit_val = diag_row_word[5'd31 - diag_bit_pos];
 wire diag_tick    = (diag_bit_pos[1:0] == 2'b11) && (diag_x_rel[3:0] >= 4'd14);
 wire diag_bar     = (diag_x_rel[3:0] < 4'd12);

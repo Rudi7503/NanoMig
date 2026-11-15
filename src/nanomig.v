@@ -626,7 +626,7 @@ always @(posedge clk_sys) begin
     if (fastram_sel)                                   diag_seen_p2_cs    <= 1'b1;
     if (fastram_done)                                  diag_seen_fdone    <= 1'b1;
     if (fill_state == 2'd2 && fill_cnt == 2'd3)        diag_seen_fill_end <= 1'b1;
-    if (ram_sel && (ram_addr[23:4] == 20'h7800D))      diag_seen_f800d0   <= 1'b1;
+    if (ram_sel && (ram_addr[24:4] == 21'h03C006))     diag_seen_f800d0   <= 1'b1;
 
     // 2s Post-Reset Diagnose-Schnappschuss (friert bei diag_timer == 56_000_000 ein)
     if (diag_timer < 26'd56_000_000) begin
