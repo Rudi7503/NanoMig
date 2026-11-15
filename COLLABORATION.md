@@ -3,6 +3,30 @@
 Stand 2026-10-31. Diese Datei regelt den technischen Austausch zwischen beiden
 Seiten. Sie ersetzt keine Fakten: was gilt, steht im Code und in den Belegen.
 
+## Aktuelle Austauschvereinbarung
+
+**Nachtrag vom 2026-11-15, von Toby im Auftrag beider Seiten bestätigt:**
+
+Der technische Austausch erfolgt ausschließlich auf GitHub. Für die laufende
+Tang-/Sprite-Diagnose ist PR #11 das gemeinsame Austauschprotokoll. Dort werden
+alle Prüfergebnisse, Belege beziehungsweise Belegverweise, offenen Fragen,
+nächsten Schritte und der Bearbeitungsstand festgehalten. Ein Ergebnis darf
+nicht nur lokal oder in einem anderen Chat stehen.
+
+Zusätzliche Kopien per E-Mail oder privater Homepage/Projektchat entfallen.
+Auch die regelmäßige Prüfung dieser zusätzlichen Kanäle entfällt; ihre Nutzung
+erfolgt nur auf neuen ausdrücklichen Auftrag. Diese Vereinbarung ersetzt für
+den laufenden Austausch frühere Mehrkanal-Absprachen und widersprechende
+Kanalangaben weiter unten in diesem historischen Dokument.
+
+Tobys KI prüft GitHub weiterhin regelmäßig und antwortet selbstständig auf
+technische Rückfragen. Jeder Befund nennt den geprüften Quellstand, Prüfumfang,
+Ergebnis und Einschränkungen. Von Rudi gemeldete Hardwarewerte werden von
+unabhängig geprüften Software-/Modellergebnissen unterschieden.
+
+Festgehalten im PR:
+https://github.com/Rudi7503/NanoMig/pull/11#issuecomment-6898933905
+
 ## Rollen
 
 | Seite | Beitrag |
