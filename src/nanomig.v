@@ -124,7 +124,8 @@ module nanomig (
    // Diagnose-Ausgaenge fuer Board-LEDs
    output        diag_cpu_rst_n,
    output        diag_cpu_rd_ack,
-   output [2:0]  diag_bus_stage
+   output [2:0]  diag_bus_stage,
+   output [127:0] diag_snap
 ); 
 `ifndef GATEMATE
  `ifndef LATTICE
@@ -596,17 +597,53 @@ assign fastram_wr   = fastram_wr_r;
 assign ram_dout     = cache_dat_r;
 
 reg diag_seen_p2_cs, diag_seen_fdone, diag_seen_fill_end, diag_seen_f800d0;
+reg        diag_cap_req, diag_cap_fdone, diag_cap_fend, diag_cap_cack, diag_dout_chg;
+reg [23:0] diag_snap_addr;
+reg [2:0]  diag_snap_meta;
+reg [15:0] diag_snap_faddr, diag_snap_cdat;
+reg [63:0] diag_snap_dout;
+
 always @(posedge clk_sys) begin
   if (!cpu_rst) begin
     diag_seen_p2_cs    <= 1'b0;
     diag_seen_fdone    <= 1'b0;
     diag_seen_fill_end <= 1'b0;
     diag_seen_f800d0   <= 1'b0;
+    diag_cap_req       <= 1'b0;
+    diag_cap_fdone     <= 1'b0;
+    diag_cap_fend      <= 1'b0;
+    diag_cap_cack      <= 1'b0;
+    diag_dout_chg      <= 1'b0;
+    diag_snap_addr     <= 24'd0;
+    diag_snap_meta     <= 3'd0;
+    diag_snap_faddr    <= 16'd0;
+    diag_snap_cdat     <= 16'd0;
+    diag_snap_dout     <= 64'd0;
   end else begin
     if (fastram_sel)                                   diag_seen_p2_cs    <= 1'b1;
     if (fastram_done)                                  diag_seen_fdone    <= 1'b1;
     if (fill_state == 2'd2 && fill_cnt == 2'd3)        diag_seen_fill_end <= 1'b1;
     if (ram_sel && (ram_addr[23:4] == 20'h7800D))      diag_seen_f800d0   <= 1'b1;
+
+    // Eingefrorener Schnappschuss des 1. ROM/FastRAM-Linefills
+    if (cache_req && !wbuf_pending && !fastram_sel_r && (fill_state == 2'd0) && !diag_cap_req) begin
+      diag_cap_req    <= 1'b1;
+      diag_snap_addr  <= ram_addr[24:1];
+      diag_snap_meta  <= { (cpu_state == 2'd3), ram_addr[2:1] };
+      diag_snap_faddr <= { ram_addr[16:3], 2'b00 };
+    end
+    if (fastram_done && (fill_state == 2'd1) && diag_cap_req && !diag_cap_fdone) begin
+      diag_cap_fdone <= 1'b1;
+      diag_snap_dout <= { fastram_dout, fastram_dout48 };
+    end
+    if ((fill_state == 2'd2) && diag_cap_fdone && !diag_cap_fend) begin
+      if (fastram_dout != diag_snap_dout[63:48]) diag_dout_chg <= 1'b1;
+      if (fill_cnt == 2'd3)                      diag_cap_fend <= 1'b1;
+    end
+    if (ram_ready && diag_cap_req && !diag_cap_cack) begin
+      diag_cap_cack  <= 1'b1;
+      diag_snap_cdat <= cache_dat_r;
+    end
   end
 end
 assign diag_bus_stage =
@@ -614,6 +651,11 @@ assign diag_bus_stage =
   (!diag_seen_fdone)    ? 3'd2 :
   (!diag_seen_fill_end) ? 3'd3 :
   (!diag_seen_f800d0)   ? 3'd4 : 3'd5;
+assign diag_snap = {
+  diag_snap_addr, diag_cap_req, diag_cap_fdone, diag_cap_fend, diag_cap_cack, diag_dout_chg, diag_snap_meta,
+  diag_snap_dout,
+  diag_snap_cdat, diag_snap_faddr
+};
 `else
 assign fastram_addr = ram_addr[23:1];
 assign fastram_lds  = ram_lds;

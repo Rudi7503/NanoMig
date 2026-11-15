@@ -555,6 +555,7 @@ wire        spr_mem_waitrequest;
 wire        diag_cpu_rst_n;
 wire        diag_cpu_rd_ack;
 wire [2:0]  diag_bus_stage;
+wire [127:0] diag_snap;
 
 // Einziger physischer p2-Anschluss, vom Arbiter verwaltet
 wire [22:0] p2_addr;
@@ -681,7 +682,8 @@ nanomig nanomig
 
  .diag_cpu_rst_n(diag_cpu_rst_n),
  .diag_cpu_rd_ack(diag_cpu_rd_ack),
- .diag_bus_stage(diag_bus_stage)
+ .diag_bus_stage(diag_bus_stage),
+ .diag_snap(diag_snap)
 );
 
 wire           flash_ready;  
@@ -1186,6 +1188,23 @@ end
 wire [2:0] tmds;
 wire tmds_clock;
 
+// HDMI-Diagnose-Overlay: 4x32 Bit Schnappschuss des 1. ROM/FastRAM-Linefills (hcnt 128..639, vcnt 64..191)
+wire diag_ovl_x = (hcnt >= 10'd128) && (hcnt < 10'd640);
+wire diag_ovl_y = (vcnt >= 10'd64)  && (vcnt < 10'd192) && (vcnt[4:0] < 5'd20);
+wire [5:0] diag_bit_pos = hcnt[9:4] - 6'd8;
+wire [1:0] diag_row     = vcnt[6:5] - 2'd2;
+wire [31:0] diag_row_word = (diag_row == 2'd0) ? diag_snap[127:96] :
+                            (diag_row == 2'd1) ? diag_snap[95:64]  :
+                            (diag_row == 2'd2) ? diag_snap[63:32]  : diag_snap[31:0];
+wire diag_bit_val = diag_row_word[5'd31 - diag_bit_pos[4:0]];
+wire diag_tick    = (diag_bit_pos[1:0] == 2'b11) && (hcnt[3:0] >= 4'd14);
+wire diag_bar     = (hcnt[3:0] < 4'd12);
+wire [23:0] diag_hdmi_rgb =
+    (diag_ovl_x && diag_ovl_y) ? (
+        diag_bar  ? (diag_bit_val ? 24'h00FF00 : 24'h181860) :
+        diag_tick ? 24'hFFFFFF : 24'h000000
+    ) : { video_red, 2'b00, video_green, 2'b00, video_blue, 2'b00 };
+
 hdmi #(
     .AUDIO_RATE(48000), .AUDIO_BIT_WIDTH(16),
     .VENDOR_NAME( { "MiSTle", 16'd0} ),
@@ -1204,7 +1223,7 @@ hdmi #(
   .interlace(interlace),
   .reset(vreset),    // signal to synchronize HDMI
 
-  .rgb( { video_red, 2'b00, video_green, 2'b00, video_blue, 2'b00 } )
+  .rgb( diag_hdmi_rgb )
 );
 
 // differential output
