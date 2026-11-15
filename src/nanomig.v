@@ -595,25 +595,25 @@ assign fastram_din  = fastram_din_r;
 assign fastram_wr   = fastram_wr_r;
 assign ram_dout     = cache_dat_r;
 
-reg diag_seen_p2_cs, diag_seen_fdone, diag_seen_f800d0, diag_seen_f80108;
+reg diag_seen_p2_cs, diag_seen_fdone, diag_seen_fill_end, diag_seen_f800d0;
 always @(posedge clk_sys) begin
   if (!cpu_rst) begin
-    diag_seen_p2_cs  <= 1'b0;
-    diag_seen_fdone  <= 1'b0;
-    diag_seen_f800d0 <= 1'b0;
-    diag_seen_f80108 <= 1'b0;
+    diag_seen_p2_cs    <= 1'b0;
+    diag_seen_fdone    <= 1'b0;
+    diag_seen_fill_end <= 1'b0;
+    diag_seen_f800d0   <= 1'b0;
   end else begin
-    if (fastram_sel)                               diag_seen_p2_cs  <= 1'b1;
-    if (fastram_done)                              diag_seen_fdone  <= 1'b1;
-    if (ram_sel && (ram_addr[23:4] == 20'h7800D))  diag_seen_f800d0 <= 1'b1;
-    if (ram_sel && (ram_addr[23:3] == 21'h0F0021)) diag_seen_f80108 <= 1'b1;
+    if (fastram_sel)                                   diag_seen_p2_cs    <= 1'b1;
+    if (fastram_done)                                  diag_seen_fdone    <= 1'b1;
+    if (fill_state == 2'd2 && fill_cnt == 2'd3)        diag_seen_fill_end <= 1'b1;
+    if (ram_sel && (ram_addr[23:4] == 20'h7800D))      diag_seen_f800d0   <= 1'b1;
   end
 end
 assign diag_bus_stage =
-  (!diag_seen_p2_cs)  ? 3'd1 :
-  (!diag_seen_fdone)  ? 3'd2 :
-  (!diag_seen_f800d0) ? 3'd3 :
-  (!diag_seen_f80108) ? 3'd4 : 3'd5;
+  (!diag_seen_p2_cs)    ? 3'd1 :
+  (!diag_seen_fdone)    ? 3'd2 :
+  (!diag_seen_fill_end) ? 3'd3 :
+  (!diag_seen_f800d0)   ? 3'd4 : 3'd5;
 `else
 assign fastram_addr = ram_addr[23:1];
 assign fastram_lds  = ram_lds;

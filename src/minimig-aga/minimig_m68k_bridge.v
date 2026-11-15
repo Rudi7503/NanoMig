@@ -151,11 +151,9 @@ always @(posedge clk) cpudatain_r <= cpudatain;
 assign data_out = cpudatain_r;
 
 reg [15:0] ldata_in;	// latched data_in
-// TC138K TG68K diagnose (2026-11-15): With sdram_sync=!cyc, sdram.dout becomes valid in Q0 (clk7_en).
-// Original (!c1 && c3 && enable) latched in Q3 (1 cycle early -> Stage 5, Line-F crash).
-// Latching on (clk7_en && enable) fixes iverilog netlist sim through Kickstart 3.1 checksum loop,
-// but on real TC138K hardware currently stops in Stage 1 (no p2_cs) with red/blue striped HDMI.
-always @(posedge clk) if (clk7_en && enable) ldata_in <= data_in;
+// TC138K TG68K diagnose (2026-11-15, Option A / V1+): Restore Q3 latch (!c1 && c3 && enable)
+// together with sdram_sync=clk7_en in top.sv (Reset vector $000000..$000006 stable on HW).
+always @(posedge clk) if (!c1 && c3 && enable) ldata_in <= data_in;
 
 // --------------------------------------------------------------------------------------
 
