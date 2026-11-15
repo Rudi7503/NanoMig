@@ -741,11 +741,18 @@ localparam FSM_NEXT_WORD  = 3'd4;
 localparam FSM_DONE       = 3'd5;
 localparam FSM_VERIFY_RAM = 3'd6;
 
+`ifdef SDRAM_QUICK_READBACK
+// Diagnostic build only: copy four words so the 64-bit readback can be checked before retention time matters.
+localparam [21:0] ROM_COPY_WORDS = 22'd4;
+`else
+localparam [21:0] ROM_COPY_WORDS = 22'd262144;
+`endif
+
 always @(posedge clk_85m) begin
     if (!mem_ready) begin
         flash_addr      <= 23'h300000;          // 6MB byte-address = 0x600000
         flash_ram_addr  <= { 4'hf, 18'h0 };     // 512k SDRAM segment 15
-        word_count      <= 22'd262144;          // 512 KiB = 262,144 words
+        word_count      <= ROM_COPY_WORDS;       // full ROM by default; four words with SDRAM_QUICK_READBACK
         flash_cs        <= 1'b0;
         flash_ram_cs    <= 1'b0;
         flash_ram_sync  <= 1'b0;
