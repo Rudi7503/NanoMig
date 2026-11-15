@@ -727,13 +727,27 @@ reg         flash_busy_s2;
 reg         flash_busy_seen;
 reg [63:0]  diag_flash_64;
 reg [63:0]  diag_sdram_64;
-reg [63:0]  write_line;
+reg [15:0]  write_din_lat;
+reg [1:0]   write_crc_cnt;
+reg [63:0]  verify_shift;
+reg [3:0]   verify_crc_cnt;
 reg [21:0]  verify_addr;
 reg         verify_phase;
 reg [5:0]   flash_cnt;  
 reg [6:0]   ram_cnt;
 reg [2:0]   fsm_state;
 reg         rom_done_reg;
+
+function automatic [63:0] crc64_byte(input [63:0] crc_in, input [7:0] d);
+    reg [63:0] c;
+    integer i;
+    begin
+        c = crc_in ^ {d, 56'd0};
+        for (i = 0; i < 8; i = i + 1)
+            c = c[63] ? ({c[62:0], 1'b0} ^ 64'h42F0E1EBA9EA3693) : {c[62:0], 1'b0};
+        crc64_byte = c;
+    end
+endfunction
 
 assign rom_done = rom_done_reg;
 
@@ -762,7 +776,10 @@ always @(posedge clk_85m) begin
         flash_busy_seen <= 1'b0;
         diag_flash_64   <= 64'd0;
         diag_sdram_64   <= 64'd0;
-        write_line      <= 64'd0;
+        write_din_lat   <= 16'd0;
+        write_crc_cnt   <= 2'd0;
+        verify_shift    <= 64'd0;
+        verify_crc_cnt  <= 4'd0;
         verify_addr     <= 22'h3C0000;
         verify_phase    <= 1'b0;
         flash_cnt       <= 6'd0;
@@ -818,13 +835,16 @@ always @(posedge clk_85m) begin
                 end
                 if (ram_cnt == 7'd12)  flash_ram_sync <= 1'b1;
                 if (ram_cnt == 7'd15)  flash_ram_sync <= 1'b0;
-                // Capture 64-bit checksum across ALL 262,144 words at actual CMD_WRITE
+                // Capture CRC-64-ECMA across ALL 262,144 words (524,288 bytes) at actual CMD_WRITE
                 if (diag_cmd_write) begin
-                    write_line <= {write_line[47:0], diag_write_din};
-                    if (flash_ram_addr[1:0] == 2'd3) begin
-                        diag_flash_64 <= ({diag_flash_64[62:0], diag_flash_64[63]} ^ {write_line[47:0], diag_write_din})
-                                       + {write_line[47:0], diag_write_din};
-                    end
+                    write_din_lat <= diag_write_din;
+                    write_crc_cnt <= 2'd2;
+                end else if (write_crc_cnt == 2'd2) begin
+                    diag_flash_64 <= crc64_byte(diag_flash_64, write_din_lat[15:8]);
+                    write_crc_cnt <= 2'd1;
+                end else if (write_crc_cnt == 2'd1) begin
+                    diag_flash_64 <= crc64_byte(diag_flash_64, write_din_lat[7:0]);
+                    write_crc_cnt <= 2'd0;
                 end
                 if (ram_cnt == 7'd26) begin
                     flash_ram_cs <= 1'b0;
@@ -855,30 +875,38 @@ always @(posedge clk_85m) begin
             end
 
             FSM_VERIFY_RAM: begin
-                ram_cnt <= ram_cnt + 7'd1;
-                if (ram_cnt == 7'd4) flash_p2_cs <= 1'b1;
-                // Send periodic sync pulses (every 32 cycles) so PORT_REFRESH can run first, then PORT_2
-                flash_ram_sync <= (ram_cnt[4:2] == 3'd3);
+                if (verify_crc_cnt != 4'd0) begin
+                    diag_sdram_64  <= crc64_byte(diag_sdram_64, verify_shift[63:56]);
+                    verify_shift   <= {verify_shift[55:0], 8'd0};
+                    verify_crc_cnt <= verify_crc_cnt - 4'd1;
+                    if (verify_crc_cnt == 4'd1) begin
+                        if (verify_addr == 22'h3FFFFC) begin
+                            rom_done_reg <= 1'b1;
+                            fsm_state    <= FSM_DONE;
+                        end else begin
+                            verify_addr     <= verify_addr + 22'd4;
+                            ram_cnt         <= 7'd0;
+                            verify_ack_prev <= p2_ack;
+                        end
+                    end
+                end else begin
+                    ram_cnt <= ram_cnt + 7'd1;
+                    if (ram_cnt == 7'd4) flash_p2_cs <= 1'b1;
+                    // Send periodic sync pulses (every 32 cycles) so PORT_REFRESH can run first, then PORT_2
+                    flash_ram_sync <= (ram_cnt[4:2] == 3'd3);
 
-                if (ram_cnt >= 7'd20 && (p2_ack != verify_ack_prev)) begin
-                    diag_sdram_64 <= ({diag_sdram_64[62:0], diag_sdram_64[63]} ^ {p2_dout, p2_dout48})
-                                   + {p2_dout, p2_dout48};
-                    flash_p2_cs     <= 1'b0;
-                    flash_ram_sync  <= 1'b0;
-                    if (verify_addr == 22'h3FFFFC) begin
+                    if (ram_cnt >= 7'd20 && (p2_ack != verify_ack_prev)) begin
+                        verify_shift    <= {p2_dout, p2_dout48};
+                        verify_crc_cnt  <= 4'd8;
+                        flash_p2_cs     <= 1'b0;
+                        flash_ram_sync  <= 1'b0;
+                    end else if (ram_cnt == 7'd127) begin
+                        diag_sdram_64   <= 64'hDEAD_BEEF_DEAD_BEEF;
+                        flash_p2_cs     <= 1'b0;
+                        flash_ram_sync  <= 1'b0;
                         rom_done_reg    <= 1'b1;
                         fsm_state       <= FSM_DONE;
-                    end else begin
-                        verify_addr     <= verify_addr + 22'd4;
-                        ram_cnt         <= 7'd0;
-                        verify_ack_prev <= p2_ack;
                     end
-                end else if (ram_cnt == 7'd127) begin
-                    diag_sdram_64   <= 64'hDEAD_BEEF_DEAD_BEEF;
-                    flash_p2_cs     <= 1'b0;
-                    flash_ram_sync  <= 1'b0;
-                    rom_done_reg    <= 1'b1;
-                    fsm_state       <= FSM_DONE;
                 end
             end
 
@@ -1280,9 +1308,9 @@ wire diag_ovl_y = (hdmi_cy >= 10'd64) && (hdmi_cy < 10'd192) && (hdmi_cy[4:0] < 
 wire [10:0] diag_x_rel  = hdmi_cx - 11'd96;
 wire [4:0] diag_bit_pos = diag_x_rel[8:4];
 wire [1:0] diag_row     = hdmi_cy[6:5] - 2'd2;
-wire [31:0] diag_row_word = (diag_row == 2'd0) ? diag_snap[127:96] :
-                            (diag_row == 2'd1) ? diag_snap[95:64]  :
-                            (diag_row == 2'd2) ? diag_snap[63:32]  : diag_snap[31:0];
+wire [31:0] diag_row_word = (diag_row == 2'd0) ? diag_flash_64[63:32] :
+                            (diag_row == 2'd1) ? diag_flash_64[31:0]  :
+                            (diag_row == 2'd2) ? diag_sdram_64[63:32] : diag_sdram_64[31:0];
 wire diag_bit_val = diag_row_word[5'd31 - diag_bit_pos];
 wire diag_tick    = (diag_bit_pos[1:0] == 2'b11) && (diag_x_rel[3:0] >= 4'd14);
 wire diag_bar     = (diag_x_rel[3:0] < 4'd12);
