@@ -597,52 +597,55 @@ assign fastram_wr   = fastram_wr_r;
 assign ram_dout     = cache_dat_r;
 
 reg diag_seen_p2_cs, diag_seen_fdone, diag_seen_fill_end, diag_seen_f800d0;
-reg        diag_cap_req, diag_cap_fdone, diag_cap_fend, diag_cap_cack, diag_dout_chg;
-reg [23:0] diag_snap_addr;
-reg [2:0]  diag_snap_meta;
-reg [15:0] diag_snap_faddr, diag_snap_cdat;
-reg [63:0] diag_snap_dout;
+reg [25:0] diag_timer;
+reg [22:0] diag_last_chip_addr;
+reg [23:0] diag_last_ram_addr;
+reg [15:0] diag_color00, diag_last_cdin, diag_wr_cnt, diag_rd_cnt;
+reg        diag_seen_c00, diag_seen_e8, diag_seen_da, diag_snap_cas;
+reg [1:0]  diag_snap_cstate;
 
 always @(posedge clk_sys) begin
   if (!cpu_rst) begin
-    diag_seen_p2_cs    <= 1'b0;
-    diag_seen_fdone    <= 1'b0;
-    diag_seen_fill_end <= 1'b0;
-    diag_seen_f800d0   <= 1'b0;
-    diag_cap_req       <= 1'b0;
-    diag_cap_fdone     <= 1'b0;
-    diag_cap_fend      <= 1'b0;
-    diag_cap_cack      <= 1'b0;
-    diag_dout_chg      <= 1'b0;
-    diag_snap_addr     <= 24'd0;
-    diag_snap_meta     <= 3'd0;
-    diag_snap_faddr    <= 16'd0;
-    diag_snap_cdat     <= 16'd0;
-    diag_snap_dout     <= 64'd0;
+    diag_seen_p2_cs     <= 1'b0;
+    diag_seen_fdone     <= 1'b0;
+    diag_seen_fill_end  <= 1'b0;
+    diag_seen_f800d0    <= 1'b0;
+    diag_timer          <= 26'd0;
+    diag_last_chip_addr <= 23'd0;
+    diag_last_ram_addr  <= 24'd0;
+    diag_color00        <= 16'hDEAD;
+    diag_last_cdin      <= 16'd0;
+    diag_wr_cnt         <= 16'd0;
+    diag_rd_cnt         <= 16'd0;
+    diag_seen_c00       <= 1'b0;
+    diag_seen_e8        <= 1'b0;
+    diag_seen_da        <= 1'b0;
+    diag_snap_cas       <= 1'b1;
+    diag_snap_cstate    <= 2'd0;
   end else begin
     if (fastram_sel)                                   diag_seen_p2_cs    <= 1'b1;
     if (fastram_done)                                  diag_seen_fdone    <= 1'b1;
     if (fill_state == 2'd2 && fill_cnt == 2'd3)        diag_seen_fill_end <= 1'b1;
     if (ram_sel && (ram_addr[23:4] == 20'h7800D))      diag_seen_f800d0   <= 1'b1;
 
-    // Eingefrorener Schnappschuss des 1. ROM/FastRAM-Linefills
-    if (cache_req && !wbuf_pending && !fastram_sel_r && (fill_state == 2'd0) && !diag_cap_req) begin
-      diag_cap_req    <= 1'b1;
-      diag_snap_addr  <= ram_addr[24:1];
-      diag_snap_meta  <= { (cpu_state == 2'd3), ram_addr[2:1] };
-      diag_snap_faddr <= { ram_addr[16:3], 2'b00 };
-    end
-    if (fastram_done && (fill_state == 2'd1) && diag_cap_req && !diag_cap_fdone) begin
-      diag_cap_fdone <= 1'b1;
-      diag_snap_dout <= { fastram_dout, fastram_dout48 };
-    end
-    if ((fill_state == 2'd2) && diag_cap_fdone && !diag_cap_fend) begin
-      if (fastram_dout != diag_snap_dout[63:48]) diag_dout_chg <= 1'b1;
-      if (fill_cnt == 2'd3)                      diag_cap_fend <= 1'b1;
-    end
-    if (ram_ready && diag_cap_req && !diag_cap_cack) begin
-      diag_cap_cack  <= 1'b1;
-      diag_snap_cdat <= cache_dat_r;
+    // 2s Post-Reset Diagnose-Schnappschuss (friert bei diag_timer == 56_000_000 ein)
+    if (diag_timer < 26'd56_000_000) begin
+      diag_timer <= diag_timer + 26'd1;
+      if (!chip_as) begin
+        diag_last_chip_addr <= chip_addr[23:1];
+        diag_last_cdin      <= chip_din;
+        if (!chip_rw && (chip_addr[23:1] == 23'h6FF8C0)) begin
+          diag_color00  <= chip_dout;
+          diag_seen_c00 <= 1'b1;
+        end
+        if (!chip_rw && (chip_addr[23:8] == 16'hE800)) diag_seen_e8 <= 1'b1;
+        if (chip_addr[23:16] == 8'hDA)                 diag_seen_da <= 1'b1;
+      end
+      if (ram_sel)           diag_last_ram_addr <= ram_addr[24:1];
+      if (ram_write_ready)   diag_wr_cnt        <= diag_wr_cnt + 16'd1;
+      if (cache_ack)         diag_rd_cnt        <= diag_rd_cnt + 16'd1;
+      diag_snap_cas    <= chip_as;
+      diag_snap_cstate <= cpu_state;
     end
   end
 end
@@ -652,9 +655,10 @@ assign diag_bus_stage =
   (!diag_seen_fill_end) ? 3'd3 :
   (!diag_seen_f800d0)   ? 3'd4 : 3'd5;
 assign diag_snap = {
-  diag_snap_addr, diag_cap_req, diag_cap_fdone, diag_cap_fend, diag_cap_cack, diag_dout_chg, diag_snap_meta,
-  diag_snap_dout,
-  diag_snap_cdat, diag_snap_faddr
+  8'h00, diag_last_chip_addr, diag_snap_cas,
+  diag_last_ram_addr, 3'b000, diag_seen_c00, diag_seen_e8, diag_seen_da, diag_snap_cstate,
+  diag_color00, diag_last_cdin,
+  diag_wr_cnt, diag_rd_cnt
 };
 `else
 assign fastram_addr = ram_addr[23:1];
