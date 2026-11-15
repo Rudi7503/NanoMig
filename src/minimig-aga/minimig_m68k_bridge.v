@@ -151,9 +151,9 @@ always @(posedge clk) cpudatain_r <= cpudatain;
 assign data_out = cpudatain_r;
 
 reg [15:0] ldata_in;	// latched data_in
-// TC138K TG68K diagnose (2026-11-15, Option A / V1+): Restore Q3 latch (!c1 && c3 && enable)
-// together with sdram_sync=clk7_en in top.sv (Reset vector $000000..$000006 stable on HW).
-always @(posedge clk) if (!c1 && c3 && enable) ldata_in <= data_in;
+// TC138K TG68K diagnose (2026-11-15, V4 / Option B): Keep sdram_sync=!cyc in top.sv (stable PORT_1),
+// and latch ldata_in in Q2 (clk7n_en && enable) — 2 clk_28m cycles after sdram.dout updates in Q0.
+always @(posedge clk) if (clk7n_en && enable) ldata_in <= data_in;
 
 // --------------------------------------------------------------------------------------
 

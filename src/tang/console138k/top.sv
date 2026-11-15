@@ -832,7 +832,7 @@ wire	    sdram_rw      = !ram_we_n;
    
 wire		sdram_cs      = rom_done ? sdram_access : flash_ram_cs;
 
-wire        sdram_sync    = rom_done ? clk7_en      : flash_ram_sync;
+wire        sdram_sync    = rom_done ? !cyc         : flash_ram_sync;
    
 wire		sdram_refresh = rom_done ? ram_refresh  : 1'b0;
    
