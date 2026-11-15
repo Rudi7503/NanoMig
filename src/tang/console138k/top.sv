@@ -748,7 +748,7 @@ always @(posedge clk_85m) begin
     if (!mem_ready) begin
         flash_addr      <= 23'h300000;          // 6MB byte-address = 0x600000
         flash_ram_addr  <= { 4'hf, 18'h0 };     // 512k SDRAM segment 15
-        word_count      <= 22'd8;               // SAME-BITSTREAM TEST: 4 const words + 4 flash words
+        word_count      <= 22'd4;               // CAPTURE TEST: 4 flash words -> flash_doutD at WRITE vs PORT_2 readback
         flash_cs        <= 1'b0;
         flash_ram_cs    <= 1'b0;
         flash_ram_we    <= 1'b0;
@@ -789,15 +789,8 @@ always @(posedge clk_85m) begin
                 end
 
                 if (flash_busy_seen && !flash_busy_s2) begin
-                    flash_cs <= 1'b0;
-                    if (word_count > 22'd4) begin
-                        flash_doutD <= flash_dout;
-                    end else begin
-                        flash_doutD <= (flash_addr[1:0] == 2'd0) ? 16'h1114 :
-                                       (flash_addr[1:0] == 2'd1) ? 16'h4EF9 :
-                                       (flash_addr[1:0] == 2'd2) ? 16'h00F8 : 16'h00D2;
-                    end
-                    
+                    flash_cs    <= 1'b0;
+                    flash_doutD <= flash_dout;
                     ram_cnt     <= 7'd0;
                     fsm_state   <= FSM_WRITE_RAM;
                 end
@@ -813,6 +806,8 @@ always @(posedge clk_85m) begin
                 if (ram_cnt == 7'd2)  flash_ram_sync <= 1'b1;
                 // Deassert sync pulse (falling edge triggers sync_i 2 cycles later in sdram.sv while CS is solidly 1)
                 if (ram_cnt == 7'd5)  flash_ram_sync <= 1'b0;
+                // At ram_cnt == 7: sync_i fires in sdram.sv, capture exact flash_doutD presented to ram_din!
+                if (ram_cnt == 7'd7)  diag_flash_64 <= {diag_flash_64[47:0], flash_doutD};
                 // At ram_cnt == 7: sync_i fires in sdram.sv, cs is 1, CMD_ACTIVE issued!
                 // At ram_cnt == 8: CMD_WRITE issued to SDRAM chip!
                 // At ram_cnt == 9..15: SDRAM finishes write cycle.
@@ -826,10 +821,7 @@ always @(posedge clk_85m) begin
             end
 
             FSM_NEXT_WORD: begin
-                if (word_count == 22'd5)
-                    flash_addr <= 23'h300000;
-                else
-                    flash_addr <= flash_addr + 23'd1;
+                flash_addr <= flash_addr + 23'd1;
 
                 if (word_count <= 22'd1) begin
                     word_count      <= 22'd0;
@@ -854,23 +846,13 @@ always @(posedge clk_85m) begin
                 flash_ram_sync <= (ram_cnt[4:2] == 3'd3);
 
                 if (ram_cnt >= 7'd20 && (p2_ack != verify_ack_prev)) begin
-                    if (!verify_phase) begin
-                        diag_flash_64   <= {p2_dout, p2_dout48};
-                        verify_phase    <= 1'b1;
-                        flash_p2_cs     <= 1'b0;
-                        flash_ram_sync  <= 1'b0;
-                        ram_cnt         <= 7'd0;
-                        verify_ack_prev <= p2_ack;
-                    end else begin
-                        diag_sdram_64   <= {p2_dout, p2_dout48};
-                        flash_p2_cs     <= 1'b0;
-                        flash_ram_sync  <= 1'b0;
-                        rom_done_reg    <= 1'b1;
-                        fsm_state       <= FSM_DONE;
-                    end
+                    diag_sdram_64   <= {p2_dout, p2_dout48};
+                    flash_p2_cs     <= 1'b0;
+                    flash_ram_sync  <= 1'b0;
+                    rom_done_reg    <= 1'b1;
+                    fsm_state       <= FSM_DONE;
                 end else if (ram_cnt == 7'd127) begin
-                    if (!verify_phase) diag_flash_64 <= 64'hDEAD_BEEF_DEAD_BEEF;
-                    else               diag_sdram_64 <= 64'hDEAD_BEEF_DEAD_BEEF;
+                    diag_sdram_64   <= 64'hDEAD_BEEF_DEAD_BEEF;
                     flash_p2_cs     <= 1'b0;
                     flash_ram_sync  <= 1'b0;
                     rom_done_reg    <= 1'b1;
