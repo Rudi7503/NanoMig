@@ -727,6 +727,8 @@ reg         flash_busy_s2;
 reg         flash_busy_seen;
 reg [63:0]  diag_flash_64;
 reg [63:0]  diag_sdram_64;
+reg [63:0]  write_line;
+reg [21:0]  verify_addr;
 reg         verify_phase;
 reg [5:0]   flash_cnt;  
 reg [6:0]   ram_cnt;
@@ -760,6 +762,8 @@ always @(posedge clk_85m) begin
         flash_busy_seen <= 1'b0;
         diag_flash_64   <= 64'd0;
         diag_sdram_64   <= 64'd0;
+        write_line      <= 64'd0;
+        verify_addr     <= 22'h3C0000;
         verify_phase    <= 1'b0;
         flash_cnt       <= 6'd0;
         ram_cnt         <= 7'd0;
@@ -814,9 +818,14 @@ always @(posedge clk_85m) begin
                 end
                 if (ram_cnt == 7'd12)  flash_ram_sync <= 1'b1;
                 if (ram_cnt == 7'd15)  flash_ram_sync <= 1'b0;
-                // Capture controller-side ram_din and DQM at actual CMD_WRITE for the first 4 words
-                if (diag_cmd_write && (word_count >= 22'd262141))
-                    diag_flash_64 <= {diag_flash_64[47:0], (diag_write_dqm == 2'b00) ? diag_write_din : {14'h2BAD, diag_write_dqm}};
+                // Capture 64-bit checksum across ALL 262,144 words at actual CMD_WRITE
+                if (diag_cmd_write) begin
+                    write_line <= {write_line[47:0], diag_write_din};
+                    if (flash_ram_addr[1:0] == 2'd3) begin
+                        diag_flash_64 <= ({diag_flash_64[62:0], diag_flash_64[63]} ^ {write_line[47:0], diag_write_din})
+                                       + {write_line[47:0], diag_write_din};
+                    end
+                end
                 if (ram_cnt == 7'd26) begin
                     flash_ram_cs <= 1'b0;
                     flash_ram_we <= 1'b0;
@@ -831,6 +840,7 @@ always @(posedge clk_85m) begin
                 if (word_count <= 22'd1) begin
                     word_count      <= 22'd0;
                     ram_cnt         <= 7'd0;
+                    verify_addr     <= 22'h3C0000;
                     verify_phase    <= 1'b0;
                     flash_ram_cs    <= 1'b0;
                     flash_ram_we    <= 1'b0;
@@ -851,11 +861,18 @@ always @(posedge clk_85m) begin
                 flash_ram_sync <= (ram_cnt[4:2] == 3'd3);
 
                 if (ram_cnt >= 7'd20 && (p2_ack != verify_ack_prev)) begin
-                    diag_sdram_64   <= {p2_dout, p2_dout48};
+                    diag_sdram_64 <= ({diag_sdram_64[62:0], diag_sdram_64[63]} ^ {p2_dout, p2_dout48})
+                                   + {p2_dout, p2_dout48};
                     flash_p2_cs     <= 1'b0;
                     flash_ram_sync  <= 1'b0;
-                    rom_done_reg    <= 1'b1;
-                    fsm_state       <= FSM_DONE;
+                    if (verify_addr == 22'h3FFFFC) begin
+                        rom_done_reg    <= 1'b1;
+                        fsm_state       <= FSM_DONE;
+                    end else begin
+                        verify_addr     <= verify_addr + 22'd4;
+                        ram_cnt         <= 7'd0;
+                        verify_ack_prev <= p2_ack;
+                    end
                 end else if (ram_cnt == 7'd127) begin
                     diag_sdram_64   <= 64'hDEAD_BEEF_DEAD_BEEF;
                     flash_p2_cs     <= 1'b0;
@@ -1021,7 +1038,7 @@ sprite_mem_adapter spr_adapter (
 `else
 
 // Prozessor haengt direkt am SDRAM-Anschluss p2 (kein Arbiter)
-assign p2_addr       = rom_done ? {1'b0, fastram_addr} : (verify_phase ? 23'h3C0004 : 23'h3C0000);
+assign p2_addr       = rom_done ? {1'b0, fastram_addr} : {1'b0, verify_addr};
 assign p2_ds         = rom_done ? fastram_be           : 2'b00;
 assign p2_cs         = rom_done ? fastram_sel          : flash_p2_cs;
 assign p2_we         = rom_done ? fastram_wr           : 1'b0;
