@@ -721,10 +721,13 @@ reg         flash_ram_cs;
 reg         flash_ram_sync;
 reg         flash_p2_cs;
 reg         verify_ack_prev;
+reg         flash_busy_s1;
+reg         flash_busy_s2;
+reg         flash_busy_seen;
 reg [63:0]  diag_flash_64;
 reg [63:0]  diag_sdram_64;
 reg [5:0]   flash_cnt;  
-reg [4:0]   ram_cnt;
+reg [5:0]   ram_cnt;
 reg [2:0]   fsm_state;
 reg         rom_done_reg;
 
@@ -748,35 +751,40 @@ always @(posedge clk_85m) begin
         flash_ram_sync  <= 1'b0;
         flash_p2_cs     <= 1'b0;
         verify_ack_prev <= 1'b0;
+        flash_busy_s1   <= 1'b0;
+        flash_busy_s2   <= 1'b0;
+        flash_busy_seen <= 1'b0;
         diag_flash_64   <= 64'd0;
         diag_sdram_64   <= 64'd0;
         flash_cnt       <= 6'd0;
-        ram_cnt         <= 5'd0;
+        ram_cnt         <= 6'd0;
         rom_done_reg    <= 1'b0;
         fsm_state       <= FSM_INIT;
     end else begin
+        flash_busy_s1 <= flash_busy;
+        flash_busy_s2 <= flash_busy_s1;
+
         case (fsm_state)
             FSM_INIT: begin
                 flash_cs        <= 1'b1;
-                flash_cnt       <= 6'd45;
+                flash_busy_seen <= 1'b0;
                 fsm_state       <= FSM_WAIT_FLASH;
             end
 
             FSM_READ_FLASH: begin
                 flash_cs        <= 1'b1;
-                flash_cnt       <= 6'd45;
+                flash_busy_seen <= 1'b0;
                 fsm_state       <= FSM_WAIT_FLASH;
             end
 
             FSM_WAIT_FLASH: begin
-                if (flash_busy)
-                    flash_cs    <= 1'b0;
-                
-                if (flash_cnt != 6'd0)
-                    flash_cnt   <= flash_cnt - 6'd1;
-                
-                if (flash_cnt == 6'd1) begin
-                    flash_cs    <= 1'b0;
+                if (flash_busy_s2) begin
+                    flash_cs        <= 1'b0;
+                    flash_busy_seen <= 1'b1;
+                end
+
+                if (flash_busy_seen && !flash_busy_s2) begin
+                    flash_cs <= 1'b0;
                     if ((flash_addr == 23'h3000aa || flash_addr == 23'h3200aa) && flash_dout == 16'h6678)
                         flash_doutD <= flash_dout & 16'hf0ff;
                     else
@@ -787,32 +795,32 @@ always @(posedge clk_85m) begin
                     if (flash_addr == 23'h300002) diag_flash_64[31:16] <= flash_dout;
                     if (flash_addr == 23'h300003) diag_flash_64[15:0]  <= flash_dout;
                     
-                    ram_cnt     <= 5'd0;
+                    ram_cnt     <= 6'd0;
                     fsm_state   <= FSM_WRITE_RAM;
                 end
             end
 
             FSM_WRITE_RAM: begin
-                ram_cnt <= ram_cnt + 5'd1;
+                ram_cnt <= ram_cnt + 6'd1;
                 // Assert CS and start SDRAM sync pulse
-                if (ram_cnt == 5'd1)  flash_ram_cs   <= 1'b1;
-                if (ram_cnt == 5'd2)  flash_ram_sync <= 1'b1;
+                if (ram_cnt == 6'd1)  flash_ram_cs   <= 1'b1;
+                if (ram_cnt == 6'd2)  flash_ram_sync <= 1'b1;
                 // Deassert sync pulse (falling edge triggers sync_i 2 cycles later in sdram.sv while CS is solidly 1)
-                if (ram_cnt == 5'd5)  flash_ram_sync <= 1'b0;
+                if (ram_cnt == 6'd5)  flash_ram_sync <= 1'b0;
                 // At ram_cnt == 7: sync_i fires in sdram.sv, cs is 1, CMD_ACTIVE issued!
                 // At ram_cnt == 8: CMD_WRITE issued to SDRAM chip!
                 // At ram_cnt == 9..15: SDRAM finishes write cycle.
                 // At ram_cnt == 16: Deassert CS
-                if (ram_cnt == 5'd16) flash_ram_cs   <= 1'b0;
-                if (ram_cnt == 5'd18) flash_ram_addr <= flash_ram_addr + 22'd1;
-                if (ram_cnt == 5'd20) fsm_state      <= FSM_NEXT_WORD;
+                if (ram_cnt == 6'd16) flash_ram_cs   <= 1'b0;
+                if (ram_cnt == 6'd18) flash_ram_addr <= flash_ram_addr + 22'd1;
+                if (ram_cnt == 6'd20) fsm_state      <= FSM_NEXT_WORD;
             end
 
             FSM_NEXT_WORD: begin
                 flash_addr <= flash_addr + 23'd1;
                 if (word_count <= 22'd1) begin
                     word_count      <= 22'd0;
-                    ram_cnt         <= 5'd0;
+                    ram_cnt         <= 6'd0;
                     flash_p2_cs     <= 1'b0;
                     flash_ram_sync  <= 1'b0;
                     verify_ack_prev <= p2_ack;
@@ -824,18 +832,18 @@ always @(posedge clk_85m) begin
             end
 
             FSM_VERIFY_RAM: begin
-                ram_cnt <= ram_cnt + 5'd1;
-                if (ram_cnt == 5'd1) flash_p2_cs    <= 1'b1;
-                if (ram_cnt == 5'd5) flash_ram_sync <= 1'b1;
-                if (ram_cnt == 5'd8) flash_ram_sync <= 1'b0;
+                ram_cnt <= ram_cnt + 6'd1;
+                if (ram_cnt == 6'd1)  flash_p2_cs    <= 1'b1;
+                if (ram_cnt == 6'd12) flash_ram_sync <= 1'b1;
+                if (ram_cnt == 6'd15) flash_ram_sync <= 1'b0;
 
-                if (ram_cnt >= 5'd9 && (p2_ack != verify_ack_prev)) begin
+                if (ram_cnt >= 6'd17 && (p2_ack != verify_ack_prev)) begin
                     diag_sdram_64   <= {p2_dout, p2_dout48};
                     flash_p2_cs     <= 1'b0;
                     flash_ram_sync  <= 1'b0;
                     rom_done_reg    <= 1'b1;
                     fsm_state       <= FSM_DONE;
-                end else if (ram_cnt == 5'd31) begin
+                end else if (ram_cnt == 6'd63) begin
                     diag_sdram_64   <= 64'hDEAD_BEEF_DEAD_BEEF;
                     flash_p2_cs     <= 1'b0;
                     flash_ram_sync  <= 1'b0;
@@ -1021,11 +1029,10 @@ assign spr_mem_waitrequest   = 1'b0;
 `endif
 
 
-// run the flash a 85MHz. This is only used at power-up to copy kickstart
-// from flash to sdram
-assign mspi_clk = clk_85m;
-flash #(.READ_DELAY(1)) flash (
-    .clk       ( clk_85m     ),
+// run the flash at 28MHz for clean DSPI timing during power-up kickstart copy
+assign mspi_clk = clk_28m;
+flash #(.READ_DELAY(0)) flash (
+    .clk       ( clk_28m     ),
     .resetn    ( !(!pll_lock) ),
     .ready     ( flash_ready ),
 
