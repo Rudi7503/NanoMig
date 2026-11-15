@@ -790,15 +790,10 @@ always @(posedge clk_85m) begin
 
                 if (flash_busy_seen && !flash_busy_s2) begin
                     flash_cs <= 1'b0;
-                    if ((flash_addr == 23'h3000aa || flash_addr == 23'h3200aa) && flash_dout == 16'h6678)
-                        flash_doutD <= flash_dout & 16'hf0ff;
-                    else
-                        flash_doutD <= flash_dout;
-
-                    if (flash_addr == 23'h300000) diag_flash_64[63:48] <= flash_dout;
-                    if (flash_addr == 23'h300001) diag_flash_64[47:32] <= flash_dout;
-                    if (flash_addr == 23'h300002) diag_flash_64[31:16] <= flash_dout;
-                    if (flash_addr == 23'h300003) diag_flash_64[15:0]  <= flash_dout;
+                    // CONSTANTS TEST: bypass flash_dout, write fixed 1114 / 4EF9 / 00F8 / 00D2
+                    flash_doutD <= (flash_addr[1:0] == 2'd0) ? 16'h1114 :
+                                   (flash_addr[1:0] == 2'd1) ? 16'h4EF9 :
+                                   (flash_addr[1:0] == 2'd2) ? 16'h00F8 : 16'h00D2;
                     
                     ram_cnt     <= 7'd0;
                     fsm_state   <= FSM_WRITE_RAM;
