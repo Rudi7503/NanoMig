@@ -727,7 +727,7 @@ reg         flash_busy_seen;
 reg [63:0]  diag_flash_64;
 reg [63:0]  diag_sdram_64;
 reg [5:0]   flash_cnt;  
-reg [5:0]   ram_cnt;
+reg [6:0]   ram_cnt;
 reg [2:0]   fsm_state;
 reg         rom_done_reg;
 
@@ -757,7 +757,7 @@ always @(posedge clk_85m) begin
         diag_flash_64   <= 64'd0;
         diag_sdram_64   <= 64'd0;
         flash_cnt       <= 6'd0;
-        ram_cnt         <= 6'd0;
+        ram_cnt         <= 7'd0;
         rom_done_reg    <= 1'b0;
         fsm_state       <= FSM_INIT;
     end else begin
@@ -795,32 +795,32 @@ always @(posedge clk_85m) begin
                     if (flash_addr == 23'h300002) diag_flash_64[31:16] <= flash_dout;
                     if (flash_addr == 23'h300003) diag_flash_64[15:0]  <= flash_dout;
                     
-                    ram_cnt     <= 6'd0;
+                    ram_cnt     <= 7'd0;
                     fsm_state   <= FSM_WRITE_RAM;
                 end
             end
 
             FSM_WRITE_RAM: begin
-                ram_cnt <= ram_cnt + 6'd1;
+                ram_cnt <= ram_cnt + 7'd1;
                 // Assert CS and start SDRAM sync pulse
-                if (ram_cnt == 6'd1)  flash_ram_cs   <= 1'b1;
-                if (ram_cnt == 6'd2)  flash_ram_sync <= 1'b1;
+                if (ram_cnt == 7'd1)  flash_ram_cs   <= 1'b1;
+                if (ram_cnt == 7'd2)  flash_ram_sync <= 1'b1;
                 // Deassert sync pulse (falling edge triggers sync_i 2 cycles later in sdram.sv while CS is solidly 1)
-                if (ram_cnt == 6'd5)  flash_ram_sync <= 1'b0;
+                if (ram_cnt == 7'd5)  flash_ram_sync <= 1'b0;
                 // At ram_cnt == 7: sync_i fires in sdram.sv, cs is 1, CMD_ACTIVE issued!
                 // At ram_cnt == 8: CMD_WRITE issued to SDRAM chip!
                 // At ram_cnt == 9..15: SDRAM finishes write cycle.
                 // At ram_cnt == 16: Deassert CS
-                if (ram_cnt == 6'd16) flash_ram_cs   <= 1'b0;
-                if (ram_cnt == 6'd18) flash_ram_addr <= flash_ram_addr + 22'd1;
-                if (ram_cnt == 6'd20) fsm_state      <= FSM_NEXT_WORD;
+                if (ram_cnt == 7'd16) flash_ram_cs   <= 1'b0;
+                if (ram_cnt == 7'd18) flash_ram_addr <= flash_ram_addr + 22'd1;
+                if (ram_cnt == 7'd20) fsm_state      <= FSM_NEXT_WORD;
             end
 
             FSM_NEXT_WORD: begin
                 flash_addr <= flash_addr + 23'd1;
                 if (word_count <= 22'd1) begin
                     word_count      <= 22'd0;
-                    ram_cnt         <= 6'd0;
+                    ram_cnt         <= 7'd0;
                     flash_p2_cs     <= 1'b0;
                     flash_ram_sync  <= 1'b0;
                     verify_ack_prev <= p2_ack;
@@ -832,18 +832,18 @@ always @(posedge clk_85m) begin
             end
 
             FSM_VERIFY_RAM: begin
-                ram_cnt <= ram_cnt + 6'd1;
-                if (ram_cnt == 6'd1)  flash_p2_cs    <= 1'b1;
-                if (ram_cnt == 6'd12) flash_ram_sync <= 1'b1;
-                if (ram_cnt == 6'd15) flash_ram_sync <= 1'b0;
+                ram_cnt <= ram_cnt + 7'd1;
+                if (ram_cnt == 7'd1) flash_p2_cs <= 1'b1;
+                // Send periodic sync pulses (every 32 cycles) so PORT_REFRESH can run first, then PORT_2
+                flash_ram_sync <= (ram_cnt[4:2] == 3'd3);
 
-                if (ram_cnt >= 6'd17 && (p2_ack != verify_ack_prev)) begin
+                if (ram_cnt >= 7'd20 && (p2_ack != verify_ack_prev)) begin
                     diag_sdram_64   <= {p2_dout, p2_dout48};
                     flash_p2_cs     <= 1'b0;
                     flash_ram_sync  <= 1'b0;
                     rom_done_reg    <= 1'b1;
                     fsm_state       <= FSM_DONE;
-                end else if (ram_cnt == 6'd63) begin
+                end else if (ram_cnt == 7'd127) begin
                     diag_sdram_64   <= 64'hDEAD_BEEF_DEAD_BEEF;
                     flash_p2_cs     <= 1'b0;
                     flash_ram_sync  <= 1'b0;
