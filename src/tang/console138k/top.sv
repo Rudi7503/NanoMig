@@ -745,7 +745,7 @@ always @(posedge clk_85m) begin
     if (!mem_ready) begin
         flash_addr      <= 23'h300000;          // 6MB byte-address = 0x600000
         flash_ram_addr  <= { 4'hf, 18'h0 };     // 512k SDRAM segment 15
-        word_count      <= 22'd262144;          // 512 KiB = 262,144 words
+        word_count      <= 22'd4;               // QUICK TEST: copy only first 4 words (64-bit line) before PORT_2 verify
         flash_cs        <= 1'b0;
         flash_ram_cs    <= 1'b0;
         flash_ram_sync  <= 1'b0;
