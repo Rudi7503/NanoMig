@@ -109,3 +109,24 @@ Fast-RAM von 0 auf 4 MB geändert. Zwei Variablen auf einmal.
 **Nächster Schritt:** 4 MB Fast-RAM mit Kickstart **1.3** flashen. Bootet das,
 ist der Speicher unschuldig und nur 3.1 das Problem. Bootet es nicht, war das
 Fast-RAM die Ursache.
+
+## 2026-11-14, 08:xx — `.gprj`-Defines-Bug behoben, BRAM-Sprite sichtbar, `diag_seen_rd == 0`
+
+### Wichtiger Fund in `src/nanomig_tc138k.gprj`
+`tang/console138k/top.sv` stand in `nanomig_tc138k.gprj` auf Zeile 109 (fast am Ende der `<FileList>`). Da Gowin-Synthese Verilog-`` `define ``s in Dateireihenfolge auswertet, wurden `cpu_wrapper.v`, `nanomig.v`, `minimig.v`, `sysctrl.v` und `sdram.sv` **ohne** `ENABLE_TG68K`, `ENABLE_AGA`, `CPU_SLOW14`, `ENABLE_CACHE` und `CHIPRAM_CACHE` kompiliert (und `cpu_cache_new.v`, `dpram.v`, `dpram_be_1024x16.v`, `bitplane_ram.v`, `sprite_ram.v`, `rst_sync.v` fehlten).  
+**Behoben:** `top.sv` als erste Datei eingetragen (analog `nanomig_020.gprj`) und fehlende Module ergänzt.
+
+### Hardware-Läufe
+| Build / Datei | Größe / SHA256 | Logic | ROM an `0x600000` | Beobachtung |
+|---|---|---|---|---|
+| `nanomig_tc138k_nospr.fs` | 38.603.947 B | — | 1.3 & 3.1 | LED dauer grün, Bildschirm schwarz |
+| `nanomig_tc138k_diag_bram.fs` (vor `.gprj`-Fix) | 39.623.851 B / `1C6EDF58…0388` | 23.815 | 3.1 & 1.3 | Rotes BRAM-Test-Sprite (`spr_test_pattern.v`) oben rechts auf HDMI sichtbar; Rest schwarz |
+| `nanomig_tc138k_aga_diag.fs` (TG68K+AGA+Cache) | 38.709.333 B / `1CCDC475…35F1` | 26.067 | 1.3 | Rotes Rechteck auf HDMI, LED blinkt **1× / 2 s** (`rom_done=1`, `cpu_rst=1`, **`diag_seen_rd=0`**) |
+| `official_nanomig\nanomig_tc138k_official.fs` | 36.797.004 B | — | 1.3 | **Amiga-Hand erscheint auf HDMI** (Board, SDRAM, Flash, HDMI, BL616 gesund) |
+
+### Offline-Check `src/kick31.bin` (`check_tang_rom_copy.py`)
+- Größe: `524.288` Bytes, SHA256 `6d43840d4099a74170ea0f0425b6257c3891ebcaa39c4d1840075a9ab22b5707`.
+- Offsets `+0x00154` / `+0x40154` lösen den `0x6678 -> 0x6078`-Patch in keiner Byte-Reihenfolge aus (erwarteter SHA256 unverändert).
+
+### Bereit zum Flashen
+- `src/impl/pnr/nanomig_tc138k_stage_diag.fs` (38.858.923 B, SHA256 `174D6B577812BB0D56EC4E83F35257B587645B3B5982D5A18EB0F05662B3FD4E`) mit 5-Stufen-Bus-Diagnose (`diag_bus_stage`, 1×..5× Blinken / 3 s), um die exakte Hänger-Stufe vor dem ersten CPU-Read-Ack zu sehen.
