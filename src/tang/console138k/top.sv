@@ -748,7 +748,7 @@ always @(posedge clk_85m) begin
     if (!mem_ready) begin
         flash_addr      <= 23'h300000;          // 6MB byte-address = 0x600000
         flash_ram_addr  <= { 4'hf, 18'h0 };     // 512k SDRAM segment 15
-        word_count      <= 22'd4;               // CAPTURE TEST: 4 flash words -> flash_doutD at WRITE vs PORT_2 readback
+        word_count      <= 22'd262144;          // FULL 512 KiB Kickstart ROM copy with periodic refresh during flash wait
         flash_cs        <= 1'b0;
         flash_ram_cs    <= 1'b0;
         flash_ram_we    <= 1'b0;
@@ -773,52 +773,56 @@ always @(posedge clk_85m) begin
             FSM_INIT: begin
                 flash_cs        <= 1'b1;
                 flash_busy_seen <= 1'b0;
+                flash_ram_sync  <= 1'b0;
+                ram_cnt         <= 7'd0;
                 fsm_state       <= FSM_WAIT_FLASH;
             end
 
             FSM_READ_FLASH: begin
                 flash_cs        <= 1'b1;
                 flash_busy_seen <= 1'b0;
+                flash_ram_sync  <= 1'b0;
+                ram_cnt         <= 7'd0;
                 fsm_state       <= FSM_WAIT_FLASH;
             end
 
             FSM_WAIT_FLASH: begin
+                // Keep SDRAM refreshed while waiting for clk_28m flash_dspi (flash_ram_cs == 0)
+                ram_cnt        <= ram_cnt + 7'd1;
+                flash_ram_sync <= (ram_cnt[4:2] == 3'd3);
+
                 if (flash_busy_s2) begin
                     flash_cs        <= 1'b0;
                     flash_busy_seen <= 1'b1;
                 end
 
                 if (flash_busy_seen && !flash_busy_s2) begin
-                    flash_cs    <= 1'b0;
-                    flash_doutD <= flash_dout;
-                    ram_cnt     <= 7'd0;
-                    fsm_state   <= FSM_WRITE_RAM;
+                    flash_cs       <= 1'b0;
+                    flash_ram_sync <= 1'b0;
+                    flash_doutD    <= flash_dout;
+                    ram_cnt        <= 7'd0;
+                    fsm_state      <= FSM_WRITE_RAM;
                 end
             end
 
             FSM_WRITE_RAM: begin
                 ram_cnt <= ram_cnt + 7'd1;
-                // Assert CS/WE and start SDRAM sync pulse
-                if (ram_cnt == 7'd1) begin
+                // Wait until ram_cnt == 10 so any in-flight PORT_REFRESH from FSM_WAIT_FLASH completes cleanly
+                if (ram_cnt == 7'd10) begin
                     flash_ram_cs <= 1'b1;
                     flash_ram_we <= 1'b1;
                 end
-                if (ram_cnt == 7'd2)  flash_ram_sync <= 1'b1;
-                // Deassert sync pulse (falling edge triggers sync_i 2 cycles later in sdram.sv while CS is solidly 1)
-                if (ram_cnt == 7'd5)  flash_ram_sync <= 1'b0;
-                // Capture controller-side ram_din and DQM at actual CMD_WRITE
-                if (diag_cmd_write)
+                if (ram_cnt == 7'd12)  flash_ram_sync <= 1'b1;
+                if (ram_cnt == 7'd15)  flash_ram_sync <= 1'b0;
+                // Capture controller-side ram_din and DQM at actual CMD_WRITE for the first 4 words
+                if (diag_cmd_write && (word_count >= 22'd262141))
                     diag_flash_64 <= {diag_flash_64[47:0], (diag_write_dqm == 2'b00) ? diag_write_din : {14'h2BAD, diag_write_dqm}};
-                // At ram_cnt == 7: sync_i fires in sdram.sv, cs is 1, CMD_ACTIVE issued!
-                // At ram_cnt == 8: CMD_WRITE issued to SDRAM chip!
-                // At ram_cnt == 9..15: SDRAM finishes write cycle.
-                // At ram_cnt == 16: Deassert CS/WE
-                if (ram_cnt == 7'd16) begin
+                if (ram_cnt == 7'd26) begin
                     flash_ram_cs <= 1'b0;
                     flash_ram_we <= 1'b0;
                 end
-                if (ram_cnt == 7'd18) flash_ram_addr <= flash_ram_addr + 22'd1;
-                if (ram_cnt == 7'd20) fsm_state      <= FSM_NEXT_WORD;
+                if (ram_cnt == 7'd28) flash_ram_addr <= flash_ram_addr + 22'd1;
+                if (ram_cnt == 7'd30) fsm_state      <= FSM_NEXT_WORD;
             end
 
             FSM_NEXT_WORD: begin
