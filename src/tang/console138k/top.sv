@@ -1322,9 +1322,9 @@ wire diag_ovl_y = (hdmi_cy >= 10'd64) && (hdmi_cy < 10'd192) && (hdmi_cy[4:0] < 
 wire [10:0] diag_x_rel  = hdmi_cx - 11'd96;
 wire [4:0] diag_bit_pos = diag_x_rel[8:4];
 wire [1:0] diag_row     = hdmi_cy[6:5] - 2'd2;
-wire [31:0] diag_row_word = (diag_row == 2'd0) ? diag_flash_64[63:32] :
-                            (diag_row == 2'd1) ? diag_flash_64[31:0]  :
-                            (diag_row == 2'd2) ? diag_sdram_64[63:32] : diag_sdram_64[31:0];
+wire [31:0] diag_row_word = (diag_row == 2'd0) ? diag_snap[127:96] :
+                            (diag_row == 2'd1) ? diag_snap[95:64]  :
+                            (diag_row == 2'd2) ? diag_snap[63:32]  : diag_snap[31:0];
 wire diag_bit_val = diag_row_word[5'd31 - diag_bit_pos];
 wire diag_tick    = (diag_bit_pos[1:0] == 2'b11) && (diag_x_rel[3:0] >= 4'd14);
 wire diag_bar     = (diag_x_rel[3:0] < 4'd12);
