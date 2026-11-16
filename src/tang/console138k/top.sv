@@ -732,6 +732,7 @@ reg [1:0]   write_crc_cnt;
 reg         write_crc_done;
 reg [21:0]  diag_write_cnt;
 reg         diag_bad_wr_cnt;
+reg [3:0]   loader_sync_cnt;
 reg [63:0]  verify_shift;
 reg [3:0]   verify_crc_cnt;
 reg [21:0]  verify_addr;
@@ -784,6 +785,7 @@ always @(posedge clk_85m) begin
         write_crc_done  <= 1'b0;
         diag_write_cnt  <= 22'd0;
         diag_bad_wr_cnt <= 1'b0;
+        loader_sync_cnt <= 4'd0;
         verify_shift    <= 64'd0;
         verify_crc_cnt  <= 4'd0;
         verify_addr     <= 22'h3C0000;
@@ -793,14 +795,15 @@ always @(posedge clk_85m) begin
         rom_done_reg    <= 1'b0;
         fsm_state       <= FSM_INIT;
     end else begin
-        flash_busy_s1 <= flash_busy;
-        flash_busy_s2 <= flash_busy_s1;
+        flash_busy_s1   <= flash_busy;
+        flash_busy_s2   <= flash_busy_s1;
+        loader_sync_cnt <= (loader_sync_cnt == 4'd11) ? 4'd0 : (loader_sync_cnt + 4'd1);
+        flash_ram_sync  <= (fsm_state != FSM_DONE) && (loader_sync_cnt >= 4'd9);
 
         case (fsm_state)
             FSM_INIT: begin
                 flash_cs        <= 1'b1;
                 flash_busy_seen <= 1'b0;
-                flash_ram_sync  <= 1'b0;
                 ram_cnt         <= 7'd0;
                 fsm_state       <= FSM_WAIT_FLASH;
             end
@@ -808,15 +811,13 @@ always @(posedge clk_85m) begin
             FSM_READ_FLASH: begin
                 flash_cs        <= 1'b1;
                 flash_busy_seen <= 1'b0;
-                flash_ram_sync  <= 1'b0;
                 ram_cnt         <= 7'd0;
                 fsm_state       <= FSM_WAIT_FLASH;
             end
 
             FSM_WAIT_FLASH: begin
-                // Keep SDRAM refreshed while waiting for clk_28m flash_dspi (flash_ram_cs == 0)
-                ram_cnt        <= ram_cnt + 7'd1;
-                flash_ram_sync <= (ram_cnt[4:2] == 3'd3);
+                // Continuous 7.09 MHz loader_sync_cnt keeps SDRAM refreshed (>8192/64ms)
+                ram_cnt <= ram_cnt + 7'd1;
 
                 if (flash_busy_s2) begin
                     flash_cs        <= 1'b0;
@@ -825,7 +826,6 @@ always @(posedge clk_85m) begin
 
                 if (flash_busy_seen && !flash_busy_s2) begin
                     flash_cs       <= 1'b0;
-                    flash_ram_sync <= 1'b0;
                     flash_doutD    <= flash_dout;
                     write_crc_cnt  <= 2'd0;
                     write_crc_done <= 1'b0;
@@ -836,33 +836,26 @@ always @(posedge clk_85m) begin
 
             FSM_WRITE_RAM: begin
                 ram_cnt <= ram_cnt + 7'd1;
-                // Wait until ram_cnt == 10 so any in-flight PORT_REFRESH from FSM_WAIT_FLASH completes cleanly
-                if (ram_cnt == 7'd10) begin
+                // Hold flash_ram_cs/we until actual CMD_WRITE executes (even if PORT_REFRESH preempts one 12-cycle slot)
+                if (!write_crc_done && !diag_cmd_write) begin
                     flash_ram_cs <= 1'b1;
                     flash_ram_we <= 1'b1;
                 end
-                if (ram_cnt == 7'd12)  flash_ram_sync <= 1'b1;
-                if (ram_cnt == 7'd15)  flash_ram_sync <= 1'b0;
-                // Capture CRC-64-ECMA across ALL 262,144 words (524,288 bytes) at actual CMD_WRITE
                 if (diag_cmd_write) begin
-                    write_din_lat  <= diag_write_din;
-                    write_crc_cnt  <= 2'd2;
-                    diag_write_cnt <= diag_write_cnt + 22'd1;
-                end else if (write_crc_cnt == 2'd2) begin
-                    diag_flash_64 <= crc64_byte(diag_flash_64, write_din_lat[15:8]);
-                    write_crc_cnt <= 2'd1;
-                end else if (write_crc_cnt == 2'd1) begin
-                    diag_flash_64  <= crc64_byte(diag_flash_64, write_din_lat[7:0]);
-                    write_crc_cnt  <= 2'd0;
+                    flash_ram_cs   <= 1'b0;
+                    flash_ram_we   <= 1'b0;
                     write_crc_done <= 1'b1;
+                    diag_write_cnt <= diag_write_cnt + 22'd1;
                 end
-                if (ram_cnt == 7'd26) begin
-                    flash_ram_cs <= 1'b0;
-                    flash_ram_we <= 1'b0;
+                if (write_crc_done && !diag_cmd_write) begin
+                    flash_ram_addr <= flash_ram_addr + 22'd1;
+                    fsm_state      <= FSM_NEXT_WORD;
+                end else if (ram_cnt == 7'd127) begin
+                    flash_ram_cs   <= 1'b0;
+                    flash_ram_we   <= 1'b0;
+                    flash_ram_addr <= flash_ram_addr + 22'd1;
+                    fsm_state      <= FSM_NEXT_WORD;
                 end
-                if (ram_cnt == 7'd28) flash_ram_addr <= flash_ram_addr + 22'd1;
-                if ((ram_cnt >= 7'd30 && write_crc_done) || (ram_cnt == 7'd127))
-                    fsm_state <= FSM_NEXT_WORD;
             end
 
             FSM_NEXT_WORD: begin
@@ -888,32 +881,45 @@ always @(posedge clk_85m) begin
             end
 
             FSM_VERIFY_RAM: begin
-                ram_cnt <= ram_cnt + 7'd1;
-                if (ram_cnt == 7'd4) flash_p2_cs <= 1'b1;
-                // Send periodic sync pulses (every 32 cycles) so PORT_REFRESH can run first, then PORT_2
-                flash_ram_sync <= (ram_cnt[4:2] == 3'd3);
-
-                if (ram_cnt >= 7'd20 && (p2_ack != verify_ack_prev)) begin
-                    flash_p2_cs     <= 1'b0;
-                    flash_ram_sync  <= 1'b0;
+                if (verify_crc_cnt != 4'd0) begin
                     if (!verify_phase) begin
                         if (!diag_bad_wr_cnt)
-                            diag_flash_64 <= {p2_dout, p2_dout48};
-                        verify_phase    <= 1'b1;
-                        verify_addr     <= 22'h3E0000;
-                        ram_cnt         <= 7'd0;
-                        verify_ack_prev <= p2_ack;
-                    end else begin
-                        diag_sdram_64   <= {p2_dout, p2_dout48};
-                        rom_done_reg    <= 1'b1;
-                        fsm_state       <= FSM_DONE;
+                            diag_flash_64 <= crc64_byte(diag_flash_64, verify_shift[63:56]);
+                    end else
+                        diag_sdram_64 <= crc64_byte(diag_sdram_64, verify_shift[63:56]);
+                    verify_shift   <= {verify_shift[55:0], 8'd0};
+                    verify_crc_cnt <= verify_crc_cnt - 4'd1;
+                    if (verify_crc_cnt == 4'd1) begin
+                        if (verify_addr == 22'h3FFFFC) begin
+                            if (!verify_phase) begin
+                                verify_phase    <= 1'b1;
+                                verify_addr     <= 22'h3C0000;
+                                ram_cnt         <= 7'd0;
+                                verify_ack_prev <= p2_ack;
+                            end else begin
+                                rom_done_reg <= 1'b1;
+                                fsm_state    <= FSM_DONE;
+                            end
+                        end else begin
+                            verify_addr     <= verify_addr + 22'd4;
+                            ram_cnt         <= 7'd0;
+                            verify_ack_prev <= p2_ack;
+                        end
                     end
-                end else if (ram_cnt == 7'd127) begin
-                    diag_sdram_64   <= 64'hDEAD_BEEF_DEAD_BEEF;
-                    flash_p2_cs     <= 1'b0;
-                    flash_ram_sync  <= 1'b0;
-                    rom_done_reg    <= 1'b1;
-                    fsm_state       <= FSM_DONE;
+                end else begin
+                    ram_cnt <= ram_cnt + 7'd1;
+                    if (ram_cnt == 7'd4) flash_p2_cs <= 1'b1;
+
+                    if (ram_cnt >= 7'd20 && (p2_ack != verify_ack_prev)) begin
+                        verify_shift   <= {p2_dout, p2_dout48};
+                        verify_crc_cnt <= 4'd8;
+                        flash_p2_cs    <= 1'b0;
+                    end else if (ram_cnt == 7'd127) begin
+                        diag_sdram_64 <= 64'hDEAD_BEEF_DEAD_BEEF;
+                        flash_p2_cs   <= 1'b0;
+                        rom_done_reg  <= 1'b1;
+                        fsm_state     <= FSM_DONE;
+                    end
                 end
             end
 
