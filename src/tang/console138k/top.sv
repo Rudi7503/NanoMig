@@ -729,6 +729,8 @@ reg [63:0]  diag_flash_64;
 reg [63:0]  diag_sdram_64;
 reg [15:0]  write_din_lat;
 reg [1:0]   write_crc_cnt;
+reg         write_crc_done;
+reg [21:0]  diag_write_cnt;
 reg [63:0]  verify_shift;
 reg [3:0]   verify_crc_cnt;
 reg [21:0]  verify_addr;
@@ -778,6 +780,8 @@ always @(posedge clk_85m) begin
         diag_sdram_64   <= 64'd0;
         write_din_lat   <= 16'd0;
         write_crc_cnt   <= 2'd0;
+        write_crc_done  <= 1'b0;
+        diag_write_cnt  <= 22'd0;
         verify_shift    <= 64'd0;
         verify_crc_cnt  <= 4'd0;
         verify_addr     <= 22'h3C0000;
@@ -821,6 +825,8 @@ always @(posedge clk_85m) begin
                     flash_cs       <= 1'b0;
                     flash_ram_sync <= 1'b0;
                     flash_doutD    <= flash_dout;
+                    write_crc_cnt  <= 2'd0;
+                    write_crc_done <= 1'b0;
                     ram_cnt        <= 7'd0;
                     fsm_state      <= FSM_WRITE_RAM;
                 end
@@ -837,27 +843,32 @@ always @(posedge clk_85m) begin
                 if (ram_cnt == 7'd15)  flash_ram_sync <= 1'b0;
                 // Capture CRC-64-ECMA across ALL 262,144 words (524,288 bytes) at actual CMD_WRITE
                 if (diag_cmd_write) begin
-                    write_din_lat <= diag_write_din;
-                    write_crc_cnt <= 2'd2;
+                    write_din_lat  <= diag_write_din;
+                    write_crc_cnt  <= 2'd2;
+                    diag_write_cnt <= diag_write_cnt + 22'd1;
                 end else if (write_crc_cnt == 2'd2) begin
                     diag_flash_64 <= crc64_byte(diag_flash_64, write_din_lat[15:8]);
                     write_crc_cnt <= 2'd1;
                 end else if (write_crc_cnt == 2'd1) begin
-                    diag_flash_64 <= crc64_byte(diag_flash_64, write_din_lat[7:0]);
-                    write_crc_cnt <= 2'd0;
+                    diag_flash_64  <= crc64_byte(diag_flash_64, write_din_lat[7:0]);
+                    write_crc_cnt  <= 2'd0;
+                    write_crc_done <= 1'b1;
                 end
                 if (ram_cnt == 7'd26) begin
                     flash_ram_cs <= 1'b0;
                     flash_ram_we <= 1'b0;
                 end
                 if (ram_cnt == 7'd28) flash_ram_addr <= flash_ram_addr + 22'd1;
-                if (ram_cnt == 7'd30) fsm_state      <= FSM_NEXT_WORD;
+                if ((ram_cnt >= 7'd30 && write_crc_done) || (ram_cnt == 7'd127))
+                    fsm_state <= FSM_NEXT_WORD;
             end
 
             FSM_NEXT_WORD: begin
                 flash_addr <= flash_addr + 23'd1;
 
                 if (word_count <= 22'd1) begin
+                    if (diag_write_cnt != 22'd262144)
+                        diag_flash_64 <= {16'hBAD0, 26'd0, diag_write_cnt};
                     word_count      <= 22'd0;
                     ram_cnt         <= 7'd0;
                     verify_addr     <= 22'h3C0000;
@@ -1309,9 +1320,9 @@ wire diag_ovl_y = (hdmi_cy >= 10'd64) && (hdmi_cy < 10'd192) && (hdmi_cy[4:0] < 
 wire [10:0] diag_x_rel  = hdmi_cx - 11'd96;
 wire [4:0] diag_bit_pos = diag_x_rel[8:4];
 wire [1:0] diag_row     = hdmi_cy[6:5] - 2'd2;
-wire [31:0] diag_row_word = (diag_row == 2'd0) ? diag_snap[127:96] :
-                            (diag_row == 2'd1) ? diag_snap[95:64]  :
-                            (diag_row == 2'd2) ? diag_snap[63:32]  : diag_snap[31:0];
+wire [31:0] diag_row_word = (diag_row == 2'd0) ? diag_flash_64[63:32] :
+                            (diag_row == 2'd1) ? diag_flash_64[31:0]  :
+                            (diag_row == 2'd2) ? diag_sdram_64[63:32] : diag_sdram_64[31:0];
 wire diag_bit_val = diag_row_word[5'd31 - diag_bit_pos];
 wire diag_tick    = (diag_bit_pos[1:0] == 2'b11) && (diag_x_rel[3:0] >= 4'd14);
 wire diag_bar     = (diag_x_rel[3:0] < 4'd12);
