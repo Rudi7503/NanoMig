@@ -731,6 +731,7 @@ reg [15:0]  write_din_lat;
 reg [1:0]   write_crc_cnt;
 reg         write_crc_done;
 reg [21:0]  diag_write_cnt;
+reg         diag_bad_wr_cnt;
 reg [63:0]  verify_shift;
 reg [3:0]   verify_crc_cnt;
 reg [21:0]  verify_addr;
@@ -782,6 +783,7 @@ always @(posedge clk_85m) begin
         write_crc_cnt   <= 2'd0;
         write_crc_done  <= 1'b0;
         diag_write_cnt  <= 22'd0;
+        diag_bad_wr_cnt <= 1'b0;
         verify_shift    <= 64'd0;
         verify_crc_cnt  <= 4'd0;
         verify_addr     <= 22'h3C0000;
@@ -867,6 +869,7 @@ always @(posedge clk_85m) begin
                 flash_addr <= flash_addr + 23'd1;
 
                 if (word_count <= 22'd1) begin
+                    diag_bad_wr_cnt <= (diag_write_cnt != 22'd262144);
                     diag_flash_64   <= (diag_write_cnt != 22'd262144) ? {16'hBAD0, 26'd0, diag_write_cnt} : 64'd0;
                     word_count      <= 22'd0;
                     ram_cnt         <= 7'd0;
@@ -886,9 +889,10 @@ always @(posedge clk_85m) begin
 
             FSM_VERIFY_RAM: begin
                 if (verify_crc_cnt != 4'd0) begin
-                    if (!verify_phase)
-                        diag_flash_64 <= crc64_byte(diag_flash_64, verify_shift[63:56]);
-                    else
+                    if (!verify_phase) begin
+                        if (!diag_bad_wr_cnt)
+                            diag_flash_64 <= crc64_byte(diag_flash_64, verify_shift[63:56]);
+                    end else
                         diag_sdram_64 <= crc64_byte(diag_sdram_64, verify_shift[63:56]);
                     verify_shift   <= {verify_shift[55:0], 8'd0};
                     verify_crc_cnt <= verify_crc_cnt - 4'd1;
