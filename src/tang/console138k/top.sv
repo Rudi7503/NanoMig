@@ -147,7 +147,7 @@ wire pll_lock;
 pll_142m pll_hdmi (
     .clkout0(clk_pixel_x5),
     .clkout1(clk_85m),
-    .clkout2(clk_85m_shifted), // 180 deg phase shifted
+    .clkout2(clk_85m_shifted), // 126 deg phase shifted
     .clkout3(), //mspi_clk),        // 180 deg phase shifted
     .init_clk(clk),
     .lock(pll_lock),
@@ -888,49 +888,32 @@ always @(posedge clk_85m) begin
             end
 
             FSM_VERIFY_RAM: begin
-                if (verify_crc_cnt != 4'd0) begin
+                ram_cnt <= ram_cnt + 7'd1;
+                if (ram_cnt == 7'd4) flash_p2_cs <= 1'b1;
+                // Send periodic sync pulses (every 32 cycles) so PORT_REFRESH can run first, then PORT_2
+                flash_ram_sync <= (ram_cnt[4:2] == 3'd3);
+
+                if (ram_cnt >= 7'd20 && (p2_ack != verify_ack_prev)) begin
+                    flash_p2_cs     <= 1'b0;
+                    flash_ram_sync  <= 1'b0;
                     if (!verify_phase) begin
                         if (!diag_bad_wr_cnt)
-                            diag_flash_64 <= crc64_byte(diag_flash_64, verify_shift[63:56]);
-                    end else
-                        diag_sdram_64 <= crc64_byte(diag_sdram_64, verify_shift[63:56]);
-                    verify_shift   <= {verify_shift[55:0], 8'd0};
-                    verify_crc_cnt <= verify_crc_cnt - 4'd1;
-                    if (verify_crc_cnt == 4'd1) begin
-                        if (verify_addr == 22'h3FFFFC) begin
-                            if (!verify_phase) begin
-                                verify_phase    <= 1'b1;
-                                verify_addr     <= 22'h3C0000;
-                                ram_cnt         <= 7'd0;
-                                verify_ack_prev <= p2_ack;
-                            end else begin
-                                rom_done_reg <= 1'b1;
-                                fsm_state    <= FSM_DONE;
-                            end
-                        end else begin
-                            verify_addr     <= verify_addr + 22'd4;
-                            ram_cnt         <= 7'd0;
-                            verify_ack_prev <= p2_ack;
-                        end
-                    end
-                end else begin
-                    ram_cnt <= ram_cnt + 7'd1;
-                    if (ram_cnt == 7'd4) flash_p2_cs <= 1'b1;
-                    // Send periodic sync pulses (every 32 cycles) so PORT_REFRESH can run first, then PORT_2
-                    flash_ram_sync <= (ram_cnt[4:2] == 3'd3);
-
-                    if (ram_cnt >= 7'd20 && (p2_ack != verify_ack_prev)) begin
-                        verify_shift    <= {p2_dout, p2_dout48};
-                        verify_crc_cnt  <= 4'd8;
-                        flash_p2_cs     <= 1'b0;
-                        flash_ram_sync  <= 1'b0;
-                    end else if (ram_cnt == 7'd127) begin
-                        diag_sdram_64   <= 64'hDEAD_BEEF_DEAD_BEEF;
-                        flash_p2_cs     <= 1'b0;
-                        flash_ram_sync  <= 1'b0;
+                            diag_flash_64 <= {p2_dout, p2_dout48};
+                        verify_phase    <= 1'b1;
+                        verify_addr     <= 22'h3E0000;
+                        ram_cnt         <= 7'd0;
+                        verify_ack_prev <= p2_ack;
+                    end else begin
+                        diag_sdram_64   <= {p2_dout, p2_dout48};
                         rom_done_reg    <= 1'b1;
                         fsm_state       <= FSM_DONE;
                     end
+                end else if (ram_cnt == 7'd127) begin
+                    diag_sdram_64   <= 64'hDEAD_BEEF_DEAD_BEEF;
+                    flash_p2_cs     <= 1'b0;
+                    flash_ram_sync  <= 1'b0;
+                    rom_done_reg    <= 1'b1;
+                    fsm_state       <= FSM_DONE;
                 end
             end
 
