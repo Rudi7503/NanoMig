@@ -867,8 +867,7 @@ always @(posedge clk_85m) begin
                 flash_addr <= flash_addr + 23'd1;
 
                 if (word_count <= 22'd1) begin
-                    if (diag_write_cnt != 22'd262144)
-                        diag_flash_64 <= {16'hBAD0, 26'd0, diag_write_cnt};
+                    diag_flash_64   <= (diag_write_cnt != 22'd262144) ? {16'hBAD0, 26'd0, diag_write_cnt} : 64'd0;
                     word_count      <= 22'd0;
                     ram_cnt         <= 7'd0;
                     verify_addr     <= 22'h3C0000;
@@ -887,13 +886,23 @@ always @(posedge clk_85m) begin
 
             FSM_VERIFY_RAM: begin
                 if (verify_crc_cnt != 4'd0) begin
-                    diag_sdram_64  <= crc64_byte(diag_sdram_64, verify_shift[63:56]);
+                    if (!verify_phase)
+                        diag_flash_64 <= crc64_byte(diag_flash_64, verify_shift[63:56]);
+                    else
+                        diag_sdram_64 <= crc64_byte(diag_sdram_64, verify_shift[63:56]);
                     verify_shift   <= {verify_shift[55:0], 8'd0};
                     verify_crc_cnt <= verify_crc_cnt - 4'd1;
                     if (verify_crc_cnt == 4'd1) begin
                         if (verify_addr == 22'h3FFFFC) begin
-                            rom_done_reg <= 1'b1;
-                            fsm_state    <= FSM_DONE;
+                            if (!verify_phase) begin
+                                verify_phase    <= 1'b1;
+                                verify_addr     <= 22'h3C0000;
+                                ram_cnt         <= 7'd0;
+                                verify_ack_prev <= p2_ack;
+                            end else begin
+                                rom_done_reg <= 1'b1;
+                                fsm_state    <= FSM_DONE;
+                            end
                         end else begin
                             verify_addr     <= verify_addr + 22'd4;
                             ram_cnt         <= 7'd0;
