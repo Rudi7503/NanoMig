@@ -166,9 +166,9 @@ wire sel_slowram = sel_slow && cslow;
 wire sel_nmi_vector;
 
 reg    ram_dtack = 1'b1;
-reg    tg68k_cooldown, ramready_hold;
+reg    tg68k_cooldown, ready_hold;
 wire   ramsel    = cpu_req & ~sel_nmi_vector & (sel_zram | sel_chipram | sel_kickram | sel_slowram | sel_dd | sel_rtg);
-assign ramreq    = ramsel & ram_dtack & ~ramready_hold;
+assign ramreq    = ramsel & ram_dtack & ~ready_hold;
 assign ramshared = sel_dd;
 
 // NMI
@@ -383,7 +383,7 @@ always @(posedge clk) begin
 	else if (~cpu_req)
 		cpu_internal_ack <= 1'b1;
 end
-assign cpu_clkena = (cpu_internal_ack | chipready | ramready | ramready_hold) & ~tg68k_cooldown
+assign cpu_clkena = (cpu_internal_ack | chipready | ramready | ready_hold) & ~tg68k_cooldown
 `ifdef FASTCHIP_DEPRECATED
 	| fastchip_ready
 `endif
@@ -406,19 +406,20 @@ assign cpu_clkena = (~cpu_req & tg68_armed) | chipready | ramready
 // wire cpu_clkena_keep removed
 
 `ifdef ENABLE_TG68K
-wire tg68k_clkena_raw = cpu_internal_ack | chipready | ramready | ramready_hold;
+wire ready_any        = chipready | ramready;
+wire tg68k_clkena_raw = cpu_internal_ack | ready_any | ready_hold;
 wire tg68k_clkena     = tg68k_clkena_raw & ~tg68k_cooldown;
 
 always @(posedge clk or negedge reset) begin
 	if (!reset) begin
 		tg68k_cooldown <= 1'b0;
-		ramready_hold  <= 1'b0;
+		ready_hold     <= 1'b0;
 	end else begin
 		tg68k_cooldown <= tg68k_clkena;
-		if (tg68k_cooldown && ramready)
-			ramready_hold <= 1'b1;
+		if (tg68k_cooldown && ready_any)
+			ready_hold <= 1'b1;
 		else if (!tg68k_cooldown)
-			ramready_hold <= 1'b0;
+			ready_hold <= 1'b0;
 	end
 end
 
@@ -732,7 +733,7 @@ always @(posedge clk) begin
 	end
 end
 
-wire chipreq = cpu_req & ~ramsel
+wire chipreq = cpu_req & ~ramsel & ~ready_hold
 `ifdef FASTCHIP_DEPRECATED
      & ~fastchip_selack
 `endif
