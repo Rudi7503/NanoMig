@@ -407,26 +407,48 @@ assign cpu_clkena = (~cpu_req & tg68_armed) | chipready | ramready
 `ifdef ENABLE_TG68K
 wire tg68k_clkena = cpu_internal_ack | chipready | ramready;
 
-reg [4:0] diag_cap_mask;
+reg [4:0]  diag_cap_mask;
+reg [15:0] diag_hi_word;
+reg [31:0] diag_rom_cnt, diag_rom_sum;
+reg        diag_freeze;
+wire [32:0] diag_sum_next = {1'b0, diag_rom_sum} + {1'b0, diag_hi_word, cpu_din};
 always @(posedge clk or negedge reset) begin
 	if (!reset) begin
 		diag_cpu_snap <= 128'd0;
 		diag_cap_mask <= 5'b00000;
-	end else if (tg68k_clkena && (cpustate_p == 2'b00 || cpustate_p == 2'b10)) begin
-		if (cpu_addr_p[31:3] == 29'd0) begin
-			case (cpu_addr_p[2:1])
-				2'd0: if (!diag_cap_mask[0]) begin diag_cpu_snap[127:112] <= cpu_din; diag_cap_mask[0] <= 1'b1; end
-				2'd1: if (!diag_cap_mask[1]) begin diag_cpu_snap[111:96]  <= cpu_din; diag_cap_mask[1] <= 1'b1; end
-				2'd2: if (!diag_cap_mask[2]) begin diag_cpu_snap[95:80]   <= cpu_din; diag_cap_mask[2] <= 1'b1; end
-				2'd3: if (!diag_cap_mask[3]) begin diag_cpu_snap[79:64]   <= cpu_din; diag_cap_mask[3] <= 1'b1; end
-			endcase
+		diag_hi_word  <= 16'd0;
+		diag_rom_cnt  <= 32'd0;
+		diag_rom_sum  <= 32'd0;
+		diag_freeze   <= 1'b0;
+	end else begin
+		if (!chip_as && !chip_rw && (chip_addr[23:1] == 23'h6FF8C0) && (chip_dout[11:0] == 12'hF00))
+			diag_freeze <= 1'b1;
+
+		if (!diag_freeze && tg68k_clkena && (cpustate_p == 2'b10) && (cpu_addr_p[23:19] == 5'b11111)) begin
+			diag_rom_cnt <= diag_rom_cnt + 32'd1;
+			if (!cpu_addr_p[1]) begin
+				diag_hi_word <= cpu_din;
+			end else begin
+				diag_rom_sum <= diag_sum_next[31:0] + {31'd0, diag_sum_next[32]};
+			end
 		end
-		if ((cpu_addr_p[23:16] != 8'h00) && !diag_cap_mask[4]) begin
-			diag_cpu_snap[63:32] <= cpu_addr_p;
-			diag_cpu_snap[31:16] <= cpu_din;
-			diag_cap_mask[4]     <= 1'b1;
+
+		if (tg68k_clkena && (cpustate_p == 2'b00 || cpustate_p == 2'b10)) begin
+			if (cpu_addr_p[31:3] == 29'd0) begin
+				case (cpu_addr_p[2:1])
+					2'd0: if (!diag_cap_mask[0]) begin diag_cap_mask[0] <= 1'b1; end
+					2'd1: if (!diag_cap_mask[1]) begin diag_cap_mask[1] <= 1'b1; end
+					2'd2: if (!diag_cap_mask[2]) begin diag_cap_mask[2] <= 1'b1; end
+					2'd3: if (!diag_cap_mask[3]) begin diag_cap_mask[3] <= 1'b1; end
+				endcase
+			end
 		end
-		diag_cpu_snap[15:0] <= {11'd0, diag_cap_mask};
+		diag_cpu_snap <= {
+			diag_rom_cnt,
+			diag_rom_sum,
+			cpu_addr_p,
+			16'd0, diag_hi_word
+		};
 	end
 end
 

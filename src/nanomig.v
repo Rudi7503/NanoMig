@@ -651,10 +651,8 @@ assign diag_bus_stage =
   (!diag_seen_fill_end) ? 3'd3 :
   (!diag_seen_f800d0)   ? 3'd4 : 3'd5;
 assign diag_snap = {
-  diag_p2_cnt,
-  diag_wr_cnt, diag_rd_cnt,
-  diag_p1_rom_cnt, diag_color00,
-  8'h00, diag_last_chip_addr, chip_as
+  diag_cpu_snap[127:32],
+  diag_p1_rom_cnt, diag_color00
 };
 `else
 assign fastram_addr = ram_addr[23:1];
