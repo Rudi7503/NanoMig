@@ -597,10 +597,10 @@ assign fastram_wr   = fastram_wr_r;
 assign ram_dout     = cache_dat_r;
 
 reg diag_seen_p2_cs, diag_seen_fdone, diag_seen_fill_end, diag_seen_f800d0;
-reg        diag_chip_as_d;
-reg [22:0] diag_last_chip_addr, diag_prev_chip_addr;
-reg [23:0] diag_chip_cnt;
-reg [15:0] diag_hang_cycles, diag_p2_cnt;
+reg [2:0]  diag_p1_cnt;
+reg        diag_ram_oe_d;
+reg [15:0] diag_p1_w0, diag_p1_w1, diag_color00, diag_p2_cnt, diag_wr_cnt, diag_rd_cnt;
+reg [22:0] diag_last_chip_addr;
 
 always @(posedge clk_sys) begin
   if (!cpu_rst) begin
@@ -608,30 +608,35 @@ always @(posedge clk_sys) begin
     diag_seen_fdone     <= 1'b0;
     diag_seen_fill_end  <= 1'b0;
     diag_seen_f800d0    <= 1'b0;
-    diag_chip_as_d      <= 1'b1;
-    diag_last_chip_addr <= 23'd0;
-    diag_prev_chip_addr <= 23'd0;
-    diag_chip_cnt       <= 24'd0;
-    diag_hang_cycles    <= 16'd0;
+    diag_p1_cnt         <= 3'd0;
+    diag_ram_oe_d       <= 1'b1;
+    diag_p1_w0          <= 16'd0;
+    diag_p1_w1          <= 16'd0;
+    diag_color00        <= 16'hDEAD;
     diag_p2_cnt         <= 16'd0;
+    diag_wr_cnt         <= 16'd0;
+    diag_rd_cnt         <= 16'd0;
+    diag_last_chip_addr <= 23'd0;
   end else begin
     if (fastram_sel)                                   diag_seen_p2_cs    <= 1'b1;
     if (fastram_done)                                  diag_seen_fdone    <= 1'b1;
     if (fill_state == 2'd2 && fill_cnt == 2'd3)        diag_seen_fill_end <= 1'b1;
     if (ram_sel && (ram_addr[24:4] == 21'h07800D))     diag_seen_f800d0   <= 1'b1;
 
-    diag_chip_as_d <= chip_as;
-    if (diag_chip_as_d && !chip_as) begin
-      diag_prev_chip_addr <= diag_last_chip_addr;
-      diag_last_chip_addr <= chip_addr;
-      diag_chip_cnt       <= diag_chip_cnt + 24'd1;
+    diag_ram_oe_d <= _ram_oe;
+    if (!diag_ram_oe_d && _ram_oe) begin
+      if (diag_p1_cnt == 3'd0)      diag_p1_w0 <= ramdata_in;
+      else if (diag_p1_cnt == 3'd1) diag_p1_w1 <= ramdata_in;
+      if (diag_p1_cnt < 3'd7)       diag_p1_cnt <= diag_p1_cnt + 3'd1;
     end
+
     if (!chip_as) begin
-      if (diag_hang_cycles != 16'hFFFF) diag_hang_cycles <= diag_hang_cycles + 16'd1;
-    end else begin
-      diag_hang_cycles <= 16'd0;
+      diag_last_chip_addr <= chip_addr[23:1];
+      if (!chip_rw && (chip_addr[23:1] == 23'h6FF8C0)) diag_color00 <= chip_dout;
     end
-    if (fastram_done) diag_p2_cnt <= diag_p2_cnt + 16'd1;
+    if (fastram_done)    diag_p2_cnt <= diag_p2_cnt + 16'd1;
+    if (ram_write_ready) diag_wr_cnt <= diag_wr_cnt + 16'd1;
+    if (cache_ack)       diag_rd_cnt <= diag_rd_cnt + 16'd1;
   end
 end
 assign diag_bus_stage =
@@ -640,10 +645,10 @@ assign diag_bus_stage =
   (!diag_seen_fill_end) ? 3'd3 :
   (!diag_seen_f800d0)   ? 3'd4 : 3'd5;
 assign diag_snap = {
-  ovl, chip_rw, chip_uds, chip_lds, chip_dtack, chip_as, 3'b000, diag_last_chip_addr,
-  9'b000000000, diag_prev_chip_addr,
-  diag_chip_cnt[15:0], diag_hang_cycles,
-  diag_chip_cnt[23:16], 8'h00, diag_p2_cnt
+  diag_p1_w0, diag_p1_w1,
+  8'h00, diag_last_chip_addr, chip_as,
+  diag_color00, diag_p2_cnt,
+  diag_wr_cnt, diag_rd_cnt
 };
 `else
 assign fastram_addr = ram_addr[23:1];

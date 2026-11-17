@@ -74,7 +74,7 @@ module sdram #(
   input  wire refresh,  // chipset requests a refresh cycle
 
   input  wire [15:0] din,     // data input from chipset
-  output reg  [15:0] dout,    // data output for chipset
+  output wire [15:0] dout,    // data output for chipset
   output reg  [47:0] dout48,  // 64-bit read data output for chipset
 
   input wire [21:0] addr,  // 22 bit word address for 8MB
@@ -296,6 +296,7 @@ assign diag_write_din = ram_din;
 assign diag_write_dqm = sd_dqm;
 
 localparam PORT_1       = 2'd0;
+reg [15:0] dout_r;
 localparam PORT_2       = 2'd1;
 localparam PORT_REFRESH = 2'd2;
 localparam PORT_IDLE    = 2'd3;
@@ -416,7 +417,7 @@ always @(posedge clk) begin
     STATE_READ_0: begin
       if (WIDTH32) begin
         case (sdram_port)
-          PORT_1 : dout <= ram_dout;
+          PORT_1 : dout_r <= ram_dout;
           PORT_2 : p2_dout <= ram_dout;
           default: ;
         endcase
@@ -425,7 +426,7 @@ always @(posedge clk) begin
     STATE_READ_1: begin
       if (!WIDTH32) begin
         case (sdram_port)
-          PORT_1 : dout <= ram_dout;
+          PORT_1 : dout_r <= ram_dout;
           PORT_2 : p2_dout <= ram_dout;
           default: ;
         endcase
@@ -437,6 +438,8 @@ always @(posedge clk) begin
     default: ;
   endcase
 end
+
+assign dout = (!WIDTH32 && state == STATE_READ_1 && sdram_port == PORT_1) ? ram_dout : dout_r;
 
 generate
   if (WIDTH32) begin
