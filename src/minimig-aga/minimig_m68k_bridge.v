@@ -151,9 +151,10 @@ always @(posedge clk) cpudatain_r <= cpudatain;
 assign data_out = cpudatain_r;
 
 reg [15:0] ldata_in;	// latched data_in
-// TC138K TG68K diagnose (2026-11-15, V0 + HDMI-Snap): Keep sdram_sync=!cyc in top.sv,
-// and restore Q3 latch (!c1 && c3 && enable) for direct V0 vs V4 HDMI snapshot comparison.
-always @(posedge clk) if (!c1 && c3 && enable) ldata_in <= data_in;
+// TC138K TG68K fix: with sdram_sync=!cyc + sd_data_reg, Q3 (!c1 && c3 && enable) latched 1 cycle early
+// (verified on HW 02c2fe1: TG68K got 1114, 1114, 4EF9, 00F8 -> jumped to $4EF900F8).
+// Latching on clk7_en && enable (Q0, 1 clk_sys = 3 clk_85m cycles later) gives sdram.dout time to settle.
+always @(posedge clk) if (clk7_en && enable) ldata_in <= data_in;
 
 // --------------------------------------------------------------------------------------
 
