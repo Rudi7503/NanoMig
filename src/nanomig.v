@@ -212,7 +212,8 @@ end
 
 wire  [1:0] cpu_state;
 wire        cpu_clkena;
-wire [2:0]  diag_tg68k;
+wire [2:0]   diag_tg68k;
+wire [127:0] diag_cpu_snap;
 wire  [3:0] cpu_cacr;
 wire [31:0] cpu_nmi_addr;
 
@@ -351,6 +352,7 @@ cpu_wrapper cpu_wrapper
 	.cpustate     (cpu_state       ),
 	.cpu_clkena   (cpu_clkena      ),
 	.diag_tg68k   (diag_tg68k      ),
+	.diag_cpu_snap(diag_cpu_snap   ),
 	.cacr         (cpu_cacr        ),
 	.nmi_addr     (cpu_nmi_addr    )
 );
@@ -645,10 +647,8 @@ assign diag_bus_stage =
   (!diag_seen_fill_end) ? 3'd3 :
   (!diag_seen_f800d0)   ? 3'd4 : 3'd5;
 assign diag_snap = {
-  diag_p1_w0, diag_p1_w1,
-  8'h00, diag_last_chip_addr, chip_as,
-  diag_color00, diag_p2_cnt,
-  diag_wr_cnt, diag_rd_cnt
+  diag_cpu_snap[127:16],
+  diag_color00
 };
 `else
 assign fastram_addr = ram_addr[23:1];

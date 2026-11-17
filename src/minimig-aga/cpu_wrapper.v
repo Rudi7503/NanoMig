@@ -96,7 +96,8 @@ module cpu_wrapper
 	output reg [3:0]  cacr,
 	output reg [31:0] nmi_addr,
 	output		  cpu_clkena,  // the tg68k advances on this enable (bus handshake consumption)
-	output [2:0]	  diag_tg68k
+	output [2:0]	  diag_tg68k,
+	output reg [127:0] diag_cpu_snap
 );
 
 wire cpu_req = cpustate != 2'b01 && !skip_fetch;
@@ -405,6 +406,30 @@ assign cpu_clkena = (~cpu_req & tg68_armed) | chipready | ramready
 
 `ifdef ENABLE_TG68K
 wire tg68k_clkena = cpu_internal_ack | chipready | ramready;
+
+reg [4:0] diag_cap_mask;
+always @(posedge clk or negedge reset) begin
+	if (!reset) begin
+		diag_cpu_snap <= 128'd0;
+		diag_cap_mask <= 5'b00000;
+	end else if (tg68k_clkena && (cpustate_p == 2'b00 || cpustate_p == 2'b10)) begin
+		if (cpu_addr_p[31:3] == 29'd0) begin
+			case (cpu_addr_p[2:1])
+				2'd0: if (!diag_cap_mask[0]) begin diag_cpu_snap[127:112] <= cpu_din; diag_cap_mask[0] <= 1'b1; end
+				2'd1: if (!diag_cap_mask[1]) begin diag_cpu_snap[111:96]  <= cpu_din; diag_cap_mask[1] <= 1'b1; end
+				2'd2: if (!diag_cap_mask[2]) begin diag_cpu_snap[95:80]   <= cpu_din; diag_cap_mask[2] <= 1'b1; end
+				2'd3: if (!diag_cap_mask[3]) begin diag_cpu_snap[79:64]   <= cpu_din; diag_cap_mask[3] <= 1'b1; end
+			endcase
+		end
+		if ((cpu_addr_p[23:16] != 8'h00) && !diag_cap_mask[4]) begin
+			diag_cpu_snap[63:32] <= cpu_addr_p;
+			diag_cpu_snap[31:16] <= cpu_din;
+			diag_cap_mask[4]     <= 1'b1;
+		end
+		diag_cpu_snap[15:0] <= {11'd0, diag_cap_mask};
+	end
+end
+
 TG68KdotC_Kernel
 `ifndef VERILATOR
 // verilator runs the verilog translated variant which doesn't support configuration but
