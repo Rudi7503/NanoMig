@@ -166,9 +166,8 @@ wire sel_slowram = sel_slow && cslow;
 wire sel_nmi_vector;
 
 reg    ram_dtack = 1'b1;
-reg    tg68k_cooldown, ready_hold;
 wire   ramsel    = cpu_req & ~sel_nmi_vector & (sel_zram | sel_chipram | sel_kickram | sel_slowram | sel_dd | sel_rtg);
-assign ramreq    = ramsel & ram_dtack & ~ready_hold;
+assign ramreq    = ramsel & ram_dtack;
 assign ramshared = sel_dd;
 
 // NMI
@@ -383,7 +382,7 @@ always @(posedge clk) begin
 	else if (~cpu_req)
 		cpu_internal_ack <= 1'b1;
 end
-assign cpu_clkena = (cpu_internal_ack | chipready | ramready | ready_hold) & ~tg68k_cooldown
+assign cpu_clkena = cpu_internal_ack | chipready | ramready
 `ifdef FASTCHIP_DEPRECATED
 	| fastchip_ready
 `endif
@@ -406,42 +405,37 @@ assign cpu_clkena = (~cpu_req & tg68_armed) | chipready | ramready
 // wire cpu_clkena_keep removed
 
 `ifdef ENABLE_TG68K
-wire ready_any        = chipready | ramready;
-wire tg68k_clkena_raw = cpu_internal_ack | ready_any | ready_hold;
-wire tg68k_clkena     = tg68k_clkena_raw & ~tg68k_cooldown;
+wire tg68k_clkena = cpu_internal_ack | chipready | ramready;
+wire [31:0] diag_d5;
 
-always @(posedge clk or negedge reset) begin
-	if (!reset) begin
-		tg68k_cooldown <= 1'b0;
-		ready_hold     <= 1'b0;
-	end else begin
-		tg68k_cooldown <= tg68k_clkena;
-		if (tg68k_cooldown && ready_any)
-			ready_hold <= 1'b1;
-		else if (!tg68k_cooldown)
-			ready_hold <= 1'b0;
-	end
-end
-
-reg [4:0]  diag_cap_mask;
 reg [15:0] diag_hi_word;
-reg [31:0] diag_rom_cnt, diag_rom_sum;
-reg        diag_freeze;
+reg [31:0] diag_rom_cnt, diag_rom_sum, diag_exp_addr, diag_bad_addr, diag_d5_snap;
+reg        diag_freeze, diag_bad_seen;
 wire [32:0] diag_sum_next = {1'b0, diag_rom_sum} + {1'b0, diag_hi_word, cpu_din};
 always @(posedge clk or negedge reset) begin
 	if (!reset) begin
 		diag_cpu_snap <= 128'd0;
-		diag_cap_mask <= 5'b00000;
 		diag_hi_word  <= 16'd0;
 		diag_rom_cnt  <= 32'd0;
 		diag_rom_sum  <= 32'd0;
+		diag_exp_addr <= 32'h00F80000;
+		diag_bad_addr <= 32'd0;
+		diag_d5_snap  <= 32'd0;
 		diag_freeze   <= 1'b0;
+		diag_bad_seen <= 1'b0;
 	end else begin
-		if (!chip_as && !chip_rw && (chip_addr[23:1] == 23'h6FF8C0) && (chip_din[11:0] == 12'hF00))
-			diag_freeze <= 1'b1;
+		if (!diag_freeze && tg68k_clkena && (cpustate_p == 2'b00) && (cpu_addr_p == 32'h00F801A6)) begin
+			diag_d5_snap <= diag_d5;
+			diag_freeze  <= 1'b1;
+		end
 
 		if (!diag_freeze && tg68k_clkena && (cpustate_p == 2'b10) && (cpu_addr_p[23:19] == 5'b11111)) begin
 			diag_rom_cnt <= diag_rom_cnt + 32'd1;
+			if (!diag_bad_seen && (cpu_addr_p != diag_exp_addr)) begin
+				diag_bad_addr <= cpu_addr_p;
+				diag_bad_seen <= 1'b1;
+			end
+			diag_exp_addr <= diag_exp_addr + 32'd2;
 			if (!cpu_addr_p[1]) begin
 				diag_hi_word <= cpu_din;
 			end else begin
@@ -449,21 +443,11 @@ always @(posedge clk or negedge reset) begin
 			end
 		end
 
-		if (tg68k_clkena && (cpustate_p == 2'b00 || cpustate_p == 2'b10)) begin
-			if (cpu_addr_p[31:3] == 29'd0) begin
-				case (cpu_addr_p[2:1])
-					2'd0: if (!diag_cap_mask[0]) begin diag_cap_mask[0] <= 1'b1; end
-					2'd1: if (!diag_cap_mask[1]) begin diag_cap_mask[1] <= 1'b1; end
-					2'd2: if (!diag_cap_mask[2]) begin diag_cap_mask[2] <= 1'b1; end
-					2'd3: if (!diag_cap_mask[3]) begin diag_cap_mask[3] <= 1'b1; end
-				endcase
-			end
-		end
 		diag_cpu_snap <= {
 			diag_rom_cnt,
 			diag_rom_sum,
-			cpu_addr_p,
-			16'd0, diag_hi_word
+			diag_d5_snap,
+			diag_bad_addr
 		};
 	end
 end
@@ -532,7 +516,8 @@ cpu_inst_p
   .regin_out(),
   .CACR_out(cacr_p),
   .VBR_out(vbr_p),
-  .diag_tg68k(diag_tg68k)
+  .diag_tg68k(diag_tg68k),
+  .diag_d5(diag_d5)
 `endif
 );
 `endif
@@ -733,7 +718,7 @@ always @(posedge clk) begin
 	end
 end
 
-wire chipreq = cpu_req & ~ramsel & ~ready_hold
+wire chipreq = cpu_req & ~ramsel
 `ifdef FASTCHIP_DEPRECATED
      & ~fastchip_selack
 `endif

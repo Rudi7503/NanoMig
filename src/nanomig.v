@@ -650,10 +650,7 @@ assign diag_bus_stage =
   (!diag_seen_fdone)    ? 3'd2 :
   (!diag_seen_fill_end) ? 3'd3 :
   (!diag_seen_f800d0)   ? 3'd4 : 3'd5;
-assign diag_snap = {
-  diag_cpu_snap[127:32],
-  diag_p1_rom_cnt, diag_color00
-};
+assign diag_snap = diag_cpu_snap;
 `else
 assign fastram_addr = ram_addr[23:1];
 assign fastram_lds  = ram_lds;
