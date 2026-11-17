@@ -601,7 +601,8 @@ assign ram_dout     = cache_dat_r;
 reg diag_seen_p2_cs, diag_seen_fdone, diag_seen_fill_end, diag_seen_f800d0;
 reg [2:0]  diag_p1_cnt;
 reg        diag_ram_oe_d;
-reg [15:0] diag_p1_w0, diag_p1_w1, diag_color00, diag_p2_cnt, diag_wr_cnt, diag_rd_cnt;
+reg [15:0] diag_p1_w0, diag_p1_w1, diag_color00, diag_wr_cnt, diag_rd_cnt, diag_p1_rom_cnt;
+reg [31:0] diag_p2_cnt;
 reg [22:0] diag_last_chip_addr;
 
 always @(posedge clk_sys) begin
@@ -615,9 +616,10 @@ always @(posedge clk_sys) begin
     diag_p1_w0          <= 16'd0;
     diag_p1_w1          <= 16'd0;
     diag_color00        <= 16'hDEAD;
-    diag_p2_cnt         <= 16'd0;
+    diag_p2_cnt         <= 32'd0;
     diag_wr_cnt         <= 16'd0;
     diag_rd_cnt         <= 16'd0;
+    diag_p1_rom_cnt     <= 16'd0;
     diag_last_chip_addr <= 23'd0;
   end else begin
     if (fastram_sel)                                   diag_seen_p2_cs    <= 1'b1;
@@ -630,13 +632,15 @@ always @(posedge clk_sys) begin
       if (diag_p1_cnt == 3'd0)      diag_p1_w0 <= ramdata_in;
       else if (diag_p1_cnt == 3'd1) diag_p1_w1 <= ramdata_in;
       if (diag_p1_cnt < 3'd7)       diag_p1_cnt <= diag_p1_cnt + 3'd1;
+      if (ram_address[22:19] == 4'b1111) diag_p1_rom_cnt <= diag_p1_rom_cnt + 16'd1;
     end
 
     if (!chip_as) begin
       diag_last_chip_addr <= chip_addr[23:1];
-      if (!chip_rw && (chip_addr[23:1] == 23'h6FF8C0)) diag_color00 <= chip_dout;
+      if (!chip_rw && (chip_addr[23:1] == 23'h6FF8C0) && (chip_dout != 16'd0))
+        diag_color00 <= chip_dout;
     end
-    if (fastram_done)    diag_p2_cnt <= diag_p2_cnt + 16'd1;
+    if (fastram_done)    diag_p2_cnt <= diag_p2_cnt + 32'd1;
     if (ram_write_ready) diag_wr_cnt <= diag_wr_cnt + 16'd1;
     if (cache_ack)       diag_rd_cnt <= diag_rd_cnt + 16'd1;
   end
@@ -647,8 +651,10 @@ assign diag_bus_stage =
   (!diag_seen_fill_end) ? 3'd3 :
   (!diag_seen_f800d0)   ? 3'd4 : 3'd5;
 assign diag_snap = {
-  diag_cpu_snap[127:16],
-  diag_color00
+  diag_p2_cnt,
+  diag_wr_cnt, diag_rd_cnt,
+  diag_p1_rom_cnt, diag_color00,
+  8'h00, diag_last_chip_addr, chip_as
 };
 `else
 assign fastram_addr = ram_addr[23:1];
