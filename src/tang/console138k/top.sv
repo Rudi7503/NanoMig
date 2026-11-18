@@ -1332,11 +1332,7 @@ wire [31:0] diag_row_word = (diag_row == 3'd0) ? diag_snap[127:96] :
 wire diag_bit_val = diag_row_word[5'd31 - diag_bit_pos];
 wire diag_tick    = (diag_bit_pos[1:0] == 2'b11) && (diag_x_rel[3:0] >= 4'd14);
 wire diag_bar     = (diag_x_rel[3:0] < 4'd12);
-wire [23:0] diag_hdmi_rgb =
-    (diag_ovl_x && diag_ovl_y) ? (
-        diag_bar  ? (diag_bit_val ? 24'h00FF00 : 24'h181860) :
-        diag_tick ? 24'hFFFFFF : 24'h000000
-    ) : { video_red, 2'b00, video_green, 2'b00, video_blue, 2'b00 };
+wire [23:0] diag_hdmi_rgb = { video_red, 2'b00, video_green, 2'b00, video_blue, 2'b00 };
 
 hdmi #(
     .AUDIO_RATE(48000), .AUDIO_BIT_WIDTH(16),
