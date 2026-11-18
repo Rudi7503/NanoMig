@@ -434,7 +434,7 @@ always @(posedge clk or negedge reset) begin
 
 		if (!diag_freeze && !diag_loop_done && tg68k_clkena && (cpustate_p == 2'b10)) begin
 			if (!diag_loop_active) begin
-				if (cpu_addr_p == 32'h00F80000) begin
+				if (cpu_addr_p[23:0] == 24'hF80000) begin
 					diag_loop_active <= 1'b1;
 					diag_rom_cnt     <= 32'd1;
 					diag_hi_word     <= cpu_din;
@@ -442,7 +442,7 @@ always @(posedge clk or negedge reset) begin
 				end
 			end else if (cpu_addr_p[23:19] == 5'b11111) begin
 				diag_rom_cnt <= diag_rom_cnt + 32'd1;
-				if (!diag_bad_seen && (cpu_addr_p != diag_exp_addr)) begin
+				if (!diag_bad_seen && (cpu_addr_p[23:0] != diag_exp_addr[23:0])) begin
 					diag_bad_addr <= cpu_addr_p;
 					diag_bad_seen <= 1'b1;
 				end
@@ -461,8 +461,8 @@ always @(posedge clk or negedge reset) begin
 		diag_cpu_snap <= {
 			diag_rom_cnt,
 			diag_rom_sum,
-			diag_d5_snap,
-			diag_bad_addr
+			diag_freeze ? diag_d5_snap : cpu_addr_p,
+			diag_freeze, diag_loop_active, diag_loop_done, diag_bad_seen, 4'b0000, diag_bad_addr[23:0]
 		};
 	end
 end
