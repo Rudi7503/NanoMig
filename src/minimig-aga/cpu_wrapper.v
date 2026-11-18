@@ -410,36 +410,51 @@ wire [31:0] diag_d5;
 
 reg [15:0] diag_hi_word;
 reg [31:0] diag_rom_cnt, diag_rom_sum, diag_exp_addr, diag_bad_addr, diag_d5_snap;
-reg        diag_freeze, diag_bad_seen;
+reg        diag_freeze, diag_bad_seen, diag_loop_active, diag_loop_done;
 wire [32:0] diag_sum_next = {1'b0, diag_rom_sum} + {1'b0, diag_hi_word, cpu_din};
 always @(posedge clk or negedge reset) begin
 	if (!reset) begin
-		diag_cpu_snap <= 128'd0;
-		diag_hi_word  <= 16'd0;
-		diag_rom_cnt  <= 32'd0;
-		diag_rom_sum  <= 32'd0;
-		diag_exp_addr <= 32'h00F80000;
-		diag_bad_addr <= 32'd0;
-		diag_d5_snap  <= 32'd0;
-		diag_freeze   <= 1'b0;
-		diag_bad_seen <= 1'b0;
+		diag_cpu_snap    <= 128'd0;
+		diag_hi_word     <= 16'd0;
+		diag_rom_cnt     <= 32'd0;
+		diag_rom_sum     <= 32'd0;
+		diag_exp_addr    <= 32'h00F80000;
+		diag_bad_addr    <= 32'd0;
+		diag_d5_snap     <= 32'd0;
+		diag_freeze      <= 1'b0;
+		diag_bad_seen    <= 1'b0;
+		diag_loop_active <= 1'b0;
+		diag_loop_done   <= 1'b0;
 	end else begin
-		if (!diag_freeze && tg68k_clkena && (cpustate_p == 2'b00) && (cpu_addr_p == 32'h00F801A6)) begin
+		// Freeze at actual entry into red-screen error handler ($F80408) after NOT.L D5 & BNE.W
+		if (!diag_freeze && tg68k_clkena && (cpustate_p == 2'b00) && (cpu_addr_p == 32'h00F80408)) begin
 			diag_d5_snap <= diag_d5;
 			diag_freeze  <= 1'b1;
 		end
 
-		if (!diag_freeze && tg68k_clkena && (cpustate_p == 2'b10) && (cpu_addr_p[23:19] == 5'b11111)) begin
-			diag_rom_cnt <= diag_rom_cnt + 32'd1;
-			if (!diag_bad_seen && (cpu_addr_p != diag_exp_addr)) begin
-				diag_bad_addr <= cpu_addr_p;
-				diag_bad_seen <= 1'b1;
-			end
-			diag_exp_addr <= diag_exp_addr + 32'd2;
-			if (!cpu_addr_p[1]) begin
-				diag_hi_word <= cpu_din;
-			end else begin
-				diag_rom_sum <= diag_sum_next[31:0] + {31'd0, diag_sum_next[32]};
+		if (!diag_freeze && !diag_loop_done && tg68k_clkena && (cpustate_p == 2'b10)) begin
+			if (!diag_loop_active) begin
+				if (cpu_addr_p == 32'h00F80000) begin
+					diag_loop_active <= 1'b1;
+					diag_rom_cnt     <= 32'd1;
+					diag_hi_word     <= cpu_din;
+					diag_exp_addr    <= 32'h00F80002;
+				end
+			end else if (cpu_addr_p[23:19] == 5'b11111) begin
+				diag_rom_cnt <= diag_rom_cnt + 32'd1;
+				if (!diag_bad_seen && (cpu_addr_p != diag_exp_addr)) begin
+					diag_bad_addr <= cpu_addr_p;
+					diag_bad_seen <= 1'b1;
+				end
+				diag_exp_addr <= diag_exp_addr + 32'd2;
+				if (!cpu_addr_p[1]) begin
+					diag_hi_word <= cpu_din;
+				end else begin
+					diag_rom_sum <= diag_sum_next[31:0] + {31'd0, diag_sum_next[32]};
+				end
+				if (diag_rom_cnt == 32'h0003FFFF) begin
+					diag_loop_done <= 1'b1;
+				end
 			end
 		end
 
