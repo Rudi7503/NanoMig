@@ -557,6 +557,7 @@ wire        diag_cpu_rd_ack;
 wire [2:0]  diag_bus_stage;
 wire [127:0] diag_snap;
 wire [63:0]  diag_snap_ext;
+wire [63:0]  diag_snap_bra;
 
 // Einziger physischer p2-Anschluss, vom Arbiter verwaltet
 wire [22:0] p2_addr;
@@ -685,7 +686,8 @@ nanomig nanomig
  .diag_cpu_rd_ack(diag_cpu_rd_ack),
  .diag_bus_stage(diag_bus_stage),
  .diag_snap(diag_snap),
- .diag_snap_ext(diag_snap_ext)
+ .diag_snap_ext(diag_snap_ext),
+ .diag_snap_bra(diag_snap_bra)
 );
 
 wire           flash_ready;  
@@ -1316,19 +1318,21 @@ end
 wire [2:0] tmds;
 wire tmds_clock;
 
-// HDMI-Diagnose-Overlay: 4x32 Bit Schnappschuss des 1. ROM/FastRAM-Linefills (hdmi_cx 96..607, hdmi_cy 64..191)
+// HDMI-Diagnose-Overlay: 8x32 Bit Schnappschuss (hdmi_cx 96..607, hdmi_cy 64..319)
 wire [10:0] hdmi_cx;
 wire [9:0]  hdmi_cy;
 wire diag_ovl_x = (hdmi_cx >= 11'd96) && (hdmi_cx < 11'd608);
-wire diag_ovl_y = (hdmi_cy >= 10'd64) && (hdmi_cy < 10'd256) && (hdmi_cy[4:0] < 5'd20);
+wire diag_ovl_y = (hdmi_cy >= 10'd64) && (hdmi_cy < 10'd320) && (hdmi_cy[4:0] < 5'd20);
 wire [10:0] diag_x_rel  = hdmi_cx - 11'd96;
 wire [4:0] diag_bit_pos = diag_x_rel[8:4];
-wire [2:0] diag_row     = hdmi_cy[7:5] - 3'd2;
-wire [31:0] diag_row_word = (diag_row == 3'd0) ? diag_snap[127:96] :
-                            (diag_row == 3'd1) ? diag_snap[95:64]  :
-                            (diag_row == 3'd2) ? diag_snap[63:32]  :
-                            (diag_row == 3'd3) ? diag_snap[31:0]   :
-                            (diag_row == 3'd4) ? diag_snap_ext[63:32] : diag_snap_ext[31:0];
+wire [3:0] diag_row     = hdmi_cy[8:5] - 4'd2;
+wire [31:0] diag_row_word = (diag_row == 4'd0) ? diag_snap[127:96]    :
+                            (diag_row == 4'd1) ? diag_snap[95:64]     :
+                            (diag_row == 4'd2) ? diag_snap[63:32]     :
+                            (diag_row == 4'd3) ? diag_snap[31:0]      :
+                            (diag_row == 4'd4) ? diag_snap_ext[63:32] :
+                            (diag_row == 4'd5) ? diag_snap_ext[31:0]  :
+                            (diag_row == 4'd6) ? diag_snap_bra[63:32] : diag_snap_bra[31:0];
 wire diag_bit_val = diag_row_word[5'd31 - diag_bit_pos];
 wire diag_tick    = (diag_bit_pos[1:0] == 2'b11) && (diag_x_rel[3:0] >= 4'd14);
 wire diag_bar     = (diag_x_rel[3:0] < 4'd12);

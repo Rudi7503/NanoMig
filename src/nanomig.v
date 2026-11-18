@@ -126,7 +126,8 @@ module nanomig (
    output        diag_cpu_rd_ack,
    output [2:0]  diag_bus_stage,
    output [127:0] diag_snap,
-   output [63:0] diag_snap_ext
+   output [63:0] diag_snap_ext,
+   output [63:0] diag_snap_bra
 ); 
 `ifndef GATEMATE
  `ifndef LATTICE
@@ -216,6 +217,7 @@ wire        cpu_clkena;
 wire [2:0]   diag_tg68k;
 wire [127:0] diag_cpu_snap;
 wire [63:0]  diag_cpu_ext;
+wire [63:0]  diag_cpu_bra;
 wire  [3:0] cpu_cacr;
 wire [31:0] cpu_nmi_addr;
 
@@ -356,6 +358,7 @@ cpu_wrapper cpu_wrapper
 	.diag_tg68k   (diag_tg68k      ),
 	.diag_cpu_snap(diag_cpu_snap   ),
 	.diag_cpu_ext (diag_cpu_ext    ),
+	.diag_cpu_bra (diag_cpu_bra    ),
 	.cacr         (cpu_cacr        ),
 	.nmi_addr     (cpu_nmi_addr    )
 );
@@ -655,6 +658,7 @@ assign diag_bus_stage =
   (!diag_seen_f800d0)   ? 3'd4 : 3'd5;
 assign diag_snap     = diag_cpu_snap;
 assign diag_snap_ext = { diag_cpu_ext[63:16], diag_color00 };
+assign diag_snap_bra = diag_cpu_bra;
 `else
 assign fastram_addr = ram_addr[23:1];
 assign fastram_lds  = ram_lds;
