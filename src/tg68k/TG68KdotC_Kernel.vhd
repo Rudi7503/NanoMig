@@ -186,6 +186,7 @@ architecture logic of TG68KdotC_Kernel is
 	signal regin				: std_logic_vector(31 downto 0);
 	type   regfile_t is array(0 to 15) of std_logic_vector(31 downto 0);
 	signal regfile				: regfile_t := (OTHERS => (OTHERS => '0')); -- mikej stops sim X issues;
+	signal diag_d5_r			: std_logic_vector(31 downto 0) := (OTHERS => '0');
 	signal RDindex_A			: integer range 0 to 15;
 	signal RDindex_B			: integer range 0 to 15;
 	signal WR_AReg				: std_logic;
@@ -567,6 +568,9 @@ PROCESS (clk, regfile, RDindex_A, RDindex_B, exec)
 				RDindex_B <= conv_integer(rf_source_addr(3 downto 0));
 				IF Wwrena='1' THEN
 					regfile(RDindex_A) <= regin;
+					IF RDindex_A = 5 THEN
+						diag_d5_r <= regin;
+					END IF;
 				END IF;
 				
 				IF exec(to_USP)='1' THEN
@@ -575,7 +579,7 @@ PROCESS (clk, regfile, RDindex_A, RDindex_B, exec)
 			END IF;
 		END IF;
 	END PROCESS;
-	diag_d5 <= regfile(5);
+	diag_d5 <= diag_d5_r;
 
 -----------------------------------------------------------------------------
 -- Write Reg
