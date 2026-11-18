@@ -141,9 +141,7 @@ entity TG68KdotC_Kernel is
 		VBR_out					: out std_logic_vector(31 downto 0);
 		diag_tg68k				: out std_logic_vector( 2 downto 0);
 		diag_d5					: out std_logic_vector(31 downto 0);
-		diag_flags				: out std_logic_vector( 8 downto 0);
-		diag_bra_pc				: out std_logic_vector(31 downto 0);
-		diag_bra_info			: out std_logic_vector(31 downto 0)
+		diag_flags				: out std_logic_vector( 8 downto 0)
 		);
 end TG68KdotC_Kernel;
 
@@ -190,8 +188,6 @@ architecture logic of TG68KdotC_Kernel is
 	type   regfile_t is array(0 to 15) of std_logic_vector(31 downto 0);
 	signal regfile				: regfile_t := (OTHERS => (OTHERS => '0')); -- mikej stops sim X issues;
 	signal diag_d5_r			: std_logic_vector(31 downto 0) := (OTHERS => '0');
-	signal diag_bra_pc_r		: std_logic_vector(31 downto 0) := (OTHERS => '0');
-	signal diag_bra_info_r		: std_logic_vector(31 downto 0) := (OTHERS => '0');
 	signal RDindex_A			: integer range 0 to 15;
 	signal RDindex_B			: integer range 0 to 15;
 	signal WR_AReg				: std_logic;
@@ -586,8 +582,6 @@ PROCESS (clk, regfile, RDindex_A, RDindex_B, exec)
 	END PROCESS;
 	diag_d5 <= diag_d5_r;
 	diag_flags <= exe_condition & Flags;
-	diag_bra_pc <= diag_bra_pc_r;
-	diag_bra_info <= diag_bra_info_r;
 
 -----------------------------------------------------------------------------
 -- Write Reg
@@ -1120,10 +1114,6 @@ PROCESS (clk, IPL, setstate, addrvalue, state, exec_write_back, set_direct_data,
 					
 					exe_datatype <= set_datatype;
 					exe_opcode <= opcode;
-					IF micro_state=bra1 THEN
-						diag_bra_pc_r   <= exe_pc;
-						diag_bra_info_r <= exe_condition & Flags & "0000000" & exe_opcode;
-					END IF;
 
 					if(trap_berr='0') then
 						make_berr <= (berr OR make_berr);
