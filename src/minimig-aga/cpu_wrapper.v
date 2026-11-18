@@ -97,7 +97,8 @@ module cpu_wrapper
 	output reg [31:0] nmi_addr,
 	output		  cpu_clkena,  // the tg68k advances on this enable (bus handshake consumption)
 	output [2:0]	  diag_tg68k,
-	output reg [127:0] diag_cpu_snap
+	output reg [127:0] diag_cpu_snap,
+	output reg [63:0]  diag_cpu_ext
 );
 
 wire cpu_req = cpustate != 2'b01 && !skip_fetch;
@@ -407,29 +408,40 @@ assign cpu_clkena = (~cpu_req & tg68_armed) | chipready | ramready
 `ifdef ENABLE_TG68K
 wire tg68k_clkena = cpu_internal_ack | chipready | ramready;
 wire [31:0] diag_d5;
+wire [8:0]  diag_flags;
 
 reg [15:0] diag_hi_word;
-reg [31:0] diag_rom_cnt, diag_rom_sum, diag_exp_addr, diag_bad_addr, diag_d5_snap;
+reg [31:0] diag_rom_cnt, diag_rom_sum, diag_exp_addr, diag_bad_addr, diag_d5_snap, diag_prev_pc, diag_prev_pc_snap;
+reg [8:0]  diag_flags_snap;
 reg        diag_freeze, diag_bad_seen, diag_loop_active, diag_loop_done;
 wire [32:0] diag_sum_next = {1'b0, diag_rom_sum} + {1'b0, diag_hi_word, cpu_din};
 always @(posedge clk or negedge reset) begin
 	if (!reset) begin
-		diag_cpu_snap    <= 128'd0;
-		diag_hi_word     <= 16'd0;
-		diag_rom_cnt     <= 32'd0;
-		diag_rom_sum     <= 32'd0;
-		diag_exp_addr    <= 32'h00F80000;
-		diag_bad_addr    <= 32'd0;
-		diag_d5_snap     <= 32'd0;
-		diag_freeze      <= 1'b0;
-		diag_bad_seen    <= 1'b0;
-		diag_loop_active <= 1'b0;
-		diag_loop_done   <= 1'b0;
+		diag_cpu_snap     <= 128'd0;
+		diag_cpu_ext      <= 64'd0;
+		diag_hi_word      <= 16'd0;
+		diag_rom_cnt      <= 32'd0;
+		diag_rom_sum      <= 32'd0;
+		diag_exp_addr     <= 32'h00F80000;
+		diag_bad_addr     <= 32'd0;
+		diag_d5_snap      <= 32'd0;
+		diag_prev_pc      <= 32'd0;
+		diag_prev_pc_snap <= 32'd0;
+		diag_flags_snap   <= 9'd0;
+		diag_freeze       <= 1'b0;
+		diag_bad_seen     <= 1'b0;
+		diag_loop_active  <= 1'b0;
+		diag_loop_done    <= 1'b0;
 	end else begin
-		// Freeze at actual entry into red-screen error handler ($F80408) after NOT.L D5 & BNE.W
-		if (!diag_freeze && tg68k_clkena && (cpustate_p == 2'b00) && (cpu_addr_p == 32'h00F80408)) begin
-			diag_d5_snap <= diag_d5;
-			diag_freeze  <= 1'b1;
+		if (!diag_freeze && tg68k_clkena && (cpustate_p == 2'b00)) begin
+			if (cpu_addr_p == 32'h00F80408) begin
+				diag_d5_snap      <= diag_d5;
+				diag_prev_pc_snap <= diag_prev_pc;
+				diag_flags_snap   <= diag_flags;
+				diag_freeze       <= 1'b1;
+			end else begin
+				diag_prev_pc <= cpu_addr_p;
+			end
 		end
 
 		if (!diag_freeze && !diag_loop_done && tg68k_clkena && (cpustate_p == 2'b10)) begin
@@ -463,6 +475,11 @@ always @(posedge clk or negedge reset) begin
 			diag_rom_sum,
 			diag_freeze ? diag_d5_snap : cpu_addr_p,
 			diag_freeze, diag_loop_active, diag_loop_done, diag_bad_seen, 4'b0000, diag_bad_addr[23:0]
+		};
+		diag_cpu_ext <= {
+			diag_freeze ? diag_prev_pc_snap : diag_prev_pc,
+			diag_freeze ? diag_flags_snap : diag_flags,
+			23'd0
 		};
 	end
 end
@@ -532,7 +549,8 @@ cpu_inst_p
   .CACR_out(cacr_p),
   .VBR_out(vbr_p),
   .diag_tg68k(diag_tg68k),
-  .diag_d5(diag_d5)
+  .diag_d5(diag_d5),
+  .diag_flags(diag_flags)
 `endif
 );
 `endif

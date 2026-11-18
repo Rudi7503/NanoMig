@@ -140,7 +140,8 @@ entity TG68KdotC_Kernel is
 		CACR_out					: out std_logic_vector( 3 downto 0);
 		VBR_out					: out std_logic_vector(31 downto 0);
 		diag_tg68k				: out std_logic_vector( 2 downto 0);
-		diag_d5					: out std_logic_vector(31 downto 0)
+		diag_d5					: out std_logic_vector(31 downto 0);
+		diag_flags				: out std_logic_vector( 8 downto 0)
 		);
 end TG68KdotC_Kernel;
 
@@ -580,6 +581,7 @@ PROCESS (clk, regfile, RDindex_A, RDindex_B, exec)
 		END IF;
 	END PROCESS;
 	diag_d5 <= diag_d5_r;
+	diag_flags <= exe_condition & Flags;
 
 -----------------------------------------------------------------------------
 -- Write Reg
