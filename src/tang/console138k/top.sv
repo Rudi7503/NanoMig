@@ -1507,12 +1507,27 @@ always @(*) begin
     end
 end
 
+// BL616 / Keyboard / SPI LED-Diagnose (je ~200 ms Pulsverlaengerung @ 28 MHz)
+reg [22:0] led_hid_cnt = 23'd0;
+reg [22:0] led_spi_cnt = 23'd0;
+reg [22:0] led_osd_cnt = 23'd0;
+always @(posedge clk_28m) begin
+    if (mcu_hid_strobe)                         led_hid_cnt <= 23'd5_600_000;
+    else if (led_hid_cnt != 23'd0)              led_hid_cnt <= led_hid_cnt - 23'd1;
+
+    if (!spi_csn || mcu_sys_strobe)             led_spi_cnt <= 23'd5_600_000;
+    else if (led_spi_cnt != 23'd0)              led_spi_cnt <= led_spi_cnt - 23'd1;
+
+    if (mcu_osd_strobe || mcu_sdc_strobe)       led_osd_cnt <= 23'd5_600_000;
+    else if (led_osd_cnt != 23'd0)              led_osd_cnt <= led_osd_cnt - 23'd1;
+end
+
 // Gruen (V13 hat keinen Vorwiderstand) auf 25% PWM dimmen, damit es nicht ueberstrahlt
 wire diag_green_pwm = (diag_slot_cnt[15:14] == 2'b00);
 
-wire diag_blue_on  = diag_blue_code;
-wire diag_red_on   = diag_red_code;
-wire diag_green_on = diag_green_code && diag_green_pwm;
+wire diag_blue_on  = (led_hid_cnt != 23'd0); // Blau: Tastatur/Maus HID vom BL616
+wire diag_red_on   = (led_spi_cnt != 23'd0); // Rot:  SPI CS / SYS-Verkehr vom BL616
+wire diag_green_on = (led_osd_cnt != 23'd0) && diag_green_pwm; // Gruen: OSD / SD vom BL616
 
 // Tang Console 138K LED-Polaritaet (hardware-verifiziert):
 // leds[0] (G11/Blau) & leds[1] (U12/Rot): Active-HIGH (1 = AN, 0 = AUS)
