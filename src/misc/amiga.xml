@@ -52,7 +52,7 @@
 	<listentry label="68020" value="1"/>
       </list>
 	<!--END-->
-      <list label="Chipset:" id="C" default="2" action="reset">
+      <list label="Chipset:" id="C" default="3" action="reset">
 	<listentry label="OCS-A500" value="0"/>
 	<listentry label="OCS-A1000" value="1"/>
 	<listentry label="ECS" value="2"/>
@@ -65,19 +65,19 @@
 	<listentry label="3.1" value="1"/>
 	<listentry label="3.2" value="2"/>
 	    </list>
-      <list label="Chipmem:" id="Y" default="0" action="reset">
+      <list label="Chipmem:" id="Y" default="3" action="reset">
 	<listentry label="512kB" value="0"/>
 	<listentry label="1MB" value="1"/>
 	<listentry label="1.5MB" value="2"/>
 	<listentry label="2MB" value="3"/>
       </list>
-      <list label="Slowmem:" id="X" default="1" action="reset">
+      <list label="Slowmem:" id="X" default="0" action="reset">
 	<listentry label="None" value="0"/>
 	<listentry label="512kB" value="1"/>
 	<listentry label="1MB" value="2"/>
 	<listentry label="1.5MB" value="3"/>
       </list>	
-      <list label="Fastmem:" id="Q" default="0" action="reset">
+      <list label="Fastmem:" id="Q" default="3" action="reset">
 	<listentry label="None" value="0"/>
 	<listentry label="2MB" value="1"/>
 	<listentry label="4MB" value="2"/>
