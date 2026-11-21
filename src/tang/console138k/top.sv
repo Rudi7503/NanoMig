@@ -1316,23 +1316,73 @@ end
 wire [2:0] tmds;
 wire tmds_clock;
 
-// HDMI-Diagnose-Overlay: 4x32 Bit Schnappschuss des 1. ROM/FastRAM-Linefills (hdmi_cx 96..607, hdmi_cy 64..191)
+// BL616 / SPI-Diagnose (clk_28m): 2x32 Bit Overlay auf HDMI (hdmi_cx 96..607, hdmi_cy 64..127)
+reg [1:0]  diag_csn_s, diag_sclk_s, diag_dat_s, diag_tx_s, diag_jsel_s;
+reg [7:0]  diag_cs_fall_cnt, diag_sclk_rise_cnt, diag_tx_edge_cnt;
+reg [7:0]  diag_sys_cnt, diag_osd_cnt, diag_last_mcu_byte, diag_last_sys_din;
+always @(posedge clk_28m) begin
+    if (!pll_lock) begin
+        diag_csn_s         <= 2'b11;
+        diag_sclk_s        <= 2'b00;
+        diag_dat_s         <= 2'b00;
+        diag_tx_s          <= 2'b11;
+        diag_jsel_s        <= 2'b11;
+        diag_cs_fall_cnt   <= 8'd0;
+        diag_sclk_rise_cnt <= 8'd0;
+        diag_tx_edge_cnt   <= 8'd0;
+        diag_sys_cnt       <= 8'd0;
+        diag_osd_cnt       <= 8'd0;
+        diag_last_mcu_byte <= 8'd0;
+        diag_last_sys_din  <= 8'd0;
+    end else begin
+        diag_csn_s  <= {diag_csn_s[0],  spi_csn};
+        diag_sclk_s <= {diag_sclk_s[0], spi_sclk};
+        diag_dat_s  <= {diag_dat_s[0],  spi_dat};
+        diag_tx_s   <= {diag_tx_s[0],   bl616_tx};
+        diag_jsel_s <= {diag_jsel_s[0], bl616_jtagsel};
+        if (diag_csn_s == 2'b10)  diag_cs_fall_cnt   <= diag_cs_fall_cnt + 8'd1;
+        if (diag_sclk_s == 2'b01) diag_sclk_rise_cnt <= diag_sclk_rise_cnt + 8'd1;
+        if (diag_tx_s[1] ^ diag_tx_s[0]) diag_tx_edge_cnt <= diag_tx_edge_cnt + 8'd1;
+        if (mcu_sys_strobe) begin
+            diag_sys_cnt       <= diag_sys_cnt + 8'd1;
+            diag_last_mcu_byte <= mcu_data_out;
+            diag_last_sys_din  <= sys_data_out;
+        end
+        if (mcu_osd_strobe) begin
+            diag_osd_cnt       <= diag_osd_cnt + 8'd1;
+            diag_last_mcu_byte <= mcu_data_out;
+        end
+    end
+end
+
+wire [31:0] diag_bl616_row0 = {
+    diag_cs_fall_cnt,
+    diag_sclk_rise_cnt,
+    diag_tx_edge_cnt,
+    diag_csn_s[1], diag_sclk_s[1], diag_dat_s[1], spi_io_dout,
+    diag_jsel_s[1], diag_tx_s[1], |diag_sys_cnt, |diag_osd_cnt
+};
+wire [31:0] diag_bl616_row1 = {
+    diag_sys_cnt,
+    diag_osd_cnt,
+    diag_last_mcu_byte,
+    diag_last_sys_din
+};
+
 wire [10:0] hdmi_cx;
 wire [9:0]  hdmi_cy;
 wire diag_ovl_x = (hdmi_cx >= 11'd96) && (hdmi_cx < 11'd608);
-wire diag_ovl_y = (hdmi_cy >= 10'd64) && (hdmi_cy < 10'd256) && (hdmi_cy[4:0] < 5'd20);
+wire diag_ovl_y = (hdmi_cy >= 10'd64) && (hdmi_cy < 10'd128) && (hdmi_cy[4:0] < 5'd20);
 wire [10:0] diag_x_rel  = hdmi_cx - 11'd96;
 wire [4:0] diag_bit_pos = diag_x_rel[8:4];
-wire [2:0] diag_row     = hdmi_cy[7:5] - 3'd2;
-wire [31:0] diag_row_word = (diag_row == 3'd0) ? diag_snap[127:96] :
-                            (diag_row == 3'd1) ? diag_snap[95:64]  :
-                            (diag_row == 3'd2) ? diag_snap[63:32]  :
-                            (diag_row == 3'd3) ? diag_snap[31:0]   :
-                            (diag_row == 3'd4) ? diag_snap_ext[63:32] : diag_snap_ext[31:0];
+wire       diag_row     = hdmi_cy[5]; // 64..95 -> 0, 96..127 -> 1
+wire [31:0] diag_row_word = diag_row ? diag_bl616_row1 : diag_bl616_row0;
 wire diag_bit_val = diag_row_word[5'd31 - diag_bit_pos];
 wire diag_tick    = (diag_bit_pos[1:0] == 2'b11) && (diag_x_rel[3:0] >= 4'd14);
 wire diag_bar     = (diag_x_rel[3:0] < 4'd12);
-wire [23:0] diag_hdmi_rgb = { video_red, 2'b00, video_green, 2'b00, video_blue, 2'b00 };
+wire [23:0] diag_hdmi_rgb = (diag_ovl_x && diag_ovl_y) ?
+    (diag_bar ? (diag_bit_val ? 24'h00FF40 : 24'h202020) : (diag_tick ? 24'hFFFFFF : 24'h000000)) :
+    { video_red, 2'b00, video_green, 2'b00, video_blue, 2'b00 };
 
 hdmi #(
     .AUDIO_RATE(48000), .AUDIO_BIT_WIDTH(16),
