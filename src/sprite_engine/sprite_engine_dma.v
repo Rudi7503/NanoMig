@@ -15,7 +15,7 @@
 
 `timescale 1ns / 1ps
 
-`define SPR_BRAM_TEST
+// `define SPR_BRAM_TEST
 
 module sprite_engine_dma (
     input  wire        clk,
