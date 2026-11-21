@@ -109,7 +109,24 @@ module nanomig (
    input [47:0]	 fastram_dout48, // upper 48 bits of a 64 bit aligned read (cache line fill)
    output [15:0] fastram_din,
    output	 fastram_wr,
-   input	 fastram_ready
+   input	 fastram_ready,
+
+   // Sprite-Engine: eigener Speicher-Master (Avalon-MM, 64 Bit, Burst 4).
+   // Wird in top.sv ueber sprite_mem_adapter auf den SDRAM-Anschluss p2
+   // gelegt. Auf der MiSTer-Variante haengt derselbe Master am DDR3.
+   output [31:0] spr_mem_address,
+   output [3:0]  spr_mem_burstcount,
+   output        spr_mem_read,
+   input  [63:0] spr_mem_readdata,
+   input         spr_mem_readdatavalid,
+   input         spr_mem_waitrequest,
+
+   // Diagnose-Ausgaenge fuer Board-LEDs
+   output        diag_cpu_rst_n,
+   output        diag_cpu_rd_ack,
+   output [2:0]  diag_bus_stage,
+   output [127:0] diag_snap,
+   output [63:0] diag_snap_ext
 ); 
 `ifndef GATEMATE
  `ifndef LATTICE
@@ -196,6 +213,9 @@ end
 
 wire  [1:0] cpu_state;
 wire        cpu_clkena;
+wire [2:0]   diag_tg68k;
+wire [127:0] diag_cpu_snap;
+wire [63:0]  diag_cpu_ext;
 wire  [3:0] cpu_cacr;
 wire [31:0] cpu_nmi_addr;
 
@@ -258,7 +278,11 @@ wire        ram_uds;
 // makes the cache clear its ack, so this stays a single cycle pulse but
 // arrives one clock earlier - on every single cpu memory access.
 reg  ram_write_ready;   // write accepted into the write buffer
+wire cache_ack;
 wire ram_ready = cache_ack | ram_write_ready;
+assign diag_cpu_rst_n = cpu_rst;
+assign diag_cpu_rd_ack = (ram_sel && (cpu_state == 2'd0 || cpu_state == 2'd2) && cache_ack) ||
+                         (!chip_as && !chip_dtack && chip_rw && cpu_ph2);
 `else
 // cpu_ph1 is just before clk7_en, so this is
 // the very last moment we can receive ACK from SDRAM;
@@ -329,6 +353,9 @@ cpu_wrapper cpu_wrapper
 	//custom CPU signals
 	.cpustate     (cpu_state       ),
 	.cpu_clkena   (cpu_clkena      ),
+	.diag_tg68k   (diag_tg68k      ),
+	.diag_cpu_snap(diag_cpu_snap   ),
+	.diag_cpu_ext (diag_cpu_ext    ),
 	.cacr         (cpu_cacr        ),
 	.nmi_addr     (cpu_nmi_addr    )
 );
@@ -413,7 +440,6 @@ wire [15:0] snoop_dat_r = 16'd0;
 wire [1:0]  snoop_bs_r  = 2'd0;
 `endif
 
-wire        cache_ack;
 wire        cache_wb_en;
 wire        cache_req;
 wire [15:0] cache_dat_r;
@@ -477,12 +503,12 @@ reg  [CACHE_ADDR_WIDTH-1:1] fastram_addr_r;
 reg  [15:0] fastram_din_r;
 reg         fastram_lds_r;
 reg         fastram_uds_r;
-reg         fastram_ready_d;  // previous state of the port 2 ack toggle
-wire        fastram_done = (fastram_ready != fastram_ready_d);
+reg  [2:0]  fastram_ready_sync; // 2-FF CDC synchronizer + edge detect for port 2 ack toggle
+wire        fastram_done = (fastram_ready_sync[2] != fastram_ready_sync[1]);
 wire [1:0]  fill_word = fill_idx + fill_cnt;
 
 always @(posedge clk_sys) begin
-  fastram_ready_d <= fastram_ready;
+  fastram_ready_sync <= {fastram_ready_sync[1:0], fastram_ready};
   cache_ack_d     <= cache_ack;
 
   cache_fill_ack  <= 1'b0;
@@ -574,6 +600,61 @@ assign fastram_uds  = fastram_uds_r;
 assign fastram_din  = fastram_din_r;
 assign fastram_wr   = fastram_wr_r;
 assign ram_dout     = cache_dat_r;
+
+reg diag_seen_p2_cs, diag_seen_fdone, diag_seen_fill_end, diag_seen_f800d0;
+reg [2:0]  diag_p1_cnt;
+reg        diag_ram_oe_d;
+reg [15:0] diag_p1_w0, diag_p1_w1, diag_color00, diag_wr_cnt, diag_rd_cnt, diag_p1_rom_cnt;
+reg [31:0] diag_p2_cnt;
+reg [22:0] diag_last_chip_addr;
+
+always @(posedge clk_sys) begin
+  if (!cpu_rst) begin
+    diag_seen_p2_cs     <= 1'b0;
+    diag_seen_fdone     <= 1'b0;
+    diag_seen_fill_end  <= 1'b0;
+    diag_seen_f800d0    <= 1'b0;
+    diag_p1_cnt         <= 3'd0;
+    diag_ram_oe_d       <= 1'b1;
+    diag_p1_w0          <= 16'd0;
+    diag_p1_w1          <= 16'd0;
+    diag_color00        <= 16'hDEAD;
+    diag_p2_cnt         <= 32'd0;
+    diag_wr_cnt         <= 16'd0;
+    diag_rd_cnt         <= 16'd0;
+    diag_p1_rom_cnt     <= 16'd0;
+    diag_last_chip_addr <= 23'd0;
+  end else begin
+    if (fastram_sel)                                   diag_seen_p2_cs    <= 1'b1;
+    if (fastram_done)                                  diag_seen_fdone    <= 1'b1;
+    if (fill_state == 2'd2 && fill_cnt == 2'd3)        diag_seen_fill_end <= 1'b1;
+    if (ram_sel && (ram_addr[24:4] == 21'h07800D))     diag_seen_f800d0   <= 1'b1;
+
+    diag_ram_oe_d <= _ram_oe;
+    if (!diag_ram_oe_d && _ram_oe) begin
+      if (diag_p1_cnt == 3'd0)      diag_p1_w0 <= ramdata_in;
+      else if (diag_p1_cnt == 3'd1) diag_p1_w1 <= ramdata_in;
+      if (diag_p1_cnt < 3'd7)       diag_p1_cnt <= diag_p1_cnt + 3'd1;
+      if (ram_address[22:19] == 4'b1111) diag_p1_rom_cnt <= diag_p1_rom_cnt + 16'd1;
+    end
+
+    if (!chip_as) begin
+      diag_last_chip_addr <= chip_addr[23:1];
+      if (!chip_rw && (chip_addr[23:1] == 23'h6FF8C0) && (chip_dout != 16'd0))
+        diag_color00 <= chip_dout;
+    end
+    if (fastram_done)    diag_p2_cnt <= diag_p2_cnt + 32'd1;
+    if (ram_write_ready) diag_wr_cnt <= diag_wr_cnt + 16'd1;
+    if (cache_ack)       diag_rd_cnt <= diag_rd_cnt + 16'd1;
+  end
+end
+assign diag_bus_stage =
+  (!diag_seen_p2_cs)    ? 3'd1 :
+  (!diag_seen_fdone)    ? 3'd2 :
+  (!diag_seen_fill_end) ? 3'd3 :
+  (!diag_seen_f800d0)   ? 3'd4 : 3'd5;
+assign diag_snap     = diag_cpu_snap;
+assign diag_snap_ext = { diag_cpu_ext[63:16], diag_color00 };
 `else
 assign fastram_addr = ram_addr[23:1];
 assign fastram_lds  = ram_lds;
@@ -1658,7 +1739,15 @@ minimig minimig
 	.sdc_byte_in_strobe ( sdc_byte_in_strobe    ),
 	.sdc_byte_addr      ( sdc_byte_addr         ),
 	.sdc_byte_in_data   ( sdc_byte_in_data      ),
- 	.sdc_byte_out_data  ( sdc_byte_out_data_fdc ) 
+ 	.sdc_byte_out_data  ( sdc_byte_out_data_fdc ),
+
+        // Sprite-Engine: Speicher-Master nach aussen fuehren
+        .spr_mem_address      ( spr_mem_address      ),
+        .spr_mem_burstcount   ( spr_mem_burstcount   ),
+        .spr_mem_read         ( spr_mem_read         ),
+        .spr_mem_readdata     ( spr_mem_readdata     ),
+        .spr_mem_readdatavalid( spr_mem_readdatavalid),
+        .spr_mem_waitrequest  ( spr_mem_waitrequest  )
 );
 
 Amber AMBER

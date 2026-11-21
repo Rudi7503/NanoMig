@@ -10,13 +10,13 @@ module biquad_iir_ringbuffer (
     // CPU Configuration Interface (off 8..12 -> b0, b1, b2, a1, a2)
     input wire        reg_cs,
     input wire        reg_wr,
-    input wire [6:0]  reg_addr, // ch [6:3], coeff_idx [2:0]
+    input wire [7:0]  reg_addr, // ch [7:3], coeff_idx [2:0]
     input wire [1:0]  reg_be,
     input wire [15:0] reg_wdata,
     output wire [15:0] reg_rdata,
 
     // Audio TDM Interface
-    input wire [3:0]          cur_voice,
+    input wire [4:0]          cur_voice,
     input wire                filter_en_l, // from v_ctrl[8]
     input wire                filter_en_r, // from v_ctrl[7]
     input wire                is_stereo,   // from v_ctrl[2]
@@ -27,23 +27,22 @@ module biquad_iir_ringbuffer (
     output wire signed [15:0] out_pcm_r    // filtered Right
 );
 
-    wire [3:0] ch = reg_addr[6:3];
+    wire [4:0] ch = reg_addr[7:3];
     wire [2:0] coeff_idx = reg_addr[2:0];
 
     // CPU word address for coefficients: 16 voices x 8 words (0..4 used) = 128 words
-    wire [6:0] cpu_coeff_addr = {ch, coeff_idx[2:0]};
+    wire [7:0] cpu_coeff_addr = {ch, coeff_idx[2:0]};
 
     // A pending sample per voice decouples adjacent TDM requests from
     // the multi-cycle DSP. Sustained offered load must remain below service
     // capacity; pending_overflow records an overwritten pending sample.
-    reg [15:0] pending;
-    reg [15:0] pending_l[0:15], pending_r[0:15];
-    reg [2:0] pending_flags[0:15];
-    reg [3:0] scan_start;
+    reg [31:0] pending;
+    reg [15:0] pending_l[0:31], pending_r[0:31];
+    reg [2:0] pending_flags[0:31];
+    reg [4:0] stage;
     reg pending_overflow;
-    reg have_pending;
-    reg [3:0] selected;
-    integer scan;
+    wire [4:0] selected   = stage;
+    wire        have_pending = pending[stage];
     // Quartus Prime Lite 25.1std.0 Build 1129 (Cyclone V) workaround:
     // the former circular scan using truncated (scan_start + offset) adders
     // triggered an internal OPT error in opt_arm_carry.cpp, line 500,
@@ -56,22 +55,19 @@ module biquad_iir_ringbuffer (
     // masks (1048576 cases): selected and have_pending equal the circular
     // reference in every case. This is exhaustive combinational selection
     // testing, not a full scheduler/queue/throughput or formal proof.
-    always @* begin
-        have_pending = |pending;
-        selected = scan_start;
-        for (scan=15; scan>=0; scan=scan-1)
-            if (pending[scan]) selected = scan[3:0];
-        for (scan=15; scan>=0; scan=scan-1)
-            if (pending[scan] && scan_start <= scan[3:0])
-                selected = scan[3:0];
-    end
-    wire take_pending=(state==0) && have_pending;
+    // Feste Reihenfolge statt Prioritaetswahl: stage laeuft 0..31. Eine Stufe
+    // wird nur bearbeitet, wenn ein frisches Sample wartet (pending[stage]);
+    // sonst wird sie in einem Takt uebersprungen. Damit ist die Reihenfolge
+    // garantiert - Voraussetzung fuer eine Kaskade ch0..ch31 in einer
+    // Sampleperiode - ohne dass alte Samples erneut gefiltert werden.
+    wire take_pending = (state == 0) && have_pending;
+    wire skip_stage   = (state == 0) && !have_pending;
     always @(posedge clk) begin
-        if(reset) begin pending<=0;scan_start<=0;pending_overflow<=0;end
+        if(reset) begin pending<=0;stage<=0;pending_overflow<=0;end
         else begin
-            if(take_pending) begin
-                pending[selected]<=0;scan_start<=selected+1'b1;
-            end
+            if(take_pending) pending[stage]<=1'b0;
+            if(take_pending || skip_stage)
+                stage <= (stage == 5'd31) ? 5'd0 : (stage + 5'd1);
             if(req_strobe && (filter_en_l || filter_en_r)) begin
                 if(pending[cur_voice] && !(take_pending && selected==cur_voice))
                     pending_overflow<=1'b1;
@@ -85,7 +81,7 @@ module biquad_iir_ringbuffer (
 
     // Sequential Biquad FSM
     reg [3:0] state;
-    reg [3:0] proc_ch;
+    reg [4:0] proc_ch;
     reg       proc_side;     // 0 = Left (or Mono), 1 = Right
     reg       proc_stereo;
     reg       proc_flt_r;
@@ -96,14 +92,15 @@ module biquad_iir_ringbuffer (
     // Latches for state pipeline
     reg signed [15:0] lat_x1, lat_y1;
 
-    // Saturation logic for Biquad output (Q2.14)
-    wire signed [19:0] y_sc = acc[33:14];
+    // Symmetric rounding (+ half LSB = +8192) and saturation logic for Biquad output (Q2.14)
+    wire signed [34:0] acc_rounded = acc + 35'sd8192;
+    wire signed [19:0] y_sc = acc_rounded[33:14];
     wire signed [15:0] y_sat = (!y_sc[19] && |y_sc[18:15]) ? 16'sh7FFF :
                                ( y_sc[19] && !(&y_sc[18:15])) ? 16'sh8000 : y_sc[15:0];
 
     // 16 Output values stored in register array
-    reg signed [15:0] y_held_l [0:15];
-    reg signed [15:0] y_held_r [0:15];
+    reg signed [15:0] y_held_l [0:31];
+    reg signed [15:0] y_held_r [0:31];
 
     wire we_l = (state == 4'd13) && (proc_side == 1'b0);
     wire we_r = (state == 4'd13) && (proc_side == 1'b1 || !proc_stereo);
@@ -115,7 +112,7 @@ module biquad_iir_ringbuffer (
 
     // --- 1. Coefficient RAM (Simple Dual-Port: CPU writes, FSM reads) ---
     // 128 entries of 16-bit
-    reg [15:0] coeff_ram [0:127];
+    reg [15:0] coeff_ram [0:255];
     reg [15:0] cpu_rdata_raw;
     reg [15:0] fsm_coeff_rdata;
 
@@ -123,13 +120,13 @@ module biquad_iir_ringbuffer (
     wire [2:0] read_coeff = (state == 0 || state >= 10) ? 3'd0 :
                             (state <= 2) ? 3'd1 : (state <= 4) ? 3'd2 :
                             (state <= 6) ? 3'd3 : 3'd4;
-    wire [6:0] fsm_coeff_addr = {(state == 0 ? selected : proc_ch), read_coeff};
+    wire [7:0] fsm_coeff_addr = {(state == 0 ? selected : proc_ch), read_coeff};
 
     always @(posedge clk) begin
-        if (reg_cs && reg_wr) begin
-            if (reg_be[1]) coeff_ram[cpu_coeff_addr][15:8] <= reg_wdata[15:8];
-            if (reg_be[0]) coeff_ram[cpu_coeff_addr][ 7:0] <= reg_wdata[ 7:0];
-        end
+        // Ganzwort schreiben: zwei getrennt bedingte Byte-Zuweisungen sind fuer
+        // Quartus kein Speichermuster, deshalb lag dieses Array in Flip-Flops
+        // samt 32:1-Lesemuxen. Die CPU schreibt Koeffizienten ohnehin mit MOVE.W.
+        if (reg_cs && reg_wr) coeff_ram[cpu_coeff_addr] <= reg_wdata;
         cpu_rdata_raw   <= coeff_ram[cpu_coeff_addr];
         fsm_coeff_rdata <= coeff_ram[fsm_coeff_addr];
     end
@@ -138,9 +135,9 @@ module biquad_iir_ringbuffer (
     // --- 2. State RAM (Simple Dual-Port: FSM writes, FSM reads) ---
     // 128 entries of 16-bit: {side, ch[3:0], var[1:0]}
     // var: 0=x1, 1=x2, 2=y1, 3=y2
-    reg [15:0] state_ram [0:127];
+    reg [15:0] state_ram [0:255];
     reg [15:0] fsm_state_rdata;
-    reg [31:0] history_valid;
+    reg [63:0] history_valid;
     wire history_ready = history_valid[{proc_side,proc_ch}];
     always @(posedge clk) begin
         if (reset) history_valid <= 0;
@@ -149,13 +146,13 @@ module biquad_iir_ringbuffer (
 
     wire [1:0] read_var = (state <= 2 || state >= 10) ? 2'd0 :
                           (state <= 4) ? 2'd1 : (state <= 6) ? 2'd2 : 2'd3;
-    wire [6:0] fsm_state_rd_addr = {proc_side, proc_ch, read_var};
+    wire [7:0] fsm_state_rd_addr = {proc_side, proc_ch, read_var};
 
     wire [1:0] fsm_wr_var = (state == 4'd10) ? 2'd1 : // x2 <= lat_x1
                             (state == 4'd11) ? 2'd0 : // x1 <= proc_x
                             (state == 4'd12) ? 2'd3 : // y2 <= lat_y1
                                                2'd2;  // y1 <= y_sat
-    wire [6:0] fsm_state_wr_addr = {proc_side, proc_ch, fsm_wr_var};
+    wire [7:0] fsm_state_wr_addr = {proc_side, proc_ch, fsm_wr_var};
     wire [15:0] fsm_state_wdata  = (state == 4'd10) ? lat_x1 :
                                    (state == 4'd11) ? proc_x  :
                                    (state == 4'd12) ? lat_y1  :

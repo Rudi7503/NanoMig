@@ -244,8 +244,8 @@ module minimig
 	output [8:0]  ldata_okk,   // left DAC data  (PWM volume)
 	output [8:0]  rdata_okk,   // right DAC data (PWM volume)
 	output  [1:0] aud_mix,
-	output [15:0] audio_ext_l,
-	output [15:0] audio_ext_r,
+	output signed [20:0] audio_ext_l,
+	output signed [20:0] audio_ext_r,
 	output        audio_dma_req,
 	output [31:0] audio_dma_addr,
 	input         audio_dma_ack,
@@ -330,7 +330,15 @@ module minimig
 	output [63:0] a2065_mem_writedata,
 	output [7:0]  a2065_mem_byteenable,
 	output        a2065_mem_write,
-	input         a2065_mem_waitrequest
+	input         a2065_mem_waitrequest,
+
+	// Sprite Engine DDR3 Avalon-MM memory port
+	output [31:0] spr_mem_address,
+	output [3:0]  spr_mem_burstcount,
+	output        spr_mem_read,
+	input  [63:0] spr_mem_readdata,
+	input         spr_mem_readdatavalid,
+	input         spr_mem_waitrequest
 );
 
 
@@ -418,16 +426,27 @@ wire [15:0] audio_ext_rdata;
 // 16-Voice Ringbuffer Audio Extension (.. = 512 bytes)
 wire audio_ext_selected = (cpu_address_out[23:10] == 14'b1101_1111_1111_01);
 wire audio_ext_access = audio_ext_selected && !dbr && (cpu_rd || cpu_hwr || cpu_lwr);
+// Global Audio Extension Interrupt Registers (..)
+wire audio_irq_selected = (cpu_address_out[23:4] == (24'hDFF804 >> 4)) && (cpu_address_out[3:1] >= 3'd2 && cpu_address_out[3:1] <= 3'd5);
+wire audio_irq_access = audio_irq_selected && !dbr && (cpu_rd || cpu_hwr || cpu_lwr);
+wire [1:0] audio_irq_addr = cpu_address_out[3:1] - 3'd2;
+
 audio_ext AUDIO_EXT (
 	.clk(clk), .reset(reset), .ntsc(ntsc),
 	.reg_cs(audio_ext_access), .reg_wr(cpu_hwr || cpu_lwr),
 	.reg_addr(cpu_address_out[9:1]), .reg_be({cpu_hwr,cpu_lwr}),
 	.reg_wdata(cpu_data_out), .reg_rdata(audio_ext_rdata), .irq(audio_ext_irq),
+	.irq_cs(audio_irq_access), .irq_addr(audio_irq_addr),
 	.dma_req(audio_dma_req), .dma_addr(audio_dma_addr),
 	.dma_ack(audio_dma_ack), .dma_data(audio_dma_data), .dma_error(audio_dma_error),
 	.sample_l(audio_ext_l), .sample_r(audio_ext_r)
 );
 // Experimental HAM register: CPU only (Moved behind 16 audio channels to )
+// Dedicated Sprite Engine Custom Registers ($DFF820..$DFF83E: 16 words = 32 bytes)
+wire spr_eng_selected = (cpu_address_out[23:5] == (24'hDFF820 >> 5));
+wire spr_eng_access   = spr_eng_selected && !dbr && (cpu_rd || cpu_hwr || cpu_lwr);
+wire [15:0] spr_eng_rdata;
+
 wire ham_ext_selected = (cpu_address_out[23:1] == (24'hDFF800 >> 1));
 wire ham_ext_access = ham_ext_selected && !dbr && (cpu_rd || cpu_hwr || cpu_lwr);
 reg [15:0] ham_control_shadow;
@@ -472,12 +491,15 @@ always @(posedge clk) begin
     end
 end
 
+wire signed [15:0] cap_audio_l = (!audio_ext_l[20] && |audio_ext_l[19:15]) ? 16'sh7FFF : (audio_ext_l[20] && !(&audio_ext_l[19:15])) ? 16'sh8000 : audio_ext_l[15:0];
+wire signed [15:0] cap_audio_r = (!audio_ext_r[20] && |audio_ext_r[19:15]) ? 16'sh7FFF : (audio_ext_r[20] && !(&audio_ext_r[19:15])) ? 16'sh8000 : audio_ext_r[15:0];
+
 audio_capture AUDIO_CAPTURE (
     .clk(clk),
     .reset(reset),
     .sample_strobe(cap_sample_strobe),
-    .in_l(audio_ext_l),
-    .in_r(audio_ext_r),
+    .in_l(cap_audio_l),
+    .in_r(cap_audio_r),
     .buf_cs(audio_cap_access),
     .buf_addr(cpu_address_out[12:1]),
     .buf_rdata(audio_cap_rdata),
@@ -603,13 +625,14 @@ assign ide_fast = ~ide_config[5] & cpucfg[1];
 wire 			floppy_speed;
 
 //instantiate agnus
+wire [10:0] vpos;
 agnus AGNUS1
 (
 	.clk(clk),
 	.clk7_en(clk7_en),
 	.cck(cck),
 	.reset(reset),
-	.aen(sel_reg && !audio_ext_selected && !ham_ext_selected && !cap_ctrl_selected && !audio_cap_selected),
+	.aen(sel_reg && !audio_ext_selected && !audio_irq_selected && !ham_ext_selected && !cap_ctrl_selected && !audio_cap_selected && !spr_eng_selected),
 	.rd(cpu_rd),
 	.hwr(cpu_hwr),
 	.lwr(cpu_lwr),
@@ -639,6 +662,7 @@ agnus AGNUS1
 	.strhor_denise(strhor_denise),
 	.strhor_paula(strhor_paula),
 	.htotal(htotal),
+	.vpos(vpos),
 	.harddis(harddis),
 	.varbeamen(varbeamen),
 	.int3(int3),
@@ -771,6 +795,8 @@ assign ce_pix = (shres & |chipset_config[4:3]) | (hires & clk7n_en) | clk7_en;
 assign res = {shres & |chipset_config[4:3], hires};
 
 //instantiate Denise
+wire [7:0] denise_r, denise_g, denise_b;
+wire denise_sprsel, denise_pf_front, denise_pf_any;
 denise DENISE1
 (		
 	.clk(clk),
@@ -791,14 +817,60 @@ denise DENISE1
 	.chip48(chip48),
 	.data_out(denise_data_out),
 	.blank(~_hsync|vblank),
-	.red(red),
-	.green(green),
-	.blue(blue),
+	.red(denise_r),
+	.green(denise_g),
+	.blue(denise_b),
 	.a1k(chipset_config[2]),
 	.ecs(|chipset_config[4:3]),
 	.aga(chipset_config[4]),
 	.hires(hires),
-	.shres(shres)
+	.shres(shres),
+	.sprsel_out(denise_sprsel),
+	.pf_front_out(denise_pf_front),
+	.pf_any_out(denise_pf_any)
+);
+
+// ====================================================================
+// Dedicated High-Performance Sprite & HighColor/TrueColor Overlay Engine
+// ====================================================================
+sprite_engine SPRITE_ENGINE (
+	.clk_render      (a2065_clk_ddr),
+	.clk_sys         (clk),
+	.clk_vid         (clk),
+	.rst_n           (~reset),
+
+	// Amiga Custom Bus Interface ($DFF820..$DFF83E)
+	.reg_cs          (spr_eng_access),
+	.reg_we          (cpu_hwr || cpu_lwr),
+	.reg_addr        (cpu_address_out[4:1]),
+	.reg_wdata       (cpu_data_out),
+	.reg_rdata       (spr_eng_rdata),
+
+	// Video Timing Inputs
+	.vblank_pulse    (sof),
+	.line_swap_pulse (sol),
+	.scanline_y      ({1'b0, vpos}),
+	.vid_x           (11'd0),
+	.vid_read_en     (1'b1),
+	.clip_xmax       (11'd2047),
+
+	// Denise Native Video Tap
+	.amiga_rgb       ({denise_r, denise_g, denise_b}),
+	.sprsel_aligned  (denise_sprsel),
+	.pf_front_opaque (denise_pf_front),
+	.pf_any_opaque   (denise_pf_any),
+	.blank_n         (~(~_hsync | vblank)),
+
+	// Avalon-MM DDR3 Memory Master Interface
+	.avm_address     (spr_mem_address),
+	.avm_burstcount  (spr_mem_burstcount),
+	.avm_read        (spr_mem_read),
+	.avm_waitrequest (spr_mem_waitrequest),
+	.avm_readdata    (spr_mem_readdata),
+	.avm_readdatavalid(spr_mem_readdatavalid),
+
+	// Final Video Output
+	.out_rgb         ({red, green, blue})
 );
 
 //instantiate cia A
@@ -1261,7 +1333,8 @@ assign cdtv_selack = cdtv_bridge_selack | sel_cdtv_nvram | sel_cdtv_card;
 assign cpu_data_in[15:0]= (ham_ext_access && cpu_rd) ? ham_control_shadow :
                           (cap_ctrl_access && cpu_rd) ? cap_ctrl_rdata :
                           (audio_cap_access && cpu_rd) ? audio_cap_rdata :
-                          (audio_ext_access && cpu_rd) ? audio_ext_rdata : gary_data_out[15:0]
+                          (spr_eng_access && cpu_rd) ? spr_eng_rdata :
+                          ((audio_ext_access || audio_irq_access) && cpu_rd) ? audio_ext_rdata : gary_data_out[15:0]
 							 | cia_data_out[15:0]
 							 | gayle_data_out[15:0]
 							 | cart_data_out[15:0]

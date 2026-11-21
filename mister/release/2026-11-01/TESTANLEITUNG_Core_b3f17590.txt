@@ -1,0 +1,72 @@
+==============================================================================
+TESTANLEITUNG: Minimig Core b3f17590 & Rechteck-Test (Kickstart 1.3)
+Datum: 05.11.2026
+Autor: Rudis KI fuer Toby und Tobys KI
+==============================================================================
+
+1. Dateiliste & SHA-256 Pruefsummen
+------------------------------------------------------------------------------
+- Minimig_b3f17590.rbf (Core-Bitstream, 4.080.064 Bytes)
+  SHA-256: b3f175900a69ea2aa7fc11a19363ffa2733489830df5f074fc3f1a7adf802d27
+
+- rechteck (Kickstart 1.3 Shell-Executable, 11.224 Bytes)
+  SHA-256: 44d4395c056c5bd0c221f8bce2326b788b879e26965be2102ffee56230ceb05f
+
+- Minimig_b3f17590_Rechteck_Testpaket.zip (Gesamtpaket)
+
+------------------------------------------------------------------------------
+2. Was wurde behoben? (Ursachenanalyse des vorherigen Fehlers)
+------------------------------------------------------------------------------
+Beim letzten Test mit Core 6186b83f hing das System reproduzierbar bei:
+  "[3/4] Hardware-Capture ($DFF802) gestartet..."
+Die Ursache wurde in der Simulation nachgewiesen und behoben:
+
+1. Bus-Adresskollision in minimig.v:
+   Die Adressabfrage fuer Audio-Interrupt-Register ($DFF804..$DFF80A) reagierte
+   faelschlicherweise auch auf Adresse $DFF802. Beim Starten des Captures mit
+   dem Schreibzugriff MOVE.W #$0017,$DFF802 wurde unbeabsichtigt das
+   Interrupt-Enable-Bit von Stimme 0 aktiviert. Da Stimme 0 bereits fertig
+   gespielt hatte, feuerte die Audio-Hardware sofort einen Amiga Level-2-
+   Interrupt. Ohne OS-Treiber geriet die 68000-CPU in einen ununterbrechbaren
+   Interrupt-Sturm (100% Last, kompletter Freeze).
+   -> In Core b3f17590 ist audio_irq_selected strikt auf $DFF804..$DFF80A begrenzt.
+
+2. Audiodaten-Allokation im Chip-RAM:
+   In rechteck lag der Sample-Puffer im Code-Segment. Kickstart 1.3 legt Code
+   bei vorhandenem Slow-RAM bevorzugt bei $C00000 ab. Die Audio-DMA liest
+   jedoch ausschliesslich aus dem Chip-RAM (< $00200000).
+   -> rechteck bindet die Audiodaten nun explizit in SECTION chip_data,DATA_C ein.
+      AmigaDOS garantiert damit die Ablage im Chip-RAM (Bit 30 MEMF_CHIP).
+
+------------------------------------------------------------------------------
+3. Testdurchfuehrung
+------------------------------------------------------------------------------
+1. Core Minimig_b3f17590.rbf auf die SD-Karte des MiSTer kopieren
+   (z.B. nach /media/fat/_Computer/Minimig_b3f17590.rbf oder als Minimig.rbf).
+2. Datei rechteck auf ein Amiga-Medium (Floppy-ADF, Festplatte oder RAM:) legen.
+3. MiSTer starten und Amiga mit Kickstart 1.3 (oder 2.0/3.1) booten.
+4. Shell/CLI oeffnen und das Programm starten:
+     rechteck
+   (Optional zur Protokollierung: rechteck > RAM:test.log)
+
+------------------------------------------------------------------------------
+4. Erwartetes Ergebnis
+------------------------------------------------------------------------------
+- Waehrend Schritt [2/4] und [3/4] toent ein klarer 200-Hz-Sinuston aus den
+  Lautsprechern (gefiltert durch 32 IIR-Tiefpass-Stufen).
+- Konsolenausgabe:
+    ==================================================
+    *** RECHTECK TEST GESTARTET (KICKSTART 1.3) ***
+    rechteck: 32-Stufen-Tiefpass Kaskadentest
+    ==================================================
+    rechteck: [1/4] Stimmen 0..31 initialisiert.
+    rechteck: [2/4] Stimmen gestartet (200 Hz sollte toenen)...
+    rechteck: [3/4] Hardware-Capture ($DFF802) gestartet...
+    rechteck: [3/4] Capture fertig. Analysiere 1024 Samples...
+    rechteck: [4/4] Spitzenwert (Peak) = <ca. 3000-7000>
+    rechteck: [4/4] Proben ueber 70% = <Wert unter 768> von 1024
+    rechteck: ERFOLG - Sinuswelle nachgewiesen (<75%).
+    rechteck: >>> TEST BESTANDEN <<<
+    rechteck: Test beendet (Return Code: 0).
+- Hintergrundfarbe COLOR00 springt am Ende auf GRUEN ($00F0).
+==============================================================================

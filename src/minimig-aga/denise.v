@@ -51,7 +51,10 @@ module denise (
   input  wire           ecs,            // enables ECS chipset features
   input  wire           aga,            // enables AGA features
   output wire           hires,
-  output wire           shres
+  output wire           shres,
+  output wire           sprsel_out,
+  output wire           pf_front_out,
+  output wire           pf_any_out
 );
 
 
@@ -590,5 +593,9 @@ assign {red[7:0],green[7:0],blue[7:0]} = ext_on ?
  (ext_blank ? 24'h000000 : ext_output) : (t_blank ? 24'h000000 : out_rgb);
 
 assign blank_out = t_blank;
+
+assign sprsel_out   = sprsel_del;
+assign pf_front_out = nplayfield[1];
+assign pf_any_out   = |nplayfield;
 
 endmodule

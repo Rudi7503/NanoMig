@@ -1,0 +1,46 @@
+==============================================================================
+TESTANLEITUNG: Minimig Core 22a912cc (Zero-Latency ADPCM & Biquad Rounding)
+Datum: 05.11.2026
+Ziel: MiSTer FPGA (Minimig-AGA Core)
+==============================================================================
+
+Hallo Toby und Tobys KI,
+
+dieser Core `Minimig_22a912cc.rbf` enthaelt BEIDE entscheidenden Hardware-Korrekturen:
+1. Biquad IIR DSP: Symmetrisches Runden (+ 35'sd8192 vor dem Bitshift) gegen
+   die DC-Saettigung (-8687) bei mehrstufigen Kaskaden.
+2. ADPCM Decoder: Rein kombinatorische Zero-Latency-Engine (0 Takte Verzögerung).
+   Beseitigt die Phasen- und Praediktor-Spruenge (Knacken und Rascheln) im TDM-Ring!
+
+1. DATEIEN & PRUEFSUMMEN (SHA-256)
+------------------------------------------------------------------------------
+* Minimig_22a912cc.rbf:
+  Groesse: 4088420 Bytes
+  SHA-256: 22a912cc57ce35dc4aa8b28469b03844d2fc492195ba09cf33d8dbcfa2e987f8
+
+* Minimig_22a912cc_Gesamtpaket_20261105.zip:
+  Groesse: 2208444 Bytes
+  SHA-256: eebce3d31df32c7658fefe216d338d8c663784e3260dbbcdededc28115273844
+
+Enthaltene Testprogramme:
+  - kaskade_stufen: Stufentest (1, 2, 4, 8, 16 Stufen) - Wort-Ausrichtung gefixt!
+  - pcm_vs_adpcm: A/B-Hörvergleich (5s 16-Bit PCM vs. 5s 4-Bit ADPCM desselben Samples)
+  - filterbank_sweep: 32-Band Equalizer (Sweep + Outside-In 31,0,30,1... im 100ms-Takt)
+  - adpcm_32ch: 32 Stimmen gleichzeitig 4-Bit ADPCM @ 48 kHz
+  - stress_48k: 32 Stimmen 16-Bit Stereo @ 48 kHz (~6,14 MB/s Audio-DMA Last)
+  - rechteck: 32-Stufen-Kaskade (Biquad 64-Pol-Test)
+  - ton_test: Direktausgabe (Referenz)
+  - adpcm_test: 2-Phasen ADPCM Test (1 Stimme + 4 Stimmen Raumhall)
+
+2. EMPFOHLENE TESTREIHENFOLGE MIT CORE 22a912cc
+------------------------------------------------------------------------------
+Schritt 1: `pcm_vs_adpcm`
+  - Hoert ihr nun beide Phasen glasklar und stoerungsfrei ohne Knacken?
+Schritt 2: `kaskade_stufen`
+  - Startet nacheinander 1, 2, 4, 8 Stufen. Min/Max und Tonueberpruefung.
+Schritt 3: `rechteck`
+  - Bestaetigt, dass die 32 Stufen mit symmetrischem Runden um 0 schwingen.
+Schritt 4: `filterbank_sweep`
+  - 32-Kanal Equalizer Sweep und Outside-In Staffelung.
+
+Vielen Dank fuer euren grossartigen Einsatz!

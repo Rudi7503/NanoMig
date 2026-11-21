@@ -1,0 +1,56 @@
+[
+  {
+    "name": "published18",
+    "returncode": 0,
+    "failed": false,
+    "output": "================================================================\n NanoMig Hardware Sprite Engine - Formal Verification Testbench\n================================================================\n\n--- Test 1: Hardware Blender Verification ---\n[PASS] Blender Opak Replace RGB\n[PASS] Blender Opak WE asserted\n[PASS] e Red Saturated to 255 (200+100)\n[PASS] Green Saturated to 255 (150+150)\n[PASS]  Blue Saturated to 255 (100+200)\n[PASS] Blender 50/50 Average ((S+D)/2)\n[PASS] pha 128 (50% red/blue crossfade)\n[PASS] s WE=0 (full transparent bypass)\n\n--- Test 1B: Universal Decoder Verification ---\n[PASS]  CLUT-8 requests Palette Slot 42\n[PASS] Direct (F800 -> R=248, G=0, B=0)\n[PASS] B32 Direct (Per-Pixel Alpha 128)\nAFTER CLR: acc_r=0\nAFTER STEP 1: acc_r=8, dec_out_r=8\n[PASS] HAM08_D Pure Delta (Red step +8)\n\n--- Test 2: Custom Registers & Atomic Staging ---\n[PASS] ore VBlank (no premature update)\n[PASS] ointer High Word Latched ($1234)\n[PASS] Pointer Low Word Latched ($5678)\n\n--- Test 3: Dedicated Palette RAM & Auto-Increment ---\n[PASS] te address auto-incremented to 6\n\n--- Test 4: Video Compositor Native Passthrough ---\n[PASS] rough native Amiga RGB when idle\n[PASS] ve forces black output ($000000)\n\n================================================================\n Simulation Finished: 18 Checks PASSED, 0 FAILED\n================================================================\n RESULT: ALL SPRITE ENGINE HARDWARE TESTS PASSED (100% OK)\n\n"
+  },
+  {
+    "name": "burst_consumer",
+    "returncode": 0,
+    "failed": false,
+    "output": "four consecutive CLUT8 beats: extracted=32 expected=32\ncode[0]=00000001\ncode[1]=00000002\ncode[2]=00000003\ncode[3]=00000004\ncode[4]=00000005\ncode[5]=00000006\ncode[6]=00000007\ncode[7]=00000008\ncode[8]=00000009\ncode[9]=0000000a\ncode[10]=0000000b\ncode[11]=0000000c\ncode[12]=0000000d\ncode[13]=0000000e\ncode[14]=0000000f\ncode[15]=00000010\ncode[16]=00000011\ncode[17]=00000012\ncode[18]=00000013\ncode[19]=00000014\ncode[20]=00000015\ncode[21]=00000016\ncode[22]=00000017\ncode[23]=00000018\ncode[24]=00000019\ncode[25]=0000001a\ncode[26]=0000001b\ncode[27]=0000001c\ncode[28]=0000001d\ncode[29]=0000001e\ncode[30]=0000001f\ncode[31]=00000020\nPASS extended 1\n"
+  },
+  {
+    "name": "descriptor_bl4",
+    "returncode": 0,
+    "failed": false,
+    "output": "descriptor BL4: height=1 width=32 state=7 (first descriptor expected height1,width32)\nPASS extended 2\n"
+  },
+  {
+    "name": "palette_write",
+    "returncode": 0,
+    "failed": false,
+    "output": "palette write slot5=112233 slot6=xxxxxx expected slot5=112233\nPASS extended 3\n"
+  },
+  {
+    "name": "clut_palette",
+    "returncode": 0,
+    "failed": false,
+    "output": "CLUT first pixel valid=1 rgb=112233 expected112233\nPASS palette\n"
+  },
+  {
+    "name": "capture_complete",
+    "returncode": 0,
+    "failed": false,
+    "output": "capture after complete1816-dot line: done=1\nPASS capture\n"
+  },
+  {
+    "name": "capture_one_read",
+    "returncode": 0,
+    "failed": false,
+    "output": "one low-word read held4cycles: read_addr=1 expected1\nPASS capture\n"
+  },
+  {
+    "name": "descriptor_gapped_tail",
+    "returncode": 0,
+    "failed": true,
+    "output": "delayed descriptor tail: pixel codes=16 expected0 before any pixel response\nFATAL: C:\\Users\\toby0\\Documents\\Codex\\2026-10-21\\so-der-rudi-hat-f-r\\work\\audio-review-20261029\\sprite-rtl-f1f0d3b\\extended_tb.v:56: descriptor burst tail enters pixel stream\n       Time: 536000 Scope: extended_tb\n"
+  },
+  {
+    "name": "capture_pixel_snapshot",
+    "returncode": 0,
+    "failed": true,
+    "output": "stable bus sample HI=0011 LO=5566 expected0011/2233\nFATAL: C:\\Users\\toby0\\Documents\\Codex\\2026-10-21\\so-der-rudi-hat-f-r\\work\\audio-review-20261029\\sprite-rtl-f1f0d3b\\extended_tb.v:111: capture HI/LO combines different pixels during one held read\n       Time: 126000 Scope: capture_tb\n"
+  }
+]

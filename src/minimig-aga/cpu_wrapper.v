@@ -95,7 +95,10 @@ module cpu_wrapper
 	output reg [1:0]  cpustate,
 	output reg [3:0]  cacr,
 	output reg [31:0] nmi_addr,
-	output		  cpu_clkena  // the tg68k advances on this enable (bus handshake consumption)
+	output		  cpu_clkena,  // the tg68k advances on this enable (bus handshake consumption)
+	output [2:0]	  diag_tg68k,
+	output reg [127:0] diag_cpu_snap,
+	output reg [63:0]  diag_cpu_ext
 );
 
 wire cpu_req = cpustate != 2'b01 && !skip_fetch;
@@ -400,7 +403,105 @@ assign cpu_clkena = (~cpu_req & tg68_armed) | chipready | ramready
 ;
 `endif
 
+// wire cpu_clkena_keep removed
+
 `ifdef ENABLE_TG68K
+wire tg68k_clkena = cpu_internal_ack | chipready | ramready;
+wire [31:0] diag_d5;
+wire [8:0]  diag_flags;
+
+reg [15:0] diag_hi_word;
+reg [31:0] diag_rom_cnt, diag_rom_sum, diag_exp_addr, diag_bad_addr, diag_d5_snap, diag_prev_pc, diag_prev_pc_snap;
+reg [31:0] diag_prev_word, diag_mis_cnt, diag_mis_exp, diag_mis_d5, diag_mis_word, diag_mis_addr;
+reg [8:0]  diag_flags_snap;
+reg        diag_freeze, diag_bad_seen, diag_loop_active, diag_loop_done, diag_mis_seen;
+wire [32:0] diag_sum_next = {1'b0, diag_rom_sum} + {1'b0, diag_hi_word, cpu_din};
+always @(posedge clk or negedge reset) begin
+	if (!reset) begin
+		diag_cpu_snap     <= 128'd0;
+		diag_cpu_ext      <= 64'd0;
+		diag_hi_word      <= 16'd0;
+		diag_rom_cnt      <= 32'd0;
+		diag_rom_sum      <= 32'd0;
+		diag_exp_addr     <= 32'h00F80000;
+		diag_bad_addr     <= 32'd0;
+		diag_d5_snap      <= 32'd0;
+		diag_prev_pc      <= 32'd0;
+		diag_prev_pc_snap <= 32'd0;
+		diag_prev_word    <= 32'd0;
+		diag_mis_cnt      <= 32'd0;
+		diag_mis_exp      <= 32'd0;
+		diag_mis_d5       <= 32'd0;
+		diag_mis_word     <= 32'd0;
+		diag_mis_addr     <= 32'd0;
+		diag_flags_snap   <= 9'd0;
+		diag_freeze       <= 1'b0;
+		diag_bad_seen     <= 1'b0;
+		diag_loop_active  <= 1'b0;
+		diag_loop_done    <= 1'b0;
+		diag_mis_seen     <= 1'b0;
+	end else begin
+		if (!diag_freeze && tg68k_clkena && (cpustate_p == 2'b00)) begin
+			if (cpu_addr_p == 32'h00F80408) begin
+				diag_d5_snap      <= diag_d5;
+				diag_prev_pc_snap <= diag_prev_pc;
+				diag_flags_snap   <= diag_flags;
+				diag_freeze       <= 1'b1;
+			end else begin
+				diag_prev_pc <= cpu_addr_p;
+			end
+		end
+
+		if (!diag_freeze && !diag_loop_done && tg68k_clkena && (cpustate_p == 2'b10)) begin
+			if (!diag_loop_active) begin
+				if (cpu_addr_p[23:0] == 24'hF80000) begin
+					diag_loop_active <= 1'b1;
+					diag_rom_cnt     <= 32'd1;
+					diag_hi_word     <= cpu_din;
+					diag_exp_addr    <= 32'h00F80002;
+				end
+			end else if (cpu_addr_p[23:19] == 5'b11111) begin
+				diag_rom_cnt <= diag_rom_cnt + 32'd1;
+				if (!diag_bad_seen && (cpu_addr_p[23:0] != diag_exp_addr[23:0])) begin
+					diag_bad_addr <= cpu_addr_p;
+					diag_bad_seen <= 1'b1;
+				end
+				diag_exp_addr <= diag_exp_addr + 32'd2;
+				if (!cpu_addr_p[1]) begin
+					diag_hi_word <= cpu_din;
+					if (!diag_mis_seen && (diag_d5 != diag_rom_sum)) begin
+						diag_mis_seen <= 1'b1;
+						diag_mis_cnt  <= diag_rom_cnt;
+						diag_mis_exp  <= diag_rom_sum;
+						diag_mis_d5   <= diag_d5;
+						diag_mis_word <= diag_prev_word;
+						diag_mis_addr <= cpu_addr_p;
+					end
+				end else begin
+					diag_rom_sum   <= diag_sum_next[31:0] + {31'd0, diag_sum_next[32]};
+					diag_prev_word <= {diag_hi_word, cpu_din};
+				end
+				if (diag_rom_cnt == 32'h0003FFFF) begin
+					diag_loop_done <= 1'b1;
+				end
+			end
+		end
+
+		diag_cpu_snap <= {
+			diag_mis_seen ? {1'b1, diag_mis_cnt[30:0]} : diag_rom_cnt,
+			diag_mis_seen ? diag_mis_exp : diag_rom_sum,
+			diag_mis_seen ? diag_mis_d5 : (diag_freeze ? diag_d5_snap : cpu_addr_p),
+			diag_freeze, diag_loop_active, diag_loop_done, (diag_mis_seen | diag_bad_seen), 4'b0000,
+			diag_mis_seen ? diag_mis_addr[23:0] : diag_bad_addr[23:0]
+		};
+		diag_cpu_ext <= {
+			diag_mis_seen ? diag_mis_word : (diag_freeze ? diag_prev_pc_snap : diag_prev_pc),
+			diag_freeze ? diag_flags_snap : diag_flags,
+			23'd0
+		};
+	end
+end
+
 TG68KdotC_Kernel
 `ifndef VERILATOR
 // verilator runs the verilog translated variant which doesn't support configuration but
@@ -445,7 +546,7 @@ cpu_inst_p
  `else
   .nReset(reset),
  `endif
-  .clkena_in(cpu_clkena),
+  .clkena_in(tg68k_clkena),
   .data_in(cpu_din),
   .IPL(cpu_ipl),
   .IPL_autovector(1'b1),
@@ -464,7 +565,10 @@ cpu_inst_p
   .skipFetch(skip_fetch_i),
   .regin_out(),
   .CACR_out(cacr_p),
-  .VBR_out(vbr_p)
+  .VBR_out(vbr_p),
+  .diag_tg68k(diag_tg68k),
+  .diag_d5(diag_d5),
+  .diag_flags(diag_flags)
 `endif
 );
 `endif

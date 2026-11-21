@@ -14,8 +14,10 @@ set_global_assignment -name QIP_FILE rtl/cdtv.qip
 set_global_assignment -name VERILOG_FILE rtl/gary.v
 set_global_assignment -name VERILOG_FILE rtl/rtg.v
 set_global_assignment -name VERILOG_FILE rtl/chipdma_arb.v
+set_global_assignment -name VERILOG_FILE rtl/audio_dma_master.v
 set_global_assignment -name VERILOG_FILE rtl/audio_ext/adpcm_decoder_shared.v
 set_global_assignment -name VERILOG_FILE rtl/audio_ext/biquad_iir_ringbuffer.v
+set_global_assignment -name VERILOG_FILE rtl/audio_ext/audio_agc_limiter.v
 set_global_assignment -name VERILOG_FILE rtl/audio_ext/audio_ext.v
 set_global_assignment -name VERILOG_FILE rtl/memory_router.v
 set_global_assignment -name VERILOG_FILE rtl/fastchip.v

@@ -1,0 +1,50 @@
+==============================================================================
+TESTANLEITUNG: Argon Act 3 A/B-Vergleichstest (Fokus: Ursache des Knackens)
+Datum: 08.11.2026
+Ziel: MiSTer FPGA (Minimig-AGA Core 9f4914f0)
+==============================================================================
+
+Hallo Toby und Tobys KI,
+
+dieses Testpaket enthaelt den gezielten A/B-Vergleich zur eindeutigen Trennung
+der 3 Hypothesen zum gelegentlichen leichten Knacken in Akt 3:
+
+1. Limiter-Eingriff (Ausgeschlossen):
+   - In Akt 4 liefen alle 32 Stimmen gleichzeitig bei Maximallast fehlerfrei
+     ohne Knacken. In Akt 3 liegt der Spitzenpegel bei max. -3.3 dBFS, beruehrt
+     also die Limiter-Schwelle (-0.5 dBFS = 30.720) ueberhaupt nicht.
+
+2. Nachladeereignis / DMA (Ausgeschlossen):
+   - In Akt 3 liest nur Stimme 0 per DMA (4-Bit ADPCM = 24 KB/s Bandbreite).
+     Stimmen 1..31 sind kaskadiert (LEN=0, 0% extra DMA).
+
+3. Register-/Lautstärkewechsel (Identifizierte Ursache):
+   - In Akt 3 schaltete Update_Vocoder_30s alle 4 Frames (80 ms = 12.5 Hz)
+     das Center-Band weiter. Dabei sprangen die Register AUD_VOL schlagartig
+     (von 160 auf 16 bzw. 16 auf 160), was einen Amplitudensprung mitten in
+     der Resonanzschwingung erzeugte.
+
+==============================================================================
+ENTHALTENE TESTPROGRAMME:
+==============================================================================
+
+1. `argon_static` (Test A - Stationärer Vocoder, 30 Sekunden):
+   - Startet sofort mit Akt 3.
+   - Das Center-Band bleibt permanent auf Band 14 (~676 Hz Formant) arretiert.
+   - Waehrend der gesamten 30 Sekunden finden KEINERLEI Register- oder
+     Lautstaerkewechsel an den Hardware-Filtern statt!
+   - ERWARTUNG: Wenn dieser Test absolut sauber und knacksfrei laeuft, ist
+     zu 100% bewiesen, dass die sprunghaften Registerwechsel die Ursache waren!
+
+2. `argon_smooth` (Test B - Sanft überblendeter Vocoder, 30 Sekunden):
+   - Startet sofort mit Akt 3.
+   - Der volle 30-Sekunden Frequenz-Sweep laeuft wie gewohnt durch, aber mit
+     einem Frame-fuer-Frame Slew-Rate Limiter (Micro-Crossfade mit max. 6 Einheiten
+     pro Frame statt 144 Einheiten Sprung)!
+   - ERWARTUNG: Der Sweep gleitet analog und weich ohne Stufen und ohne Knacken.
+
+3. `argon_demo` (Finale Grand Demo, 1 Minute, alle 5 Akte):
+   - Die vollstaendige 5-Akte-Demo mit integriertem weichen Micro-Crossfade.
+
+Vielen Dank fuer euren grossartigen Einsatz!
+==============================================================================

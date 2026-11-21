@@ -24,8 +24,7 @@ SDPB sdpb_inst (
    .CEA(wren),
    .CEB(1'b1),
    .OCE(1'b0),
-   .RESETA(1'b0),
-   .RESETB(1'b0)
+   .RESET(1'b0)
 );
 defparam sdpb_inst.BIT_WIDTH_0 = 32;
 defparam sdpb_inst.BIT_WIDTH_1 = 32;
