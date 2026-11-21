@@ -89,8 +89,8 @@
       <list label="Slowmem:" id="X" default="0" action="reset">
 	<listentry label="None (locked)" value="0"/>
       </list>
-      <list label="Fastmem:" id="Q" default="3" action="reset">
-	<listentry label="8MB (locked)" value="3"/>
+      <list label="Fastmem:" id="Q" default="2" action="reset">
+	<listentry label="4MB (locked)" value="2"/>
       </list>
       <!--END-->
       <!--NOT tang_console138k -->

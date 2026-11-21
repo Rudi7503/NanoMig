@@ -151,7 +151,7 @@ always @(posedge clk) begin
       system_video_scanlines <= 2'd0;
       system_chipmem <= AGA ? 2'd3 : 2'd0; // 2MB Chip-RAM for AGA, 512k for OCS
       system_slowmem <= AGA ? 2'd0 : 2'd1; // No slowmem for AGA, 512k for OCS
-      system_fastmem <= AGA ? 2'd3 : 2'd2; // 8 MB Fast-RAM for AGA, 4 MB otherwise
+      system_fastmem <= 2'd2; // 4 MB Fast-RAM (top.sv defines no ENABLE_RAM32)
       system_turbo <= AGA ? 3'b111 : 3'b000; // Diagnostic test: enable turbodata=1 for AGA ROM checksum via PORT_2
       system_ide_enable <= AGA ? 1'b1 : 1'b0; // IDE enabled for AGA
       system_joy_swap <= 1'b1;
@@ -276,8 +276,8 @@ always @(posedge clk) begin
 		   if(id == "Y") system_chipmem <= AGA ? 2'd3 : data_in[1:0];
 		   // Value "X": Slowmem none(0), 512k(1), 1M(2) or 1.5M(3) -- locked to none when AGA=1
 		   if(id == "X") system_slowmem <= AGA ? 2'd0 : data_in[1:0];
-		   // Value "Q": Fastmem none(0), 2M(1), 4M(2) or 8M(3) -- locked to 8M when AGA=1
-		   if(id == "Q") system_fastmem <= AGA ? 2'd3 : data_in[1:0];
+		   // Value "Q": Fastmem none(0), 2M(1), 4M(2) or 8M(3) -- locked to 4M when AGA=1 (no ENABLE_RAM32)
+		   if(id == "Q") system_fastmem <= AGA ? 2'd2 : data_in[1:0];
 		   // Value "Z": Turbo mode none(0), chip(1), turbo(2), both(3)
 		   if(id == "Z") system_turbo[1:0] <= data_in[1:0];
 		   // Value "U": Turbo data off(0), on(1)
