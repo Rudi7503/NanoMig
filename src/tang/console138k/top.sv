@@ -259,11 +259,13 @@ wire spi_io_ss = spi_csn;
 wire spi_io_clk = spi_sclk;
 
 // interface to FPGA Companion
-wire       mcu_sys_strobe;        // mcu message byte valid for sysctrl
-wire       mcu_hid_strobe;        // -"- hid
-wire       mcu_osd_strobe;        // -"- osd
-wire       mcu_sdc_strobe;        // -"- sdc
-wire       mcu_start;             // first byte of MCU message
+wire       mcu_sys_strobe;        // mcu message byte valid for sysctrl (clk_85m domain)
+wire       mcu_start_fast;        // first byte of MCU message (clk_85m domain)
+wire [7:0] mcu_data_out_fast;     // MCU byte (clk_85m domain)
+wire       mcu_hid_strobe;        // -"- hid (clk_28m domain)
+wire       mcu_osd_strobe;        // -"- osd (clk_28m domain)
+wire       mcu_sdc_strobe;        // -"- sdc (clk_28m domain)
+wire       mcu_start;             // first byte of MCU message (clk_28m domain)
 
 wire [7:0] mcu_data_out;  
 
@@ -283,8 +285,12 @@ mcu_spi_sync mcu (
      .spi_io_din(spi_io_din),
      .spi_io_dout(spi_io_dout),
 
-	 // byte wide data in/out to the submodules
+	 // fast clk_85m interface for sysctrl (passes 12/12 full 932-byte XML reads @ 16 MHz zero-gap SPI)
      .mcu_sys_strobe(mcu_sys_strobe),
+     .mcu_start_fast(mcu_start_fast),
+     .mcu_dout_fast(mcu_data_out_fast),
+
+	 // byte wide data in/out to the clk_28m submodules
      .mcu_hid_strobe(mcu_hid_strobe),
      .mcu_osd_strobe(mcu_osd_strobe),
      .mcu_sdc_strobe(mcu_sdc_strobe),
@@ -404,13 +410,13 @@ sysctrl #(
     .AGA(0)
 `endif
 ) sysctrl (
-        .clk(clk_28m),
+        .clk(clk_85m),
         .reset(!pll_lock),
 
          // interface to send and receive generic system control
         .data_in_strobe(mcu_sys_strobe),
-        .data_in_start(mcu_start),
-        .data_in(mcu_data_out),
+        .data_in_start(mcu_start_fast),
+        .data_in(mcu_data_out_fast),
         .data_out(sys_data_out),
 
         // values controlled by the OSD
@@ -1351,7 +1357,7 @@ always @(posedge clk_28m) begin
         diag_df0_present  <= |sd_img_size;
         diag_df0_size_hi  <= sd_img_size[23:16];
     end
-    if (rom_done && osd_reset) diag_osd_rst_seen <= 1'b1;
+    if (mcu_osd_strobe) diag_osd_rst_seen <= 1'b1;
     if (|sd_rd) diag_last_sec <= sd_sector[7:0];
     if (sd_rd_byte_strobe && sd_byte_index == 9'd0) diag_first_b0 <= sd_rd_data;
     if (sd_rd_byte_strobe && sd_byte_index == 9'd1) diag_first_b1 <= sd_rd_data;

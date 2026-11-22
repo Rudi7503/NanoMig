@@ -17,3 +17,6 @@ set_output_delay -clock clk85 -min -1.0 [get_ports {IO_sdram_dq[*] O_sdram_addr[
 
 # BL616 SPI signals are 2-FF synchronized into clk85 inside mcu_spi_sync (async inputs)
 set_false_path -from [get_ports {spi_sclk spi_dat spi_csn}] -to [get_clocks {clk85}]
+
+# sysctrl runs on clk85 for 16 MHz zero-gap SPI XML reads; its static config outputs feed clk28 logic
+set_false_path -from [get_regs {sysctrl/system_*}]
