@@ -50,17 +50,17 @@ module sysctrl #(
   output reg [1:0]  system_floppy_drives,
   output reg	    system_floppy_wrprot,
   output reg	    system_floppy_turbo,
-  output reg [1:0]  system_cpu,
-  output reg [2:0]  system_chipset,
+  (* syn_preserve = 1 *) output reg [1:0]  system_cpu,
+  (* syn_preserve = 1 *) output reg [2:0]  system_chipset,
   output reg	    system_video_mode,
   output reg [1:0]  system_video_screen,
   output reg	    system_ide_enable,
   output reg [1:0]  system_video_filter,
   output reg [1:0]  system_video_scanlines,
-  output reg [1:0]  system_chipmem,
-  output reg [1:0]  system_slowmem,
-  output reg [1:0]  system_fastmem,
-  output reg [2:0]  system_turbo,
+  (* syn_preserve = 1 *) output reg [1:0]  system_chipmem,
+  (* syn_preserve = 1 *) output reg [1:0]  system_slowmem,
+  (* syn_preserve = 1 *) output reg [1:0]  system_fastmem,
+  (* syn_preserve = 1 *) output reg [2:0]  system_turbo,
   output reg	    system_joy_swap,
   output reg [2:0]  system_volume,
   output reg	    system_stereo_mix,
@@ -260,10 +260,10 @@ always @(posedge clk) begin
 		   if(id == "S") system_floppy_turbo <= data_in[0];
 		   // Value "P": write enabled(0) or write protected(1) floppy
 		   if(id == "P") system_floppy_wrprot <= data_in[0];
-		   // Value "C": chipset OCS-A500(0), OCS-A1000(1), ECS(2) or AGA(3)
-		   if(id == "C") system_chipset <= (AGA && data_in[1:0] == 2'd3) ? 3'd6 : {1'b0, data_in[1:0]};
-		   // Value "T": CPU 68000(0), 68010(1) or 68020(2)
-		   if(id == "T") system_cpu <= data_in[1:0] == 2'b10 ? 2'b11 : data_in[1:0];
+		   // Value "C": chipset OCS-A500(0), OCS-A1000(1), ECS(2) or AGA(3) -- locked to AGA when AGA=1
+		   if(id == "C") system_chipset <= AGA ? 3'd6 : {1'b0, data_in[1:0]};
+		   // Value "T": CPU 68000(0), 68010(1) or 68020(2) -- locked to 68020 when AGA=1
+		   if(id == "T") system_cpu <= AGA ? 2'b11 : (data_in[1:0] == 2'b10 ? 2'b11 : data_in[1:0]);
 		   // Value "F": video filter none(0), h(1), v(2) or h+v(3)
 		   if(id == "F") system_video_filter <= data_in[1:0];
 		   // Value "V": PAL(0) or NTSC(1) video
@@ -272,16 +272,16 @@ always @(posedge clk) begin
 		   if(id == "W") system_video_screen <= data_in[1:0];
 		   // Value "L": Scanlines off(0) or on(1)
 		   if(id == "L") system_video_scanlines <= data_in[1:0];
-		   // Value "Y": Chipmem 512k(0), 1M(1), 1.5M(2) or 2M(2)
-		   if(id == "Y") system_chipmem <= data_in[1:0];
-		   // Value "X": Slowmem none(0), 512k(1), 1M(2) or 1.5M(3)
-		   if(id == "X") system_slowmem <= data_in[1:0];
-		   // Value "Q": Fastmem none(0), 2M(1), 4M(2) or 8M(3)
-		   if(id == "Q") system_fastmem <= data_in[1:0];
-		   // Value "Z": Turbo mode none(0), chip(1), turbo(2), both(3)
-		   if(id == "Z") system_turbo[1:0] <= data_in[1:0];
-		   // Value "U": Turbo data off(0), on(1)
-		   if(id == "U") system_turbo[2] <= data_in[0];
+		   // Value "Y": Chipmem 512k(0), 1M(1), 1.5M(2) or 2M(3) -- locked to 2M when AGA=1
+		   if(id == "Y") system_chipmem <= AGA ? 2'd3 : data_in[1:0];
+		   // Value "X": Slowmem none(0), 512k(1), 1M(2) or 1.5M(3) -- locked to none when AGA=1
+		   if(id == "X") system_slowmem <= AGA ? 2'd0 : data_in[1:0];
+		   // Value "Q": Fastmem none(0), 2M(1), 4M(2) or 8M(3) -- locked to 4M when AGA=1 (no ENABLE_RAM32)
+		   if(id == "Q") system_fastmem <= AGA ? 2'd2 : data_in[1:0];
+		   // Value "Z": Turbo mode none(0), chip(1), turbo(2), both(3) -- locked to both when AGA=1
+		   if(id == "Z") system_turbo[1:0] <= AGA ? 2'b11 : data_in[1:0];
+		   // Value "U": Turbo data off(0), on(1) -- locked to on when AGA=1 (required for Kickstart 3.1 PORT_2 ROM checksum)
+		   if(id == "U") system_turbo[2] <= AGA ? 1'b1 : data_in[0];
 		   // Value "I": IDE disabled(0) or enabled(1)
 		   if(id == "I") system_ide_enable <= data_in[0];
 		   // value "J": Swap Joyst off(0) on(1)
