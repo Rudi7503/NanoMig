@@ -196,3 +196,62 @@ den linken Kanal vom neuen und den rechten vom vorherigen Frame erfassen.
 gemeinsamen atomaren Mailbox-Register (z. B. 42-Bit `ext_mailbox` für `[41:21]` L
 und `[20:0]` R) bündeln.
 
+## 19. Tang Console 138K – BL616 Flashen und Standalone-Chainload
+
+**Passiert:**
+- `bflb_mcu_tool --addr 0x40000` überschrieb `0x0..0x7bf` mit `bootinfo.bin` und
+  zerstörte `bl616_fpga_partner` (kein JTAG/FT2232 mehr).
+- Solange USB-C am PC steckte, blieb `bl616_fpga_partner_console60k.bin` im
+  FT2232-JTAG-Brückenmodus und startete `FPGA-Companion` an `0x40000` nicht (kein OSD).
+
+**Regel:**
+- BL616 immer über `BLFlashCommand.exe` mit einer `.ini`-Konfiguration flashen,
+  die **beide** Partitionen schreibt (`0x0` = `bl616_fpga_partner_console60k.bin`,
+  `0x40000` = `fpga_companion_*.bin`).
+- Für OSD / USB-Tastatur das Board **standalone** betreiben (kein PC-USB-C,
+  USB-Tastatur über OTG) → BL616 chainloadet `0x40000`, `F12` öffnet das OSD.
+
+## 20. `amiga.xml`, Locked AGA-Konfiguration und `turbodata` (`U=1`)
+
+**Passiert:**
+- Verschachtelte `<!--IS ... -->` / `<!--NOT ... -->`-Blöcke in `src/misc/amiga.xml`
+  brachten `update_xml.tcl` zum Scheitern (OSD zeigte nur `Settings`).
+- Ohne `ENABLE_RAM32` in `top.sv` aktivierte `Fastmem = 2'd3` (`8MB`) das
+  5,5-MB-SlowRAM-Stealing in `cpu_wrapper.v` statt sauberer 4 MB.
+- `amiga.xml` hatte `Turbo data (U)` auf `default="0"`: Sobald `FPGA-Companion`
+  beim Standalone-Boot die XML-Defaults schickte, überschrieb `U=0` das
+  `system_turbo=3'b111` aus `sysctrl.v` → Kickstart 3.1 Rotbild (ROM-Checksummenfehler).
+
+**Regel:**
+- In `amiga.xml` niemals `<!--IS-->`/`<!--NOT-->` verschachteln und alle 9 Boards
+  prüfen (`tang_primer25k` und `tang_mega138kpro` benötigen eigene `C`/`Q`-Listen).
+- Auf `tang_console138k` (`AGA=1`) in `sysctrl.v` und `amiga.xml` fest verriegeln:
+  `C=AGA (3'd6)`, `T=68020 (2'b11)`, `Y=2MB (2'd3)`, `X=None (2'd0)`,
+  `Q=4MB (2'd2)`, `Z=Both (2'b11)`, `U=TurboData Enabled (1'b1)`.
+
+## 21. Sprite-Engine BRAM-Test (`SPR_BRAM_TEST`)
+
+**Passiert:** `` `define SPR_BRAM_TEST `` in `src/sprite_engine/sprite_engine_dma.v`
+aktivierte `engine_en <= 1'b1` direkt ab Reset und zeichnete ein rotes Testrechteck
+ins Videobild.
+
+**Regel:** Für normale Boot-/OSD-Builds muss `` `define SPR_BRAM_TEST `` auskommentiert
+sein (`3be7d55`).
+
+## 22. Tang Console 138K – SDRAM I/O-Timing-Constraints (`nanomig.sdc`)
+
+**Passiert:** Obwohl `sdram.sv`, `tg68k/`, `minimig-aga/` und `nanomig.v` seit dem
+funktionierenden Stand `62ab3af` unverändert waren (und alle 5 `TG68K_ALU` `Flags`-
+Flipflops in der Netzliste vorhanden waren), zeigten spätere Builds (`a2a4d86`) ein
+Kickstart-3.1-Rotbild (ROM-Checksummenfehler) oder Pixelfehler. Ursache: `nanomig.sdc`
+hatte keinerlei `set_input_delay` / `set_output_delay` für `IO_sdram_dq[*]` und
+`O_sdram_*`, und Gowin packte trotz `(* syn_useioff = 1 *)` 0 SDRAM-Flipflops in
+`IOLOGIC` (`6/285`). Dadurch schwankte die Fabric-Platzierung von `sd_data_reg[15:0]`
+von Build zu Build (`clk85` Fmax fiel von 126,9 MHz auf 97,5 MHz).
+
+**Regel:** `src/tang/console138k/nanomig.sdc` muss explizite `set_input_delay` und
+`set_output_delay`-Constraints auf `clk85` für `IO_sdram_dq[*]` und `O_sdram_*`
+enthalten (`59270d0`). Nach jedem Build `clk85` Fmax sowie Setup/Hold im Timing-Report
+(`.tr`) prüfen.
+
+
