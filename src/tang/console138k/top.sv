@@ -1320,39 +1320,43 @@ wire tmds_clock;
 wire [10:0] hdmi_cx;
 wire [9:0]  hdmi_cy;
 
-// 2x32-Bit HDMI-Diagnose (BL616 SPI/JTAG + SD/Floppy)
-reg [1:0] diag_cs_sync = 2'b11;
-reg [1:0] diag_sclk_sync = 2'b00;
-reg [7:0] diag_cs_fall_cnt = 8'd0;
-reg [7:0] diag_sclk_rise_cnt = 8'd0;
-reg [7:0] diag_sys_cnt = 8'd0;
-reg [3:0] diag_osd_cnt = 4'd0;
-reg [7:0] diag_sdc_cnt = 8'd0;
-reg [7:0] diag_sd_rd_cnt = 8'd0;
+// 2x32-Bit HDMI-Diagnose (Floppy/IDE/SD Detail-Diagnose)
+reg [7:0] diag_fdc_rd_cnt = 8'd0;
+reg [7:0] diag_ide_rd_cnt = 8'd0;
 reg [7:0] diag_sd_done_cnt = 8'd0;
-reg [3:0] diag_mounted_latch = 4'd0;
-reg       diag_sdc_seen = 1'b0;
-reg       diag_sd_rd_prev = 1'b0;
+reg [3:0] diag_fdd_led_cnt = 4'd0;
+reg       diag_df0_present = 1'b0;
+reg       diag_df0_mnt_seen = 1'b0;
+reg       diag_osd_rst_seen = 1'b0;
+reg [7:0] diag_first_b0 = 8'd0;
+reg [7:0] diag_first_b1 = 8'd0;
+reg [7:0] diag_last_sec = 8'd0;
+reg [7:0] diag_df0_size_hi = 8'd0;
+reg       diag_fdc_rd_prev = 1'b0;
+reg       diag_ide_rd_prev = 1'b0;
 reg       diag_sd_done_prev = 1'b0;
+reg       diag_fdd_led_prev = 1'b0;
 always @(posedge clk_28m) begin
-    diag_cs_sync   <= { diag_cs_sync[0], spi_csn };
-    diag_sclk_sync <= { diag_sclk_sync[0], spi_sclk };
-    if (diag_cs_sync == 2'b10 && diag_cs_fall_cnt != 8'hFF)       diag_cs_fall_cnt <= diag_cs_fall_cnt + 8'd1;
-    if (diag_sclk_sync == 2'b01 && diag_sclk_rise_cnt != 8'hFF)   diag_sclk_rise_cnt <= diag_sclk_rise_cnt + 8'd1;
-    if (mcu_sys_strobe && diag_sys_cnt != 8'hFF)                  diag_sys_cnt <= diag_sys_cnt + 8'd1;
-    if (mcu_osd_strobe && diag_osd_cnt != 4'hF)                   diag_osd_cnt <= diag_osd_cnt + 4'd1;
-    if (mcu_sdc_strobe) begin
-        diag_sdc_seen <= 1'b1;
-        if (diag_sdc_cnt != 8'hFF) diag_sdc_cnt <= diag_sdc_cnt + 8'd1;
-    end
-    diag_sd_rd_prev   <= (|sd_rd);
+    diag_fdc_rd_prev  <= (|sd_rd[3:0]);
+    diag_ide_rd_prev  <= (|sd_rd[7:4]);
     diag_sd_done_prev <= sd_done;
-    if ((|sd_rd) && !diag_sd_rd_prev && diag_sd_rd_cnt != 8'hFF)       diag_sd_rd_cnt <= diag_sd_rd_cnt + 8'd1;
-    if (sd_done && !diag_sd_done_prev && diag_sd_done_cnt != 8'hFF)    diag_sd_done_cnt <= diag_sd_done_cnt + 8'd1;
-    diag_mounted_latch <= diag_mounted_latch | sd_img_mounted[3:0];
+    diag_fdd_led_prev <= drv_leds[0];
+    if ((|sd_rd[3:0]) && !diag_fdc_rd_prev && diag_fdc_rd_cnt != 8'hFF) diag_fdc_rd_cnt <= diag_fdc_rd_cnt + 8'd1;
+    if ((|sd_rd[7:4]) && !diag_ide_rd_prev && diag_ide_rd_cnt != 8'hFF) diag_ide_rd_cnt <= diag_ide_rd_cnt + 8'd1;
+    if (sd_done && !diag_sd_done_prev && diag_sd_done_cnt != 8'hFF)     diag_sd_done_cnt <= diag_sd_done_cnt + 8'd1;
+    if (drv_leds[0] && !diag_fdd_led_prev && diag_fdd_led_cnt != 4'hF)  diag_fdd_led_cnt <= diag_fdd_led_cnt + 4'd1;
+    if (sd_img_mounted[0]) begin
+        diag_df0_mnt_seen <= 1'b1;
+        diag_df0_present  <= |sd_img_size;
+        diag_df0_size_hi  <= sd_img_size[23:16];
+    end
+    if (rom_done && osd_reset) diag_osd_rst_seen <= 1'b1;
+    if (|sd_rd) diag_last_sec <= sd_sector[7:0];
+    if (sd_rd_byte_strobe && sd_byte_index == 9'd0) diag_first_b0 <= sd_rd_data;
+    if (sd_rd_byte_strobe && sd_byte_index == 9'd1) diag_first_b1 <= sd_rd_data;
 end
-wire [31:0] diag_row0 = { diag_cs_fall_cnt, diag_sclk_rise_cnt, diag_sys_cnt, diag_osd_cnt, jtagseln, spi_csn, spi_sclk, spi_io_dout };
-wire [31:0] diag_row1 = { diag_sdc_cnt, diag_sd_rd_cnt, diag_sd_done_cnt, diag_mounted_latch, sd_busy, sdc_int, spi_intn, diag_sdc_seen };
+wire [31:0] diag_row0 = { diag_fdc_rd_cnt, diag_ide_rd_cnt, diag_sd_done_cnt, diag_fdd_led_cnt, diag_df0_present, diag_df0_mnt_seen, diag_osd_rst_seen, sd_busy };
+wire [31:0] diag_row1 = { diag_first_b0, diag_first_b1, diag_last_sec, diag_df0_size_hi };
 
 wire diag_ovl_x   = (hdmi_cx >= 11'd96) && (hdmi_cx < 11'd608);
 wire diag_ovl_y0  = (hdmi_cy >= 10'd32) && (hdmi_cy < 10'd52);
