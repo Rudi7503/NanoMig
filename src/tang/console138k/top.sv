@@ -272,8 +272,9 @@ wire [7:0] hid_data_out;
 wire [7:0] osd_data_out = 8'h55;  // OSD actually has no data output
 wire [7:0] sdc_data_out;
    
-mcu_spi mcu (
+mcu_spi_sync mcu (
 	 .clk(clk_28m),
+	 .clk_fast(clk_85m),
 	 .reset(!pll_lock),
 
 	 // SPI interface to FPGA Companion
@@ -1318,7 +1319,51 @@ wire tmds_clock;
 
 wire [10:0] hdmi_cx;
 wire [9:0]  hdmi_cy;
-wire [23:0] hdmi_rgb = { video_red, 2'b00, video_green, 2'b00, video_blue, 2'b00 };
+
+// 2x32-Bit HDMI-Diagnose (BL616 SPI/JTAG + SD/Floppy)
+reg [1:0] diag_cs_sync = 2'b11;
+reg [1:0] diag_sclk_sync = 2'b00;
+reg [7:0] diag_cs_fall_cnt = 8'd0;
+reg [7:0] diag_sclk_rise_cnt = 8'd0;
+reg [7:0] diag_sys_cnt = 8'd0;
+reg [3:0] diag_osd_cnt = 4'd0;
+reg [7:0] diag_sdc_cnt = 8'd0;
+reg [7:0] diag_sd_rd_cnt = 8'd0;
+reg [7:0] diag_sd_done_cnt = 8'd0;
+reg [3:0] diag_mounted_latch = 4'd0;
+reg       diag_sdc_seen = 1'b0;
+reg       diag_sd_rd_prev = 1'b0;
+reg       diag_sd_done_prev = 1'b0;
+always @(posedge clk_28m) begin
+    diag_cs_sync   <= { diag_cs_sync[0], spi_csn };
+    diag_sclk_sync <= { diag_sclk_sync[0], spi_sclk };
+    if (diag_cs_sync == 2'b10 && diag_cs_fall_cnt != 8'hFF)       diag_cs_fall_cnt <= diag_cs_fall_cnt + 8'd1;
+    if (diag_sclk_sync == 2'b01 && diag_sclk_rise_cnt != 8'hFF)   diag_sclk_rise_cnt <= diag_sclk_rise_cnt + 8'd1;
+    if (mcu_sys_strobe && diag_sys_cnt != 8'hFF)                  diag_sys_cnt <= diag_sys_cnt + 8'd1;
+    if (mcu_osd_strobe && diag_osd_cnt != 4'hF)                   diag_osd_cnt <= diag_osd_cnt + 4'd1;
+    if (mcu_sdc_strobe) begin
+        diag_sdc_seen <= 1'b1;
+        if (diag_sdc_cnt != 8'hFF) diag_sdc_cnt <= diag_sdc_cnt + 8'd1;
+    end
+    diag_sd_rd_prev   <= (|sd_rd);
+    diag_sd_done_prev <= sd_done;
+    if ((|sd_rd) && !diag_sd_rd_prev && diag_sd_rd_cnt != 8'hFF)       diag_sd_rd_cnt <= diag_sd_rd_cnt + 8'd1;
+    if (sd_done && !diag_sd_done_prev && diag_sd_done_cnt != 8'hFF)    diag_sd_done_cnt <= diag_sd_done_cnt + 8'd1;
+    diag_mounted_latch <= diag_mounted_latch | sd_img_mounted[3:0];
+end
+wire [31:0] diag_row0 = { diag_cs_fall_cnt, diag_sclk_rise_cnt, diag_sys_cnt, diag_osd_cnt, jtagseln, spi_csn, spi_sclk, spi_io_dout };
+wire [31:0] diag_row1 = { diag_sdc_cnt, diag_sd_rd_cnt, diag_sd_done_cnt, diag_mounted_latch, sd_busy, sdc_int, spi_intn, diag_sdc_seen };
+
+wire diag_ovl_x   = (hdmi_cx >= 11'd96) && (hdmi_cx < 11'd608);
+wire diag_ovl_y0  = (hdmi_cy >= 10'd32) && (hdmi_cy < 10'd52);
+wire diag_ovl_y1  = (hdmi_cy >= 10'd64) && (hdmi_cy < 10'd84);
+wire [10:0] diag_x_rel = hdmi_cx - 11'd96;
+wire [4:0]  diag_bit   = diag_x_rel[8:4];
+wire diag_val = diag_ovl_y0 ? diag_row0[5'd31 - diag_bit] : diag_row1[5'd31 - diag_bit];
+wire diag_bar = (diag_x_rel[3:0] < 4'd12);
+wire diag_on  = diag_ovl_x && (diag_ovl_y0 || diag_ovl_y1);
+wire [23:0] diag_col = diag_bar ? (diag_val ? 24'h00FF00 : 24'h303030) : ((diag_bit[1:0] == 2'b11) ? 24'hFFFF00 : 24'h000000);
+wire [23:0] hdmi_rgb = diag_on ? diag_col : { video_red, 2'b00, video_green, 2'b00, video_blue, 2'b00 };
 
 hdmi #(
     .AUDIO_RATE(48000), .AUDIO_BIT_WIDTH(16),
