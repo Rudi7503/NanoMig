@@ -9,3 +9,9 @@ create_clock -name clk_audio -period 500 -waveform {0 3} [get_nets {clk_audio}] 
 create_generated_clock -name clk28 -source [get_pins {pll_hdmi/u_pll/PLL_inst/CLKOUT0}] -master_clock clk_hdmi -divide_by 5 [get_pins {clk_div_5/clkdiv_inst/CLKOUT}]
 set_multicycle_path -from [get_clocks {clk28}] -to [get_clocks {clk85}]  -setup -start 2
 set_multicycle_path -from [get_clocks {clk28}] -to [get_clocks {clk85}]  -hold -start 2
+
+# Lock SDRAM DQ/Addr/Ctrl registers close to Bank 2 I/O pads for deterministic PnR timing
+set_input_delay  -clock clk85 -max 5.5 [get_ports {IO_sdram_dq[*]}]
+set_input_delay  -clock clk85 -min 1.5 [get_ports {IO_sdram_dq[*]}]
+set_output_delay -clock clk85 -max 2.0 [get_ports {IO_sdram_dq[*] O_sdram_addr[*] O_sdram_ba[*] O_sdram_dqm[*] O_sdram_cs_n O_sdram_ras_n O_sdram_cas_n O_sdram_wen_n}]
+set_output_delay -clock clk85 -min -1.0 [get_ports {IO_sdram_dq[*] O_sdram_addr[*] O_sdram_ba[*] O_sdram_dqm[*] O_sdram_cs_n O_sdram_ras_n O_sdram_cas_n O_sdram_wen_n}]
