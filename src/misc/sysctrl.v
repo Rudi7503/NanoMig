@@ -278,10 +278,10 @@ always @(posedge clk) begin
 		   if(id == "X") system_slowmem <= AGA ? 2'd0 : data_in[1:0];
 		   // Value "Q": Fastmem none(0), 2M(1), 4M(2) or 8M(3) -- locked to 4M when AGA=1 (no ENABLE_RAM32)
 		   if(id == "Q") system_fastmem <= AGA ? 2'd2 : data_in[1:0];
-		   // Value "Z": Turbo mode none(0), chip(1), turbo(2), both(3)
-		   if(id == "Z") system_turbo[1:0] <= data_in[1:0];
-		   // Value "U": Turbo data off(0), on(1)
-		   if(id == "U") system_turbo[2] <= data_in[0];
+		   // Value "Z": Turbo mode none(0), chip(1), turbo(2), both(3) -- locked to both when AGA=1
+		   if(id == "Z") system_turbo[1:0] <= AGA ? 2'b11 : data_in[1:0];
+		   // Value "U": Turbo data off(0), on(1) -- locked to on when AGA=1 (required for Kickstart 3.1 PORT_2 ROM checksum)
+		   if(id == "U") system_turbo[2] <= AGA ? 1'b1 : data_in[0];
 		   // Value "I": IDE disabled(0) or enabled(1)
 		   if(id == "I") system_ide_enable <= data_in[0];
 		   // value "J": Swap Joyst off(0) on(1)

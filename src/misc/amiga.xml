@@ -70,7 +70,7 @@
 	<listentry label="AGA" value="3"/>
       </list>
       <!--END-->
-      <!--IS tang_console60k mistle_gw3a_20 tang_nano20k -->
+      <!--IS tang_console60k mistle_gw3a_20 tang_nano20k tang_primer25k tang_mega138kpro -->
       <list label="Chipset:" id="C" default="2" action="reset">
 	<listentry label="OCS-A500" value="0"/>
 	<listentry label="OCS-A1000" value="1"/>
@@ -115,7 +115,7 @@
 	<listentry label="8MB" value="3"/>
       </list>
       <!--END-->
-      <!--IS tang_nano20k_020 tang_nano20k_lcd tang_console60k tang_nano20k -->
+      <!--IS tang_nano20k_020 tang_nano20k_lcd tang_console60k tang_nano20k tang_primer25k tang_mega138kpro -->
       <list label="Fastmem:" id="Q" default="0" action="reset">
 	<listentry label="None" value="0"/>
 	<listentry label="2MB" value="1"/>
@@ -123,6 +123,15 @@
 	<listentry label="5.5MB" value="3"/>
       </list>
       <!--END-->
+      <!--IS tang_console138k -->
+      <list label="Turbo:" id="Z" default="3">
+    <listentry label="Both (locked)" value="3"/>
+      </list>
+      <list label="Turbo data:" id="U" default="1">
+    <listentry label="Enabled (locked)" value="1"/>
+      </list>
+      <!--END-->
+      <!--NOT tang_console138k -->
       <list label="Turbo:" id="Z" default="3">
     <listentry label="None" value="0"/>
     <listentry label="Chip" value="1"/>
@@ -133,6 +142,7 @@
     <listentry label="Disabled" value="0"/>
     <listentry label="Enabled" value="1"/>
       </list>
+      <!--END-->
       <list label="Video:" id="V" default="0">
 	<listentry label="PAL" value="0"/>
 	<listentry label="NTSC" value="1"/>
