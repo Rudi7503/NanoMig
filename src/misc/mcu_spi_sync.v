@@ -1,13 +1,16 @@
 /*
     mcu_spi_sync.v
 
-    100% synchronous SPI interface to BL616 FPGA Companion (oversampled on clk_fast = 85 MHz).
-    Eliminates spi_sclk_d generic-routing clock skew (Gowin WARN PR1014) completely.
-    SPI MODE 1: idle SCLK low, MISO updated on rising edge, MOSI & MISO sampled on falling edge.
+    100% synchronous SPI interface to BL616 FPGA Companion (oversampled on clk_fast = 85.59 MHz).
+    Eliminates spi_sclk_d generic-routing clock skew (Gowin WARN PR1014) completely and cuts
+    byte-to-sysctrl response latency from 140..175 ns down to 35..82 ns.
+
+    SPI MODE 1: idle SCLK low, MISO updated early after previous falling edge,
+    MOSI & MISO sampled on falling edge.
 */
 
 module mcu_spi_sync (
-  input        clk,          // local core clock (28.57 MHz)
+  input        clk,          // local core clock (28.53 MHz, phase-locked 1:3 to clk_fast)
   input        clk_fast,     // fast global clock (85.59 MHz) for SPI oversampling
   input        reset,
 
@@ -15,7 +18,7 @@ module mcu_spi_sync (
   input        spi_io_ss,
   input        spi_io_clk,
   input        spi_io_din,
-  output reg   spi_io_dout,
+  output       spi_io_dout,
 
   // byte interface to the various core components (clk domain)
   output       mcu_sys_strobe,
@@ -42,67 +45,55 @@ always @(posedge clk_fast) begin
 end
 
 wire ss_high   = ss_s[1];
-wire sclk_rise = (sclk_s[2:1] == 2'b01);
 wire sclk_fall = (sclk_s[2:1] == 2'b10);
 
 // bit counter and MOSI shift register in clk_fast domain
-reg [3:0] spi_cnt = 4'd0;
-reg [7:0] spi_data_in = 8'd0;
-reg [6:0] spi_sr_in = 7'd0;
-reg       spi_data_in_ready = 1'b0;
+reg [2:0] spi_cnt     = 3'd0;
+reg [6:0] spi_sr_in   = 7'd0;
+reg [7:0] spi_target  = 8'd0;
+reg [7:0] spi_in_data = 8'd0;
+reg [3:0] spi_in_cnt  = 4'd0;
+reg       req_85      = 1'b0;
+reg       req_start   = 1'b0;
 
 always @(posedge clk_fast) begin
     if (ss_high) begin
-        spi_cnt <= 4'd0;
-        spi_data_in_ready <= 1'b0;
+        spi_cnt    <= 3'd0;
+        spi_in_cnt <= 4'd0;
     end else if (sclk_fall) begin
-        spi_cnt <= spi_cnt + 4'd1;
+        spi_cnt   <= spi_cnt + 3'd1;
         spi_sr_in <= { spi_sr_in[5:0], din_s[1] };
 
-        if (spi_cnt[2:0] == 3'd7) begin
-            spi_data_in <= { spi_sr_in, din_s[1] };
-            spi_data_in_ready <= 1'b1;
+        if (spi_cnt == 3'd7) begin
+            if (spi_in_cnt == 4'd0) begin
+                spi_target <= { spi_sr_in, din_s[1] };
+            end else begin
+                spi_in_data <= { spi_sr_in, din_s[1] };
+                req_start   <= (spi_in_cnt == 4'd1);
+                req_85      <= ~req_85;
+            end
+            if (spi_in_cnt != 4'd15)
+                spi_in_cnt <= spi_in_cnt + 4'd1;
         end
-        if (spi_cnt[2:0] == 3'd3)
-            spi_data_in_ready <= 1'b0;
     end
 end
 
-// bring received byte into local clk (28 MHz) domain
-reg       spi_in_strobe = 1'b0;
-reg [7:0] spi_target = 8'd0;
-assign mcu_sys_strobe = spi_in_strobe && (spi_target == 8'd0);
-assign mcu_hid_strobe = spi_in_strobe && (spi_target == 8'd1);
-assign mcu_osd_strobe = spi_in_strobe && (spi_target == 8'd2);
-assign mcu_sdc_strobe = spi_in_strobe && (spi_target == 8'd3);
-
-reg [3:0] spi_in_cnt = 4'd0;
-reg [7:0] spi_in_data = 8'd0;
-assign mcu_start = (spi_in_cnt == 4'd2);
-assign mcu_dout  = spi_in_data;
-
-// clk_fast (85.59 MHz) and clk (28.57 MHz) are synchronous from pll_hdmi -> 1-stage edge detect
-reg spi_data_in_ready_prev = 1'b0;
-
-always @(posedge clk) begin
-    spi_data_in_ready_prev <= spi_data_in_ready;
-
-    if (ss_high)
-        spi_in_cnt <= 4'd0;
-
-    if (spi_data_in_ready && !spi_data_in_ready_prev) begin
-        if (spi_in_cnt == 4'd0)
-            spi_target <= spi_data_in;
-        else begin
-            spi_in_strobe <= 1'b1;
-            spi_in_data <= spi_data_in;
-        end
-
-        if (spi_in_cnt != 4'd15)
-            spi_in_cnt <= spi_in_cnt + 4'd1;
-    end else
-        spi_in_strobe <= 1'b0;
+// Race-free synchronous handoff from clk_fast (85.59 MHz) to clk (28.53 MHz):
+// Sample req_85 on negedge clk so strobe_28 is registered and stable for a full
+// half-cycle (17.5 ns) before posedge clk consumes it in sysctrl/hid/osd/sd_card.
+reg req_28 = 1'b0;
+reg strobe_28 = 1'b0;
+always @(negedge clk) begin
+    req_28    <= req_85;
+    strobe_28 <= (req_85 != req_28);
 end
+
+assign mcu_start      = req_start;
+assign mcu_dout       = spi_in_data;
+assign mcu_sys_strobe = strobe_28 && (spi_target == 8'd0);
+assign mcu_hid_strobe = strobe_28 && (spi_target == 8'd1);
+assign mcu_osd_strobe = strobe_28 && (spi_target == 8'd2);
+assign mcu_sdc_strobe = strobe_28 && (spi_target == 8'd3);
 
 wire [7:0] in_byte =
     (spi_target == 8'd0) ? mcu_sys_din :
@@ -111,13 +102,9 @@ wire [7:0] in_byte =
     (spi_target == 8'd3) ? mcu_sdc_din :
     8'h00;
 
-// MISO output updated on negedge clk_fast when sclk_s[1] rises (17.5..29.2 ns after SCLK rise,
-// leaving >= 8.3 ns setup margin before BL616's falling-edge sample at 37.5 ns @ 13.33 MHz)
-always @(negedge clk_fast) begin
-    if (ss_high)
-        spi_io_dout <= 1'b0; // bl616 EN_CHIP fix
-    else if (sclk_s[1] && !sclk_s[2])
-        spi_io_dout <= in_byte[~spi_cnt[2:0]];
-end
+// MISO output directly muxed from registered ss_high, spi_target, spi_cnt, and mcu_*_din:
+// Saves 1 full clk_fast cycle (11.7 ns) so new MSB is valid immediately after sysctrl/sd_card
+// updates data_out on posedge clk, while bits 6..0 switch cleanly 23..35 ns after sclk_fall.
+assign spi_io_dout = ss_high ? 1'b0 : in_byte[~spi_cnt];
 
 endmodule

@@ -272,8 +272,9 @@ wire [7:0] hid_data_out;
 wire [7:0] osd_data_out = 8'h55;  // OSD actually has no data output
 wire [7:0] sdc_data_out;
    
-mcu_spi mcu (
+mcu_spi_sync mcu (
 	 .clk(clk_28m),
+	 .clk_fast(clk_85m),
 	 .reset(!pll_lock),
 
 	 // SPI interface to FPGA Companion
