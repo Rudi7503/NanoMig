@@ -576,15 +576,16 @@ wire        spr_sd_ack;
 
 assign ram_din = sdram_dout;
 
-// pack config values into minimig config
-wire [5:0] chipset_config = { 1'b0, osd_chipset, osd_video_mode, 1'b0 };
-wire [1:0] cpu_config     = osd_cpu;
-wire [2:0] turbo_config   = osd_turbo;
-wire [7:0] memory_config  = { 4'b0_000, osd_slowmem, osd_chipmem };   
-wire [2:0] fastram_config = { 1'b0, osd_fastmem };   
+// pack config values into minimig config (Tang Console 138K AGA: locked, cannot be overwritten by OSD/amiga.ini)
+(* syn_keep = 1 *) wire osd_cfg_keep = ^{ osd_chipset, osd_cpu, osd_turbo, osd_slowmem, osd_chipmem, osd_fastmem };
+wire [5:0] chipset_config = { 1'b0, 3'd6, osd_video_mode, 1'b0 }; // AGA locked
+wire [1:0] cpu_config     = 2'b11;                                // 68020 locked
+wire [2:0] turbo_config   = 3'b111;                               // Turbo Both + TurboData locked
+wire [7:0] memory_config  = { 4'b0_000, 2'd0, 2'd3 };             // 0 Slow + 2MB Chip locked
+wire [2:0] fastram_config = { 1'b0, 2'd2 };                       // 4MB Fast locked (no ENABLE_RAM32)
 wire [3:0] floppy_config  = { osd_floppy_drives, osd_floppy_wrprot, osd_floppy_turbo };
-wire [3:0] video_config   = { osd_video_filter, osd_video_scanlines };   
-wire [5:0] ide_config     = { 5'b10000, osd_ide_enable };   
+wire [3:0] video_config   = { osd_video_filter, osd_video_scanlines };
+wire [5:0] ide_config     = { 5'b10000, osd_ide_enable };
    
 nanomig nanomig
 (

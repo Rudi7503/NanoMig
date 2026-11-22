@@ -39,11 +39,6 @@
     <fileselector label="Floppy DF0:" ext="adf" index="0"/>
 	<cfgselector label="Config" ext="amiga.ini" default="amiga.ini"/>
     <menu label="System">
-        <!--IS tang_console138k -->
-	<list label="CPU:" id="T" default="2" action="reset">
-	  <listentry label="68020 (locked)" value="2"/>
-	</list>
-	<!--END-->
         <!--IS mistle_gw5a_25 -->
 	<list label="CPU:" id="T" default="2" action="reset">
 	  <listentry label="68000" value="0"/>
@@ -57,43 +52,19 @@
 	<listentry label="68020" value="1"/>
       </list>
 	<!--END-->
-      <!--IS tang_console138k -->
-      <list label="Chipset:" id="C" default="3" action="reset">
-	<listentry label="AGA (locked)" value="3"/>
-      </list>
-      <!--END-->
-      <!--IS mistle_gw5a_25 tang_nano20k_020 tang_nano20k_lcd -->
       <list label="Chipset:" id="C" default="2" action="reset">
 	<listentry label="OCS-A500" value="0"/>
 	<listentry label="OCS-A1000" value="1"/>
 	<listentry label="ECS" value="2"/>
+	<!--IS mistle_gw5a_25 tang_nano20k_020 tang_nano20k_lcd -->
 	<listentry label="AGA" value="3"/>
+	<!--END-->
       </list>
-      <!--END-->
-      <!--IS tang_console60k mistle_gw3a_20 tang_nano20k tang_primer25k tang_mega138kpro -->
-      <list label="Chipset:" id="C" default="2" action="reset">
-	<listentry label="OCS-A500" value="0"/>
-	<listentry label="OCS-A1000" value="1"/>
-	<listentry label="ECS" value="2"/>
-      </list>
-      <!--END-->
       <list label="Kickstart:" id="K" default="1" action="reset">
 	<listentry label="1.3" value="0"/>
 	<listentry label="3.1" value="1"/>
 	<listentry label="3.2" value="2"/>
 	    </list>
-      <!--IS tang_console138k -->
-      <list label="Chipmem:" id="Y" default="3" action="reset">
-	<listentry label="2MB (locked)" value="3"/>
-      </list>
-      <list label="Slowmem:" id="X" default="0" action="reset">
-	<listentry label="None (locked)" value="0"/>
-      </list>
-      <list label="Fastmem:" id="Q" default="2" action="reset">
-	<listentry label="4MB (locked)" value="2"/>
-      </list>
-      <!--END-->
-      <!--NOT tang_console138k -->
       <list label="Chipmem:" id="Y" default="0" action="reset">
 	<listentry label="512kB" value="0"/>
 	<listentry label="1MB" value="1"/>
@@ -105,33 +76,19 @@
 	<listentry label="512kB" value="1"/>
 	<listentry label="1MB" value="2"/>
 	<listentry label="1.5MB" value="3"/>
-      </list>
-      <!--END-->
-      <!--IS mistle_gw3a_20 mistle_gw5a_25 -->
+      </list>	
       <list label="Fastmem:" id="Q" default="0" action="reset">
 	<listentry label="None" value="0"/>
 	<listentry label="2MB" value="1"/>
 	<listentry label="4MB" value="2"/>
+	<!-- the gw3a_20 and gw5a_25 boards have 32 MB SDRAM and support 8MB -->
+	<!--IS mistle_gw3a_20 mistle_gw5a_25 -->
 	<listentry label="8MB" value="3"/>
-      </list>
-      <!--END-->
-      <!--IS tang_nano20k_020 tang_nano20k_lcd tang_console60k tang_nano20k tang_primer25k tang_mega138kpro -->
-      <list label="Fastmem:" id="Q" default="0" action="reset">
-	<listentry label="None" value="0"/>
-	<listentry label="2MB" value="1"/>
-	<listentry label="4MB" value="2"/>
+    <!--END-->
+	<!--NOT mistle_gw3a_20 mistle_gw5a_25 -->
 	<listentry label="5.5MB" value="3"/>
-      </list>
-      <!--END-->
-      <!--IS tang_console138k -->
-      <list label="Turbo:" id="Z" default="3">
-    <listentry label="Both (locked)" value="3"/>
-      </list>
-      <list label="Turbo data:" id="U" default="1">
-    <listentry label="Enabled (locked)" value="1"/>
-      </list>
-      <!--END-->
-      <!--NOT tang_console138k -->
+	<!--END-->
+      </list>	
       <list label="Turbo:" id="Z" default="3">
     <listentry label="None" value="0"/>
     <listentry label="Chip" value="1"/>
@@ -142,7 +99,6 @@
     <listentry label="Disabled" value="0"/>
     <listentry label="Enabled" value="1"/>
       </list>
-      <!--END-->
       <list label="Video:" id="V" default="0">
 	<listentry label="PAL" value="0"/>
 	<listentry label="NTSC" value="1"/>
