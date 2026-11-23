@@ -10,13 +10,16 @@ set_multicycle_path -from [get_clocks {clk28}] -to [get_clocks {clk85}]  -setup 
 set_multicycle_path -from [get_clocks {clk28}] -to [get_clocks {clk85}]  -hold -start 2
 
 # Lock SDRAM DQ/Addr/Ctrl registers close to Bank 2 I/O pads for deterministic PnR timing
-set_input_delay  -clock clk85 -max 5.5 [get_ports {IO_sdram_dq[*]}]
+# O_sdram_clk is 216 deg shifted (~7.01 ns + OBUF ~2.5 ns = ~9.5 ns); bound outputs <= 6.68 ns (max 5.0)
+# and inputs <= 5.18 ns (max 6.5) so every build has deterministic margin regardless of PnR seed.
+set_input_delay  -clock clk85 -max 6.5 [get_ports {IO_sdram_dq[*]}]
 set_input_delay  -clock clk85 -min 1.5 [get_ports {IO_sdram_dq[*]}]
-set_output_delay -clock clk85 -max 2.0 [get_ports {IO_sdram_dq[*] O_sdram_addr[*] O_sdram_ba[*] O_sdram_dqm[*] O_sdram_cs_n O_sdram_ras_n O_sdram_cas_n O_sdram_wen_n}]
+set_output_delay -clock clk85 -max 5.0 [get_ports {IO_sdram_dq[*] O_sdram_addr[*] O_sdram_ba[*] O_sdram_dqm[*] O_sdram_cs_n O_sdram_ras_n O_sdram_cas_n O_sdram_wen_n}]
 set_output_delay -clock clk85 -min -1.0 [get_ports {IO_sdram_dq[*] O_sdram_addr[*] O_sdram_ba[*] O_sdram_dqm[*] O_sdram_cs_n O_sdram_ras_n O_sdram_cas_n O_sdram_wen_n}]
 
-# BL616 SPI signals are 2-FF synchronized into clk85 inside mcu_spi_sync (async inputs)
+# BL616 SPI signals: inputs 2-FF synchronized into clk85; bound registered MISO <= 6.0 ns to U13 pad
 set_false_path -from [get_ports {spi_sclk spi_dat spi_csn}] -to [get_clocks {clk85}]
+set_max_delay 6.0 -from [get_clocks {clk85}] -to [get_ports {spi_dir}]
 
 # sysctrl runs on clk85 for 16 MHz zero-gap SPI XML reads; its static config outputs feed clk28 logic
 set_false_path -from [get_regs {sysctrl/system_*}]

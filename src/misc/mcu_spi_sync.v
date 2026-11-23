@@ -20,7 +20,7 @@ module mcu_spi_sync (
   input        spi_io_ss,
   input        spi_io_clk,
   input        spi_io_din,
-  output reg   spi_io_dout,
+  (* syn_useioff = 1 *) output reg   spi_io_dout,
 
   // fast (clk_fast) byte interface for sysctrl
   output       mcu_sys_strobe,
