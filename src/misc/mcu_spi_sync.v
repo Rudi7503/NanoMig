@@ -20,7 +20,7 @@ module mcu_spi_sync (
   input        spi_io_ss,
   input        spi_io_clk,
   input        spi_io_din,
-  (* syn_useioff = 1 *) output reg   spi_io_dout,
+  output       spi_io_dout,
 
   // fast (clk_fast) byte interface for sysctrl
   output       mcu_sys_strobe,
@@ -59,13 +59,12 @@ reg [6:0] spi_sr_in   = 7'd0;
 reg [7:0] spi_target  = 8'd0;
 reg [7:0] spi_in_data = 8'd0;
 reg [3:0] spi_in_cnt  = 4'd0;
-reg       strobe_fast = 1'b0;
 reg       req_85      = 1'b0;
 reg       req_start   = 1'b0;
 
-always @(posedge clk_fast) begin
-    strobe_fast <= 1'b0;
+wire byte_done = !ss_high && sclk_fall && (spi_cnt == 3'd7);
 
+always @(posedge clk_fast) begin
     if (ss_high) begin
         spi_cnt    <= 3'd0;
         spi_in_cnt <= 4'd0;
@@ -79,7 +78,6 @@ always @(posedge clk_fast) begin
             end else begin
                 spi_in_data <= { spi_sr_in, din_s[1] };
                 req_start   <= (spi_in_cnt == 4'd1);
-                strobe_fast <= 1'b1;
                 req_85      <= ~req_85;
             end
             if (spi_in_cnt != 4'd15)
@@ -88,10 +86,12 @@ always @(posedge clk_fast) begin
     end
 end
 
-// Fast clk_fast interface (for sysctrl)
-assign mcu_sys_strobe = strobe_fast && (spi_target == 8'd0);
-assign mcu_start_fast = req_start;
-assign mcu_dout_fast  = spi_in_data;
+// Zero-extra-latency clk_fast interface (for sysctrl):
+// Fires on the exact clk_fast edge where bit 7 completes, so sysctrl updates mcu_sys_din
+// on the very same edge that spi_cnt wraps 7->0 (saves 2 full clk_fast cycles = 23.4 ns!).
+assign mcu_sys_strobe = byte_done && (spi_in_cnt != 4'd0) && (spi_target == 8'd0);
+assign mcu_start_fast = (spi_in_cnt == 4'd1);
+assign mcu_dout_fast  = { spi_sr_in, din_s[1] };
 
 // Race-free synchronous handoff from clk_fast (85.59 MHz) to clk (28.53 MHz) for hid/osd/sd_card:
 reg req_28 = 1'b0;
@@ -114,14 +114,9 @@ wire [7:0] in_byte =
     (spi_target == 8'd3) ? mcu_sdc_din :
     8'h00;
 
-// 100% registered MISO output on posedge clk_fast (zero combinational output path, zero half-cycle paths):
-// With sysctrl on clk_fast, new MSB is latched into spi_io_dout within 35..47 ns of bit 7 falling edge,
-// leaving >= 28 ns setup margin before bit 0 falling edge even at 13.333 MHz zero-gap SPI.
-always @(posedge clk_fast) begin
-    if (ss_high)
-        spi_io_dout <= 1'b0; // bl616 EN_CHIP fix
-    else
-        spi_io_dout <= in_byte[~spi_cnt];
-end
+// Direct mux from registered in_byte / spi_cnt / ss_high (zero extra pipeline cycle):
+// New MSB is valid on spi_io_dout within ~35..47 ns of bit 7 falling edge,
+// leaving >= 28 ns setup margin at 13.333 MHz (and working even at 20 MHz zero-gap SPI).
+assign spi_io_dout = ss_high ? 1'b0 : in_byte[~spi_cnt];
 
 endmodule

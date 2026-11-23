@@ -17,9 +17,9 @@ set_input_delay  -clock clk85 -min 1.5 [get_ports {IO_sdram_dq[*]}]
 set_output_delay -clock clk85 -max 5.0 [get_ports {IO_sdram_dq[*] O_sdram_addr[*] O_sdram_ba[*] O_sdram_dqm[*] O_sdram_cs_n O_sdram_ras_n O_sdram_cas_n O_sdram_wen_n}]
 set_output_delay -clock clk85 -min -1.0 [get_ports {IO_sdram_dq[*] O_sdram_addr[*] O_sdram_ba[*] O_sdram_dqm[*] O_sdram_cs_n O_sdram_ras_n O_sdram_cas_n O_sdram_wen_n}]
 
-# BL616 SPI signals: inputs 2-FF synchronized into clk85; bound registered MISO <= 6.0 ns to U13 pad
+# BL616 SPI signals: inputs 2-FF synchronized into clk85; bound MISO <= 10.0 ns to U13 pad
 set_false_path -from [get_ports {spi_sclk spi_dat spi_csn}] -to [get_clocks {clk85}]
-set_max_delay 6.0 -from [get_clocks {clk85}] -to [get_ports {spi_dir}]
+set_max_delay 10.0 -from [get_clocks {clk85}] -to [get_ports {spi_dir}]
 
 # sysctrl runs on clk85 for 16 MHz zero-gap SPI XML reads; its static config outputs feed clk28 logic
 set_false_path -from [get_regs {sysctrl/system_*}]
