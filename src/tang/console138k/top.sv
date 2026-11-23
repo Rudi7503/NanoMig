@@ -218,9 +218,18 @@ wire       osd_stereo_mix;      // 0=off, 1=on
 wire       rom_done;
 
 // generate a reset for some time after rom has been initialized
+// synchronize osd_reset from sysctrl (clk_85m) into clk_28m
+reg [1:0] osd_reset_sync = 2'b11;
+always @(posedge clk_28m) begin
+    if (!pll_lock)
+        osd_reset_sync <= 2'b11;
+    else
+        osd_reset_sync <= { osd_reset_sync[0], osd_reset };
+end
+
 reg [15:0] reset_cnt;
 always @(posedge clk_28m) begin
-    if(!pll_lock || !rom_done || kbd_reset)
+    if(!pll_lock || !rom_done || osd_reset_sync[1] || kbd_reset)
         reset_cnt <= 16'hffff;
     else if(reset_cnt != 0)
         reset_cnt <= reset_cnt - 16'd1;
@@ -1397,8 +1406,10 @@ always @(posedge clk_28m) begin
         if (sd_done && !diag_sd_done_prev)              diag_df0_b_locked <= 1'b1;
     end
 end
+wire diag_crc_ok = (diag_flash_64 == diag_sdram_64) && (diag_flash_64 != 64'd0);
+wire [7:0] diag_boot_byte = { rom_done, diag_crc_ok, diag_cpu_rst_n, diag_seen_rd, diag_rd_active, diag_bus_stage };
 wire [31:0] diag_row0 = { diag_fdc_rd_cnt, diag_ide_rd_cnt, diag_sd_done_cnt, diag_fdd_led_cnt, diag_df0_present, diag_df0_mnt_seen, diag_osd_rst_seen, sd_busy };
-wire [31:0] diag_row1 = { diag_first_b0, diag_first_b1, diag_last_sec, diag_df0_size_hi };
+wire [31:0] diag_row1 = { diag_boot_byte, diag_first_b0, diag_first_b1, diag_df0_size_hi };
 
 wire diag_ovl_x   = (hdmi_cx >= 11'd96) && (hdmi_cx < 11'd608);
 wire diag_ovl_y0  = (hdmi_cy >= 10'd32) && (hdmi_cy < 10'd52);
