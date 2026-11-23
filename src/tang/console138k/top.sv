@@ -1059,7 +1059,7 @@ sdram #(
 //  Speicher getrennt und der Prozessor haengt wie vorher direkt am
 //  SDRAM. Bootet dieser Stand, liegt der Fehler im Arbiter.
 // --------------------------------------------------------------------
-`define SPR_BRAM_TEST
+// `define SPR_BRAM_TEST
 // `define USE_SPR_ARB
 
 `ifdef USE_SPR_ARB
@@ -1368,6 +1368,8 @@ reg       diag_fdc_rd_prev = 1'b0;
 reg       diag_ide_rd_prev = 1'b0;
 reg       diag_sd_done_prev = 1'b0;
 reg       diag_fdd_led_prev = 1'b0;
+reg       diag_df0_active = 1'b0;
+reg       diag_df0_b_locked = 1'b0;
 always @(posedge clk_28m) begin
     diag_fdc_rd_prev  <= (|sd_rd[3:0]);
     diag_ide_rd_prev  <= (|sd_rd[7:4]);
@@ -1383,9 +1385,17 @@ always @(posedge clk_28m) begin
         diag_df0_size_hi  <= sd_img_size[23:16];
     end
     if (mcu_osd_strobe) diag_osd_rst_seen <= 1'b1;
-    if (|sd_rd) diag_last_sec <= sd_sector[7:0];
-    if (sd_rd_byte_strobe && sd_byte_index == 9'd0) diag_first_b0 <= sd_rd_data;
-    if (sd_rd_byte_strobe && sd_byte_index == 9'd1) diag_first_b1 <= sd_rd_data;
+    if (sd_rd[0]) begin
+        diag_df0_active <= 1'b1;
+        if (!diag_df0_b_locked) diag_last_sec <= sd_sector[7:0];
+    end else if (|sd_rd[7:4]) begin
+        diag_df0_active <= 1'b0;
+    end
+    if (diag_df0_active && !diag_df0_b_locked) begin
+        if (sd_rd_byte_strobe && sd_byte_index == 9'd0) diag_first_b0 <= sd_rd_data;
+        if (sd_rd_byte_strobe && sd_byte_index == 9'd1) diag_first_b1 <= sd_rd_data;
+        if (sd_done && !diag_sd_done_prev)              diag_df0_b_locked <= 1'b1;
+    end
 end
 wire [31:0] diag_row0 = { diag_fdc_rd_cnt, diag_ide_rd_cnt, diag_sd_done_cnt, diag_fdd_led_cnt, diag_df0_present, diag_df0_mnt_seen, diag_osd_rst_seen, sd_busy };
 wire [31:0] diag_row1 = { diag_first_b0, diag_first_b1, diag_last_sec, diag_df0_size_hi };
