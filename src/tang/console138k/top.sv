@@ -58,8 +58,8 @@ module top(
   input			pmod_companion_ss,
   output		pmod_companion_intn,
 
-  // PMOD1 closer to the HDMI
-  inout [7:0]	pmod1,
+  // PMOD1 closer to the HDMI (pmod1[7] = D21 reserved as safe unconnected pad for jtagseln)
+  inout [6:0]	pmod1,
 
   output		jtagseln,
   input			bl616_jtagsel,
@@ -101,7 +101,7 @@ module top(
 );
 
 // pmod 1 is unused
-assign pmod1 = 8'hzz;
+assign pmod1 = 7'bzzzzzzz;
       
 // physcial dsub9 joystick & mouse port 1 is unused
 wire [5:0] db9_joy = { 6'b000000 };
@@ -189,8 +189,7 @@ always @(posedge pll_lock)
 
 // led 2 is the green component of the CFG RGB led
 // (controlled below by diagnostic blinker)
-// enable JTAG if any button has been pressed during boot and also once
-// the external FPGA Companion has been seen
+// enable JTAG if requested via sysctrl; locked to unconnected PMOD1 pin D21 + V_JTAGSELN
 wire	sys_jtagsel;
 assign jtagseln = pll_lock && !sys_jtagsel;
 assign uart_ext_tx = bl616_tx;   // from BL616 to PMOD
