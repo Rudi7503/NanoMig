@@ -304,7 +304,8 @@ mcu_spi_sync mcu (
 
 // decode SPI/MCU data received for human input devices (HID) and
 // convert into Amiga compatible mouse and keyboard signals.
-// Stretch 1-cycle clk_85m int_ack_fast pulses from sysctrl into exact 1-cycle clk_28m pulses.
+// Proper 2-FF toggle synchronizer + local edge detector (s1 -> s2 -> s3) from clk_85m to clk_28m:
+// int_ack_s1 only feeds int_ack_s2; functional edge detection uses int_ack_s2 ^ int_ack_s3.
 wire [7:0] int_ack_fast;
 reg  [7:0] int_ack_tgl_85 = 8'd0;
 always @(posedge clk_85m) begin
@@ -313,18 +314,21 @@ always @(posedge clk_85m) begin
     else
         int_ack_tgl_85 <= int_ack_tgl_85 ^ int_ack_fast;
 end
-reg [7:0] int_ack_s1 = 8'd0;
-reg [7:0] int_ack_s2 = 8'd0;
+(* syn_preserve = 1 *) reg [7:0] int_ack_s1 = 8'd0;
+(* syn_preserve = 1 *) reg [7:0] int_ack_s2 = 8'd0;
+reg [7:0] int_ack_s3 = 8'd0;
 always @(posedge clk_28m) begin
     if (!pll_lock) begin
         int_ack_s1 <= 8'd0;
         int_ack_s2 <= 8'd0;
+        int_ack_s3 <= 8'd0;
     end else begin
         int_ack_s1 <= int_ack_tgl_85;
         int_ack_s2 <= int_ack_s1;
+        int_ack_s3 <= int_ack_s2;
     end
 end
-wire [7:0] int_ack = int_ack_s1 ^ int_ack_s2;
+wire [7:0] int_ack = int_ack_s2 ^ int_ack_s3;
 wire hid_int;
 wire hid_iack = int_ack[1];
 wire sdc_iack = int_ack[3];
@@ -425,10 +429,11 @@ hid hid (
 
 sysctrl #(
 `ifdef ENABLE_AGA
-    .AGA(1)
+    .AGA(1),
 `else
-    .AGA(0)
+    .AGA(0),
 `endif
+    .RESET_TIMEOUT(28'd252_000_000) // ~2.94 s at clk_85m (85.59 MHz)
 ) sysctrl (
         .clk(clk_85m),
         .reset(!pll_lock),

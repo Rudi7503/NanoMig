@@ -873,13 +873,26 @@ always @(posedge clk_sys) begin
    // this is a minimal reset to ensure no drive is mounted
    // on power-up while keeping logic usage low; adding reset logic
    // to entire block considerably increases logic usage
-   if(!sdc_busy && !ide_sdc_rd && ide_exec == IDE_EXEC_READ_SECTOR ) begin
+   if(!sdc_busy && !ide_sdc_rd && ide_exec == IDE_EXEC_READ_SECTOR &&
+      ide_drv_state[ide_drv] == IDE_DRV_STATE_PRESENT) begin
       ide_sdc_sector <= ide_lba;
       ide_sdc_rd[ide_drv] <= 1'b1;
    end
-   if(!sdc_busy && !ide_sdc_wr && ide_exec == IDE_EXEC_WRITE_SECTOR ) begin
+   if(!sdc_busy && !ide_sdc_wr && ide_exec == IDE_EXEC_WRITE_SECTOR &&
+      ide_drv_state[ide_drv] == IDE_DRV_STATE_PRESENT) begin
       ide_sdc_sector <= ide_lba;
       ide_sdc_wr[ide_drv] <= 1'b1;
+   end
+
+   // Dominant per-drive unmount override: placed after all mount/exec/busy branches
+   // so an unmount on this clock edge always clears state and pending RD/WR cleanly
+   // without disturbing the other IDE drive or any concurrent floppy request.
+   for(drv = 0; drv < DRIVES; drv = drv+1) begin
+      if (sdc_img_mounted[4+drv] && !sdc_img_size) begin
+         ide_drv_state[drv] <= IDE_DRV_STATE_NONE;
+         ide_sdc_rd[drv] <= 1'b0;
+         ide_sdc_wr[drv] <= 1'b0;
+      end
    end
 
    if (por) begin

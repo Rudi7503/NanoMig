@@ -8,7 +8,8 @@
 */
 
 module sysctrl #(
-  parameter AGA = 0
+  parameter AGA = 0,
+  parameter [27:0] RESET_TIMEOUT = 28'd84_000_000
 ) (
   input		    clk,
   input		    reset,
@@ -92,7 +93,7 @@ assign int_out_n = (int_in != 8'h00 || sys_int)?1'b0:1'b1;
 reg main_reset = 1'b1;
 assign system_reset = main_reset;
 
-reg [26:0] main_reset_timeout; // 84,000,000 cycles fits in 27 bits
+reg [27:0] main_reset_timeout; // 28-bit supports ~3s timeout up to 85+ MHz
 
 // include the menu rom derived from amiga.xml
 reg [11:0] menu_rom_addr;
@@ -123,7 +124,7 @@ always @(posedge clk) begin
 
       // stay in reset for about 3 seconds or until MCU releases reset
       main_reset <= 1'b1;
-      main_reset_timeout <= 27'd84_000_000;
+      main_reset_timeout <= RESET_TIMEOUT;
 
       buttons_irq_enable <= 1'b1;  // allow buttons irq
       int_ack <= 8'h00;
@@ -168,9 +169,9 @@ always @(posedge clk) begin
 
       // release main reset after timeout
       if(main_reset_timeout) begin
-	 main_reset_timeout <= main_reset_timeout - 27'd1;
+	 main_reset_timeout <= main_reset_timeout - 28'd1;
 
-	 if(main_reset_timeout == 27'd1) begin
+	 if(main_reset_timeout == 28'd1) begin
 	    main_reset <= 1'b0;
 
 	    // BRG LED yellow if no MCU has responded
@@ -251,7 +252,7 @@ always @(posedge clk) begin
                    if(id == "R") begin
 		      main_reset <= data_in[0];
 		      // cancel out-timeout if MCU is active
-		      main_reset_timeout <= 27'd0;
+		      main_reset_timeout <= 28'd0;
 		   end
 
 		   // Value "D": 1(0) to 4(3) floppy drives
