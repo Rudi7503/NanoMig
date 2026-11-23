@@ -259,11 +259,13 @@ wire spi_io_ss = spi_csn;
 wire spi_io_clk = spi_sclk;
 
 // interface to FPGA Companion
-wire       mcu_sys_strobe;        // mcu message byte valid for sysctrl
-wire       mcu_hid_strobe;        // -"- hid
-wire       mcu_osd_strobe;        // -"- osd
-wire       mcu_sdc_strobe;        // -"- sdc
-wire       mcu_start;             // first byte of MCU message
+wire       mcu_sys_strobe;        // mcu message byte valid for sysctrl (clk_85m domain)
+wire       mcu_start_fast;        // first byte of MCU message (clk_85m domain)
+wire [7:0] mcu_data_out_fast;     // MCU byte (clk_85m domain)
+wire       mcu_hid_strobe;        // -"- hid (clk_28m domain)
+wire       mcu_osd_strobe;        // -"- osd (clk_28m domain)
+wire       mcu_sdc_strobe;        // -"- sdc (clk_28m domain)
+wire       mcu_start;             // first byte of MCU message (clk_28m domain)
 
 wire [7:0] mcu_data_out;  
 
@@ -272,8 +274,9 @@ wire [7:0] hid_data_out;
 wire [7:0] osd_data_out = 8'h55;  // OSD actually has no data output
 wire [7:0] sdc_data_out;
    
-mcu_spi mcu (
+mcu_spi_sync mcu (
 	 .clk(clk_28m),
+	 .clk_fast(clk_85m),
 	 .reset(!pll_lock),
 
 	 // SPI interface to FPGA Companion
@@ -282,8 +285,12 @@ mcu_spi mcu (
      .spi_io_din(spi_io_din),
      .spi_io_dout(spi_io_dout),
 
-	 // byte wide data in/out to the submodules
+	 // fast clk_85m interface for sysctrl (passes 12/12 full 932-byte XML reads @ 16 MHz zero-gap SPI)
      .mcu_sys_strobe(mcu_sys_strobe),
+     .mcu_start_fast(mcu_start_fast),
+     .mcu_dout_fast(mcu_data_out_fast),
+
+	 // byte wide data in/out to the clk_28m submodules
      .mcu_hid_strobe(mcu_hid_strobe),
      .mcu_osd_strobe(mcu_osd_strobe),
      .mcu_sdc_strobe(mcu_sdc_strobe),
@@ -296,8 +303,32 @@ mcu_spi mcu (
 );
 
 // decode SPI/MCU data received for human input devices (HID) and
-// convert into Amiga compatible mouse and keyboard signals
-wire [7:0] int_ack;
+// convert into Amiga compatible mouse and keyboard signals.
+// Proper 2-FF toggle synchronizer + local edge detector (s1 -> s2 -> s3) from clk_85m to clk_28m:
+// int_ack_s1 only feeds int_ack_s2; functional edge detection uses int_ack_s2 ^ int_ack_s3.
+wire [7:0] int_ack_fast;
+reg  [7:0] int_ack_tgl_85 = 8'd0;
+always @(posedge clk_85m) begin
+    if (!pll_lock)
+        int_ack_tgl_85 <= 8'd0;
+    else
+        int_ack_tgl_85 <= int_ack_tgl_85 ^ int_ack_fast;
+end
+(* syn_preserve = 1 *) reg [7:0] int_ack_s1 = 8'd0;
+(* syn_preserve = 1 *) reg [7:0] int_ack_s2 = 8'd0;
+reg [7:0] int_ack_s3 = 8'd0;
+always @(posedge clk_28m) begin
+    if (!pll_lock) begin
+        int_ack_s1 <= 8'd0;
+        int_ack_s2 <= 8'd0;
+        int_ack_s3 <= 8'd0;
+    end else begin
+        int_ack_s1 <= int_ack_tgl_85;
+        int_ack_s2 <= int_ack_s1;
+        int_ack_s3 <= int_ack_s2;
+    end
+end
+wire [7:0] int_ack = int_ack_s2 ^ int_ack_s3;
 wire hid_int;
 wire hid_iack = int_ack[1];
 wire sdc_iack = int_ack[3];
@@ -398,18 +429,19 @@ hid hid (
 
 sysctrl #(
 `ifdef ENABLE_AGA
-    .AGA(1)
+    .AGA(1),
 `else
-    .AGA(0)
+    .AGA(0),
 `endif
+    .RESET_TIMEOUT(28'd252_000_000) // ~2.94 s at clk_85m (85.59 MHz)
 ) sysctrl (
-        .clk(clk_28m),
+        .clk(clk_85m),
         .reset(!pll_lock),
 
          // interface to send and receive generic system control
         .data_in_strobe(mcu_sys_strobe),
-        .data_in_start(mcu_start),
-        .data_in(mcu_data_out),
+        .data_in_start(mcu_start_fast),
+        .data_in(mcu_data_out_fast),
         .data_out(sys_data_out),
 
         // values controlled by the OSD
@@ -434,7 +466,7 @@ sysctrl #(
 				 
         .int_out_n(spi_intn),
         .int_in( { 4'b0000, sdc_int, 1'b0, hid_int, 1'b0 }),
-        .int_ack( int_ack ),
+        .int_ack( int_ack_fast ),
 
         .buttons( { !user_n, !reset_n } ),
         .leds(),
@@ -1027,7 +1059,7 @@ sdram #(
 //  Speicher getrennt und der Prozessor haengt wie vorher direkt am
 //  SDRAM. Bootet dieser Stand, liegt der Fehler im Arbiter.
 // --------------------------------------------------------------------
-`define SPR_BRAM_TEST
+// `define SPR_BRAM_TEST
 // `define USE_SPR_ARB
 
 `ifdef USE_SPR_ARB
@@ -1320,39 +1352,45 @@ wire tmds_clock;
 wire [10:0] hdmi_cx;
 wire [9:0]  hdmi_cy;
 
-// 2x32-Bit HDMI-Diagnose (BL616 SPI/JTAG + SD/Floppy)
-reg [1:0] diag_cs_sync = 2'b11;
-reg [1:0] diag_sclk_sync = 2'b00;
-reg [7:0] diag_cs_fall_cnt = 8'd0;
-reg [7:0] diag_sclk_rise_cnt = 8'd0;
-reg [7:0] diag_sys_cnt = 8'd0;
-reg [3:0] diag_osd_cnt = 4'd0;
-reg [7:0] diag_sdc_cnt = 8'd0;
-reg [7:0] diag_sd_rd_cnt = 8'd0;
+// 2x32-Bit HDMI-Diagnose (Floppy/IDE/SD Detail-Diagnose)
+reg [7:0] diag_fdc_rd_cnt = 8'd0;
+reg [7:0] diag_ide_rd_cnt = 8'd0;
 reg [7:0] diag_sd_done_cnt = 8'd0;
-reg [3:0] diag_mounted_latch = 4'd0;
-reg       diag_sdc_seen = 1'b0;
-reg       diag_sd_rd_prev = 1'b0;
+reg [3:0] diag_fdd_led_cnt = 4'd0;
+reg       diag_df0_present = 1'b0;
+reg       diag_df0_mnt_seen = 1'b0;
+reg       diag_osd_rst_seen = 1'b0;
+reg [7:0] diag_first_b0 = 8'd0;
+reg [7:0] diag_first_b1 = 8'd0;
+reg [7:0] diag_last_sec = 8'd0;
+reg [7:0] diag_df0_size_hi = 8'd0;
+reg       diag_fdc_rd_prev = 1'b0;
+reg       diag_ide_rd_prev = 1'b0;
 reg       diag_sd_done_prev = 1'b0;
+reg       diag_fdd_led_prev = 1'b0;
 always @(posedge clk_28m) begin
-    diag_cs_sync   <= { diag_cs_sync[0], spi_csn };
-    diag_sclk_sync <= { diag_sclk_sync[0], spi_sclk };
-    if (diag_cs_sync == 2'b10 && diag_cs_fall_cnt != 8'hFF)       diag_cs_fall_cnt <= diag_cs_fall_cnt + 8'd1;
-    if (diag_sclk_sync == 2'b01 && diag_sclk_rise_cnt != 8'hFF)   diag_sclk_rise_cnt <= diag_sclk_rise_cnt + 8'd1;
-    if (mcu_sys_strobe && diag_sys_cnt != 8'hFF)                  diag_sys_cnt <= diag_sys_cnt + 8'd1;
-    if (mcu_osd_strobe && diag_osd_cnt != 4'hF)                   diag_osd_cnt <= diag_osd_cnt + 4'd1;
-    if (mcu_sdc_strobe) begin
-        diag_sdc_seen <= 1'b1;
-        if (diag_sdc_cnt != 8'hFF) diag_sdc_cnt <= diag_sdc_cnt + 8'd1;
-    end
-    diag_sd_rd_prev   <= (|sd_rd);
+    diag_fdc_rd_prev  <= (|sd_rd[3:0]);
+    diag_ide_rd_prev  <= (|sd_rd[7:4]);
     diag_sd_done_prev <= sd_done;
-    if ((|sd_rd) && !diag_sd_rd_prev && diag_sd_rd_cnt != 8'hFF)       diag_sd_rd_cnt <= diag_sd_rd_cnt + 8'd1;
-    if (sd_done && !diag_sd_done_prev && diag_sd_done_cnt != 8'hFF)    diag_sd_done_cnt <= diag_sd_done_cnt + 8'd1;
-    diag_mounted_latch <= diag_mounted_latch | sd_img_mounted[3:0];
+    diag_fdd_led_prev <= drv_leds[0];
+    if ((|sd_rd[3:0]) && !diag_fdc_rd_prev && diag_fdc_rd_cnt != 8'hFF) diag_fdc_rd_cnt <= diag_fdc_rd_cnt + 8'd1;
+    if ((|sd_rd[7:4]) && !diag_ide_rd_prev && diag_ide_rd_cnt != 8'hFF) diag_ide_rd_cnt <= diag_ide_rd_cnt + 8'd1;
+    if (sd_done && !diag_sd_done_prev && diag_sd_done_cnt != 8'hFF)     diag_sd_done_cnt <= diag_sd_done_cnt + 8'd1;
+    if (drv_leds[0] && !diag_fdd_led_prev && diag_fdd_led_cnt != 4'hF)  diag_fdd_led_cnt <= diag_fdd_led_cnt + 4'd1;
+    if (sd_img_mounted[0]) begin
+        diag_df0_mnt_seen <= 1'b1;
+        diag_df0_present  <= |sd_img_size;
+        diag_df0_size_hi  <= sd_img_size[23:16];
+    end
+    if (mcu_osd_strobe) diag_osd_rst_seen <= 1'b1;
+    if (|sd_rd) diag_last_sec <= sd_sector[7:0];
+    if (sd_rd_byte_strobe && sd_byte_index == 9'd0) diag_first_b0 <= sd_rd_data;
+    if (sd_rd_byte_strobe && sd_byte_index == 9'd1) diag_first_b1 <= sd_rd_data;
 end
-wire [31:0] diag_row0 = { diag_cs_fall_cnt, diag_sclk_rise_cnt, diag_sys_cnt, diag_osd_cnt, jtagseln, spi_csn, spi_sclk, spi_io_dout };
-wire [31:0] diag_row1 = { diag_sdc_cnt, diag_sd_rd_cnt, diag_sd_done_cnt, diag_mounted_latch, sd_busy, sdc_int, spi_intn, diag_sdc_seen };
+wire diag_crc_ok = (diag_flash_64 == diag_sdram_64) && (diag_flash_64 != 64'd0);
+wire [7:0] diag_boot_byte = { rom_done, diag_crc_ok, diag_cpu_rst_n, diag_seen_rd, diag_rd_active, diag_bus_stage };
+wire [31:0] diag_row0 = { diag_fdc_rd_cnt, diag_ide_rd_cnt, diag_sd_done_cnt, diag_fdd_led_cnt, diag_df0_present, diag_df0_mnt_seen, diag_osd_rst_seen, sd_busy };
+wire [31:0] diag_row1 = { diag_boot_byte, diag_first_b0, diag_first_b1, diag_df0_size_hi };
 
 wire diag_ovl_x   = (hdmi_cx >= 11'd96) && (hdmi_cx < 11'd608);
 wire diag_ovl_y0  = (hdmi_cy >= 10'd32) && (hdmi_cy < 10'd52);
