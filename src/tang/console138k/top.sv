@@ -303,8 +303,28 @@ mcu_spi_sync mcu (
 );
 
 // decode SPI/MCU data received for human input devices (HID) and
-// convert into Amiga compatible mouse and keyboard signals
-wire [7:0] int_ack;
+// convert into Amiga compatible mouse and keyboard signals.
+// Stretch 1-cycle clk_85m int_ack_fast pulses from sysctrl into exact 1-cycle clk_28m pulses.
+wire [7:0] int_ack_fast;
+reg  [7:0] int_ack_tgl_85 = 8'd0;
+always @(posedge clk_85m) begin
+    if (!pll_lock)
+        int_ack_tgl_85 <= 8'd0;
+    else
+        int_ack_tgl_85 <= int_ack_tgl_85 ^ int_ack_fast;
+end
+reg [7:0] int_ack_s1 = 8'd0;
+reg [7:0] int_ack_s2 = 8'd0;
+always @(posedge clk_28m) begin
+    if (!pll_lock) begin
+        int_ack_s1 <= 8'd0;
+        int_ack_s2 <= 8'd0;
+    end else begin
+        int_ack_s1 <= int_ack_tgl_85;
+        int_ack_s2 <= int_ack_s1;
+    end
+end
+wire [7:0] int_ack = int_ack_s1 ^ int_ack_s2;
 wire hid_int;
 wire hid_iack = int_ack[1];
 wire sdc_iack = int_ack[3];
@@ -441,7 +461,7 @@ sysctrl #(
 				 
         .int_out_n(spi_intn),
         .int_in( { 4'b0000, sdc_int, 1'b0, hid_int, 1'b0 }),
-        .int_ack( int_ack ),
+        .int_ack( int_ack_fast ),
 
         .buttons( { !user_n, !reset_n } ),
         .leds(),

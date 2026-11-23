@@ -737,8 +737,8 @@ reg [7:0]  ide_features;
 reg	   ide_drv;
 
 reg [7:0]  ide_sdc_cnt;
-reg [1:0]  ide_sdc_rd;
-reg [1:0]  ide_sdc_wr;
+reg [1:0]  ide_sdc_rd = 2'b00;
+reg [1:0]  ide_sdc_wr = 2'b00;
 reg [31:0] ide_sdc_sector;   
    
 reg [1:0] ide_reported;   
@@ -770,7 +770,11 @@ always @(posedge clk_sys) begin
       if (sdc_img_mounted[4+drv]) begin
          if( !sdc_img_size ) begin
             // image has been removed
-            if(sdc_img_mounted[4+drv]) ide_drv_state[drv] <= IDE_DRV_STATE_NONE;
+            if(sdc_img_mounted[4+drv]) begin
+               ide_drv_state[drv] <= IDE_DRV_STATE_NONE;
+               ide_sdc_rd[drv] <= 1'b0;
+               ide_sdc_wr[drv] <= 1'b0;
+            end
          end else begin
             // image has just been mounted. Examine it further
             // by reading first sector.
@@ -879,6 +883,8 @@ always @(posedge clk_sys) begin
    end
 
    if (por) begin
+      ide_sdc_rd <= 2'b00;
+      ide_sdc_wr <= 2'b00;
       for(drv = 0; drv < DRIVES; drv = drv+1) begin
           ide_drv_state[drv] <= IDE_DRV_STATE_NONE;
       end
