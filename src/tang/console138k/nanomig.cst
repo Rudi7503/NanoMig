@@ -22,9 +22,6 @@ IO_PORT "spi_dir" PULL_MODE=NONE DRIVE=8 IO_TYPE=LVCMOS33 BANK_VCCIO=3.3;
 IO_LOC "spi_irqn" U15; // UART TX
 IO_PORT "spi_irqn" PULL_MODE=NONE DRIVE=8 IO_TYPE=LVCMOS33 BANK_VCCIO=3.3;
 
-// Lock jtagseln output port to unused PMOD1 pin D21 so PnR never drops it onto random board pins (T20/Y13)
-IO_LOC "jtagseln" D21;
-IO_PORT "jtagseln" PULL_MODE=NONE IO_TYPE=LVCMOS33;
 NET_LOC "jtagseln" V_JTAGSELN;
 
 IO_LOC "bl616_jtagsel" V14;
@@ -99,8 +96,8 @@ IO_LOC "pmod1[5]" D22;
 IO_PORT "pmod1[5]" PULL_MODE=UP IO_TYPE=LVCMOS33;
 IO_LOC "pmod1[6]" E21;
 IO_PORT "pmod1[6]" PULL_MODE=UP IO_TYPE=LVCMOS33; 
-// IO_LOC "pmod1[7]" D21; // reserved as safe unconnected pad for jtagseln
-// IO_PORT "pmod1[7]" PULL_MODE=UP IO_TYPE=LVCMOS33; 
+IO_LOC "pmod1[7]" D21;
+IO_PORT "pmod1[7]" PULL_MODE=UP IO_TYPE=LVCMOS33; 
 
 // 128Mbit NOR Flash (MSPI pins)
 IO_LOC "mspi_cs" T19;

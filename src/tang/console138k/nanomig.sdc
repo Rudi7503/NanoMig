@@ -1,4 +1,5 @@
 create_clock -name clk_osc -period 20 -waveform {0 10} [get_ports {clk}] -add
+create_clock -name clk_companion_int -period 50 -waveform {0 25} [get_ports {spi_sclk}] -add
 create_clock -name clk85 -period 11.684 -waveform {0 5.848} [get_pins {pll_hdmi/u_pll/PLL_inst/CLKOUT1}] -add
 create_clock -name clk85_shift -period 11.684 -waveform {0 5.848} [get_pins {pll_hdmi/u_pll/PLL_inst/CLKOUT2}] -add
 create_clock -name clk_flash -period 11.684 -waveform {0 5.848} [get_ports {mspi_clk}] -add
@@ -15,9 +16,8 @@ set_input_delay  -clock clk85 -min 1.5 [get_ports {IO_sdram_dq[*]}]
 set_output_delay -clock clk85 -max 2.0 [get_ports {IO_sdram_dq[*] O_sdram_addr[*] O_sdram_ba[*] O_sdram_dqm[*] O_sdram_cs_n O_sdram_ras_n O_sdram_cas_n O_sdram_wen_n}]
 set_output_delay -clock clk85 -min -1.0 [get_ports {IO_sdram_dq[*] O_sdram_addr[*] O_sdram_ba[*] O_sdram_dqm[*] O_sdram_cs_n O_sdram_ras_n O_sdram_cas_n O_sdram_wen_n}]
 
-# BL616 SPI signals are 2-FF synchronized into clk85 inside mcu_spi_sync; bound registered MISO <= 10 ns
-set_false_path -from [get_ports {spi_sclk spi_dat spi_csn}] -to [get_clocks {clk85}]
-set_max_delay 10.0 -from [get_clocks {clk85}] -to [get_ports {spi_dir}]
-
-# sysctrl runs on clk85 for 16 MHz zero-gap SPI XML reads; its static config outputs feed clk28 logic
-set_false_path -from [get_regs {sysctrl/system_*}]
+# Asynchronous BL616 SPI clock vs clk28 (prevents PnR distorting mcu/spi_io_dout_s0 for false cross-clock hold)
+set_false_path -from [get_clocks {clk28}] -to [get_clocks {clk_companion_int}]
+set_false_path -from [get_clocks {clk_companion_int}] -to [get_clocks {clk28}]
+set_output_delay -clock clk_companion_int -max 5.0 [get_ports {spi_dir}]
+set_input_delay  -clock clk_companion_int -max 5.0 [get_ports {spi_dat spi_csn}]
