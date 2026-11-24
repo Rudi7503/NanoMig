@@ -262,9 +262,10 @@ always @(posedge clk) begin
 		   // Value "P": write enabled(0) or write protected(1) floppy
 		   if(id == "P") system_floppy_wrprot <= data_in[0];
 		   // Value "C": chipset OCS-A500(0), OCS-A1000(1), ECS(2) or AGA(3)
-		   if(id == "C") system_chipset <= (AGA && data_in[1:0] == 2'd3) ? 3'd6 : {1'b0, data_in[1:0]};
+		   // Locked for AGA builds so amiga.xml / saved .ini defaults cannot downgrade AGA/68020/TurboData
+		   if(id == "C" && !AGA) system_chipset <= {1'b0, data_in[1:0]};
 		   // Value "T": CPU 68000(0), 68010(1) or 68020(2)
-		   if(id == "T") system_cpu <= data_in[1:0] == 2'b10 ? 2'b11 : data_in[1:0];
+		   if(id == "T" && !AGA) system_cpu <= data_in[1:0] == 2'b10 ? 2'b11 : data_in[1:0];
 		   // Value "F": video filter none(0), h(1), v(2) or h+v(3)
 		   if(id == "F") system_video_filter <= data_in[1:0];
 		   // Value "V": PAL(0) or NTSC(1) video
@@ -273,16 +274,16 @@ always @(posedge clk) begin
 		   if(id == "W") system_video_screen <= data_in[1:0];
 		   // Value "L": Scanlines off(0) or on(1)
 		   if(id == "L") system_video_scanlines <= data_in[1:0];
-		   // Value "Y": Chipmem 512k(0), 1M(1), 1.5M(2) or 2M(2)
-		   if(id == "Y") system_chipmem <= data_in[1:0];
+		   // Value "Y": Chipmem 512k(0), 1M(1), 1.5M(2) or 2M(3)
+		   if(id == "Y" && !AGA) system_chipmem <= data_in[1:0];
 		   // Value "X": Slowmem none(0), 512k(1), 1M(2) or 1.5M(3)
-		   if(id == "X") system_slowmem <= data_in[1:0];
+		   if(id == "X" && !AGA) system_slowmem <= data_in[1:0];
 		   // Value "Q": Fastmem none(0), 2M(1), 4M(2) or 8M(3)
-		   if(id == "Q") system_fastmem <= data_in[1:0];
+		   if(id == "Q" && !AGA) system_fastmem <= data_in[1:0];
 		   // Value "Z": Turbo mode none(0), chip(1), turbo(2), both(3)
-		   if(id == "Z") system_turbo[1:0] <= data_in[1:0];
+		   if(id == "Z" && !AGA) system_turbo[1:0] <= data_in[1:0];
 		   // Value "U": Turbo data off(0), on(1)
-		   if(id == "U") system_turbo[2] <= data_in[0];
+		   if(id == "U" && !AGA) system_turbo[2] <= data_in[0];
 		   // Value "I": IDE disabled(0) or enabled(1)
 		   if(id == "I") system_ide_enable <= data_in[0];
 		   // value "J": Swap Joyst off(0) on(1)
@@ -292,7 +293,7 @@ always @(posedge clk) begin
 		   // value "M": Stereo Mix disabled(0) or enabled(1)
 		   if(id == "M") system_stereo_mix <= data_in[0];
            // Value "K": Kickstart 1.3(0), 3.1(1), 3.2(2)
-		   if(id == "K") system_kickstart <= data_in[1:0];
+		   if(id == "K" && !AGA) system_kickstart <= data_in[1:0];
            // Value "E": Drive Sounds disabled(0) or enabled(1)
 		   if(id == "E") system_drive_sounds <= data_in[0];
 		   // value "B": lcd vertical position (used in lcd variant, only)
