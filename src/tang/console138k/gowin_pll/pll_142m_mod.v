@@ -120,7 +120,7 @@ defparam PLL_inst.CLKOUT0_PE_COARSE = 0;
 defparam PLL_inst.CLKOUT0_PE_FINE = 0;
 defparam PLL_inst.CLKOUT1_PE_COARSE = 0;
 defparam PLL_inst.CLKOUT1_PE_FINE = 0;
-defparam PLL_inst.CLKOUT2_PE_COARSE = 8; // 288 deg (-72 deg): centers SDRAM out-setup & in-hold for GW5AST-138C fabric FFs
+defparam PLL_inst.CLKOUT2_PE_COARSE = 9; // 324 deg (-36 deg): >= +1.8ns margin on all 4 SDRAM setup/hold corners (GW5AST-138C)
 defparam PLL_inst.CLKOUT2_PE_FINE = 0;
 defparam PLL_inst.CLKOUT3_PE_COARSE = 5;
 defparam PLL_inst.CLKOUT3_PE_FINE = 0;
