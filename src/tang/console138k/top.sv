@@ -218,9 +218,18 @@ wire       osd_stereo_mix;      // 0=off, 1=on
 wire       rom_done;
 
 // generate a reset for some time after rom has been initialized
+// synchronize osd_reset from sysctrl (clk_85m) into clk_28m
+reg [1:0] osd_reset_sync = 2'b11;
+always @(posedge clk_28m) begin
+    if (!pll_lock)
+        osd_reset_sync <= 2'b11;
+    else
+        osd_reset_sync <= { osd_reset_sync[0], osd_reset };
+end
+
 reg [15:0] reset_cnt;
 always @(posedge clk_28m) begin
-    if(!pll_lock || !rom_done || kbd_reset)
+    if(!pll_lock || !rom_done || osd_reset_sync[1] || kbd_reset)
         reset_cnt <= 16'hffff;
     else if(reset_cnt != 0)
         reset_cnt <= reset_cnt - 16'd1;
@@ -862,7 +871,7 @@ always @(posedge clk_85m) begin
                 if (flash_busy_seen && !flash_busy_s2) begin
                     flash_cs       <= 1'b0;
                     flash_doutD    <= flash_dout;
-                    write_crc_cnt  <= 2'd0;
+                    write_crc_cnt  <= 2'd2;
                     write_crc_done <= 1'b0;
                     ram_cnt        <= 7'd0;
                     fsm_state      <= FSM_WRITE_RAM;
@@ -871,6 +880,14 @@ always @(posedge clk_85m) begin
 
             FSM_WRITE_RAM: begin
                 ram_cnt <= ram_cnt + 7'd1;
+                // Accumulate true Flash-read CRC-64 over every 16-bit word (big-endian byte order)
+                if (write_crc_cnt == 2'd2) begin
+                    diag_flash_64 <= crc64_byte(diag_flash_64, flash_doutD[15:8]);
+                    write_crc_cnt <= 2'd1;
+                end else if (write_crc_cnt == 2'd1) begin
+                    diag_flash_64 <= crc64_byte(diag_flash_64, flash_doutD[7:0]);
+                    write_crc_cnt <= 2'd0;
+                end
                 // Hold flash_ram_cs/we until actual CMD_WRITE executes (even if PORT_REFRESH preempts one 12-cycle slot)
                 if (!write_crc_done && !diag_cmd_write) begin
                     flash_ram_cs <= 1'b1;
@@ -882,7 +899,7 @@ always @(posedge clk_85m) begin
                     write_crc_done <= 1'b1;
                     diag_write_cnt <= diag_write_cnt + 22'd1;
                 end
-                if (write_crc_done && !diag_cmd_write) begin
+                if (write_crc_done && !diag_cmd_write && write_crc_cnt == 2'd0) begin
                     flash_ram_addr <= flash_ram_addr + 22'd1;
                     fsm_state      <= FSM_NEXT_WORD;
                 end else if (ram_cnt == 7'd127) begin
@@ -898,11 +915,10 @@ always @(posedge clk_85m) begin
 
                 if (word_count <= 22'd1) begin
                     diag_bad_wr_cnt <= (diag_write_cnt != 22'd262144);
-                    diag_flash_64   <= (diag_write_cnt != 22'd262144) ? {16'hBAD0, 26'd0, diag_write_cnt} : 64'd0;
                     word_count      <= 22'd0;
                     ram_cnt         <= 7'd0;
                     verify_addr     <= 22'h3C0000;
-                    verify_phase    <= 1'b0;
+                    verify_phase    <= 1'b1;
                     flash_ram_cs    <= 1'b0;
                     flash_ram_we    <= 1'b0;
                     flash_p2_cs     <= 1'b0;
@@ -917,24 +933,13 @@ always @(posedge clk_85m) begin
 
             FSM_VERIFY_RAM: begin
                 if (verify_crc_cnt != 4'd0) begin
-                    if (!verify_phase) begin
-                        if (!diag_bad_wr_cnt)
-                            diag_flash_64 <= crc64_byte(diag_flash_64, verify_shift[63:56]);
-                    end else
-                        diag_sdram_64 <= crc64_byte(diag_sdram_64, verify_shift[63:56]);
+                    diag_sdram_64  <= crc64_byte(diag_sdram_64, verify_shift[63:56]);
                     verify_shift   <= {verify_shift[55:0], 8'd0};
                     verify_crc_cnt <= verify_crc_cnt - 4'd1;
                     if (verify_crc_cnt == 4'd1) begin
                         if (verify_addr == 22'h3FFFFC) begin
-                            if (!verify_phase) begin
-                                verify_phase    <= 1'b1;
-                                verify_addr     <= 22'h3C0000;
-                                ram_cnt         <= 7'd0;
-                                verify_ack_prev <= p2_ack;
-                            end else begin
-                                rom_done_reg <= 1'b1;
-                                fsm_state    <= FSM_DONE;
-                            end
+                            rom_done_reg <= 1'b1;
+                            fsm_state    <= FSM_DONE;
                         end else begin
                             verify_addr     <= verify_addr + 22'd4;
                             ram_cnt         <= 7'd0;
@@ -1365,6 +1370,7 @@ reg [7:0] diag_first_b1 = 8'd0;
 reg [7:0] diag_last_sec = 8'd0;
 reg [7:0] diag_df0_size_hi = 8'd0;
 reg       diag_fdc_rd_prev = 1'b0;
+reg       diag_df0_rd_prev = 1'b0;
 reg       diag_ide_rd_prev = 1'b0;
 reg       diag_sd_done_prev = 1'b0;
 reg       diag_fdd_led_prev = 1'b0;
@@ -1372,6 +1378,7 @@ reg       diag_df0_active = 1'b0;
 reg       diag_df0_b_locked = 1'b0;
 always @(posedge clk_28m) begin
     diag_fdc_rd_prev  <= (|sd_rd[3:0]);
+    diag_df0_rd_prev  <= sd_rd[0];
     diag_ide_rd_prev  <= (|sd_rd[7:4]);
     diag_sd_done_prev <= sd_done;
     diag_fdd_led_prev <= drv_leds[0];
@@ -1388,7 +1395,7 @@ always @(posedge clk_28m) begin
         diag_first_b0     <= 8'h00;
         diag_first_b1     <= 8'h00;
     end else begin
-        if (sd_rd[0]) begin
+        if (sd_rd[0] && !diag_df0_rd_prev) begin
             diag_df0_active <= 1'b1;
             if (!diag_df0_b_locked) diag_last_sec <= sd_sector[7:0];
         end else if (|sd_rd[7:4]) begin
@@ -1402,7 +1409,7 @@ always @(posedge clk_28m) begin
     end
     if (mcu_osd_strobe) diag_osd_rst_seen <= 1'b1;
 end
-wire diag_crc_ok = (diag_flash_64 == diag_sdram_64) && (diag_flash_64 != 64'd0);
+wire diag_crc_ok = !diag_bad_wr_cnt && (diag_flash_64 == diag_sdram_64) && (diag_flash_64 != 64'd0);
 wire [7:0] diag_boot_byte = { rom_done, diag_crc_ok, diag_cpu_rst_n, diag_seen_rd, diag_rd_active, diag_bus_stage };
 wire [31:0] diag_row0 = { diag_fdc_rd_cnt, diag_ide_rd_cnt, diag_sd_done_cnt, diag_fdd_led_cnt, diag_df0_present, diag_df0_mnt_seen, diag_osd_rst_seen, sd_busy };
 wire [31:0] diag_row1 = { diag_boot_byte, diag_first_b0, diag_first_b1, diag_df0_size_hi };
