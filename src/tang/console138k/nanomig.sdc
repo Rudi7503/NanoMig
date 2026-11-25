@@ -9,12 +9,10 @@ create_generated_clock -name clk28 -source [get_pins {pll_hdmi/u_pll/PLL_inst/CL
 set_multicycle_path -from [get_clocks {clk28}] -to [get_clocks {clk85}]  -setup -start 2
 set_multicycle_path -from [get_clocks {clk28}] -to [get_clocks {clk85}]  -hold -start 2
 
-# Lock SDRAM DQ/Addr/Ctrl registers close to Bank 2 I/O pads for deterministic PnR timing
-# O_sdram_clk is 216 deg shifted (~7.01 ns + OBUF ~2.5 ns = ~9.5 ns); bound outputs <= 7.18 ns (max 4.5)
-# and inputs <= 5.68 ns (max 6.0) so clk85 closes 0.000 TNS cleanly with deterministic margin.
-set_input_delay  -clock clk85 -max 6.0 [get_ports {IO_sdram_dq[*]}]
+# Exact b0f0aa4 SDRAM I/O timing constraints (verified crisp Kickstart 3.1 + OSD on GW5AST-138C)
+set_input_delay  -clock clk85 -max 5.5 [get_ports {IO_sdram_dq[*]}]
 set_input_delay  -clock clk85 -min 1.5 [get_ports {IO_sdram_dq[*]}]
-set_output_delay -clock clk85 -max 4.5 [get_ports {IO_sdram_dq[*] O_sdram_addr[*] O_sdram_ba[*] O_sdram_dqm[*] O_sdram_cs_n O_sdram_ras_n O_sdram_cas_n O_sdram_wen_n}]
+set_output_delay -clock clk85 -max 2.0 [get_ports {IO_sdram_dq[*] O_sdram_addr[*] O_sdram_ba[*] O_sdram_dqm[*] O_sdram_cs_n O_sdram_ras_n O_sdram_cas_n O_sdram_wen_n}]
 set_output_delay -clock clk85 -min -1.0 [get_ports {IO_sdram_dq[*] O_sdram_addr[*] O_sdram_ba[*] O_sdram_dqm[*] O_sdram_cs_n O_sdram_ras_n O_sdram_cas_n O_sdram_wen_n}]
 
 # BL616 SPI signals: inputs 2-FF synchronized into clk85; bound MISO <= 16.0 ns to U13 pad

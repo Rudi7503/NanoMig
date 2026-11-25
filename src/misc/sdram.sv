@@ -59,9 +59,9 @@ module sdram #(
   output wire ready,    // ram is ready and has been initialized
 
   inout  wire [DATA_WIDTH-1:0]   sd_data, // 16/32 bit bidirectional data bus
-  (* syn_useioff = 1 *) output reg  [RAS_WIDTH-1:0]    sd_addr, // multiplexed address bus
-  (* syn_useioff = 1 *) output reg  [DATA_WIDTH/8-1:0] sd_dqm,  // two/four byte masks
-  (* syn_useioff = 1 *) output reg  [1:0]              sd_ba,   // four banks
+  output reg  [RAS_WIDTH-1:0]    sd_addr, // multiplexed address bus
+  output reg  [DATA_WIDTH/8-1:0] sd_dqm,  // two/four byte masks
+  output reg  [1:0]              sd_ba,   // four banks
 
   output reg  sd_cke,  // clock enable
   output wire sd_cs,   // single chip select
@@ -253,7 +253,7 @@ localparam CMD_PRECHARGE       = 3'b010;
 localparam CMD_AUTO_REFRESH    = 3'b001;
 localparam CMD_LOAD_MODE       = 3'b000;
 
-(* syn_useioff = 1 *) reg [2:0] sd_cmd;   // current command sent to sd ram
+reg [2:0] sd_cmd;   // current command sent to sd ram
 
 // drive control signals according to current command
 assign sd_cs  = 1'b0;
@@ -261,7 +261,7 @@ assign sd_ras = sd_cmd[2];
 assign sd_cas = sd_cmd[1];
 assign sd_we  = sd_cmd[0];
 
-(* syn_useioff = 1 *) reg  [15:0] ram_din;
+reg  [15:0] ram_din;
 reg         ram_we;
 reg   [1:0] ram_ds;
 
@@ -269,8 +269,7 @@ wire [15:0] ram_dout_lo;
 wire [15:0] ram_dout_hi;
 wire [15:0] ram_dout;
 
-(* syn_useioff = 1 *) reg                 sd_dq;
-reg                 diag_cmd_write_r = 1'b0;
+reg                 sd_dq;
 reg [RAS_WIDTH-1:0] sd_addr_cas;
 
 reg p2_ack_i = 1'b0;
@@ -292,9 +291,9 @@ generate
   end
 endgenerate
 
-assign diag_cmd_write = diag_cmd_write_r;
-assign diag_write_din = 16'd0;
-assign diag_write_dqm = 2'd0;
+assign diag_cmd_write = (sd_cmd == CMD_WRITE) && sd_dq;
+assign diag_write_din = ram_din;
+assign diag_write_dqm = sd_dqm;
 
 localparam PORT_1       = 2'd0;
 reg [15:0] dout_r;
@@ -314,10 +313,9 @@ always @(posedge clk, negedge reset_n) begin
 end
 
 always @(posedge clk) begin
-  sd_cmd           <= CMD_NOP;
-  sd_dq            <= 0;
-  diag_cmd_write_r <= 1'b0;
-  p2_cs_sync       <= {p2_cs_sync[1:0], p2_cs};
+  sd_cmd     <= CMD_NOP;
+  sd_dq      <= 0;
+  p2_cs_sync <= {p2_cs_sync[1:0], p2_cs};
 
   if (state == STATE_INIT)
     p2_req <= 1'b0;
@@ -401,15 +399,13 @@ always @(posedge clk) begin
         PORT_1: begin
           sd_cmd <= ram_we ? CMD_WRITE : CMD_READ;
           if (ram_we) begin
-            sd_dq            <= 1;
-            diag_cmd_write_r <= 1'b1;
+            sd_dq <= 1;
           end
         end
         PORT_2: begin
           sd_cmd <= ram_we ? CMD_WRITE : CMD_READ;
           if (ram_we) begin
-            sd_dq            <= 1;
-            diag_cmd_write_r <= 1'b1;
+            sd_dq <= 1;
           end
         end
         PORT_REFRESH: begin
