@@ -147,7 +147,7 @@ wire pll_lock;
 pll_142m pll_hdmi (
     .clkout0(clk_pixel_x5),
     .clkout1(clk_85m),
-    .clkout2(clk_85m_shifted), // 216 deg phase shifted
+    .clkout2(clk_85m_shifted), // 270 deg (-90 deg) phase shifted (PE_COARSE=7, PE_FINE=4)
     .clkout3(), //mspi_clk),        // 180 deg phase shifted
     .init_clk(clk),
     .lock(pll_lock),
