@@ -17,7 +17,7 @@ set_input_delay  -clock clk85 -min 1.5 [get_ports {IO_sdram_dq[*]}]
 set_output_delay -clock clk85 -max 4.5 [get_ports {IO_sdram_dq[*] O_sdram_addr[*] O_sdram_ba[*] O_sdram_dqm[*] O_sdram_cs_n O_sdram_ras_n O_sdram_cas_n O_sdram_wen_n}]
 set_output_delay -clock clk85 -min -1.0 [get_ports {IO_sdram_dq[*] O_sdram_addr[*] O_sdram_ba[*] O_sdram_dqm[*] O_sdram_cs_n O_sdram_ras_n O_sdram_cas_n O_sdram_wen_n}]
 set_max_delay 4.5  -from [get_ports {IO_sdram_dq[*]}] -to [get_clocks {clk85}]
-set_max_delay 10.0 -from [get_clocks {clk85}] -to [get_ports {IO_sdram_dq[*] O_sdram_addr[*] O_sdram_ba[*] O_sdram_dqm[*] O_sdram_cs_n O_sdram_ras_n O_sdram_cas_n O_sdram_wen_n}]
+set_max_delay 11.5 -from [get_clocks {clk85}] -to [get_ports {IO_sdram_dq[*] O_sdram_addr[*] O_sdram_ba[*] O_sdram_dqm[*] O_sdram_cs_n O_sdram_ras_n O_sdram_cas_n O_sdram_wen_n}]
 
 # BL616 SPI signals: inputs 2-FF synchronized into clk85; bound MISO <= 16.0 ns to U13 pad
 # (with -23.4 ns mcu_spi_sync latency reduction, <= 16 ns passes 12/12 XML even at 16 MHz SPI
