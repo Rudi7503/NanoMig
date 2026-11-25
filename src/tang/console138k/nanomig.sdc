@@ -9,11 +9,15 @@ create_generated_clock -name clk28 -source [get_pins {pll_hdmi/u_pll/PLL_inst/CL
 set_multicycle_path -from [get_clocks {clk28}] -to [get_clocks {clk85}]  -setup -start 2
 set_multicycle_path -from [get_clocks {clk28}] -to [get_clocks {clk85}]  -hold -start 2
 
-# Exact b0f0aa4 SDRAM I/O timing constraints (verified crisp Kickstart 3.1 + OSD on GW5AST-138C)
-set_input_delay  -clock clk85 -max 5.5 [get_ports {IO_sdram_dq[*]}]
+# Lock SDRAM DQ/Addr/Ctrl registers close to Bank 2 I/O pads to minimize bit-to-bit skew
+# (Arora V does not pack plain DFFCE into IOLOGIC; bounding pad-to-FF <= 4.5 ns and
+#  clk-to-pad <= 10.0 ns keeps all 16 DQ bits within a tight <2 ns window inside the 270 deg eye)
+set_input_delay  -clock clk85 -max 6.0 [get_ports {IO_sdram_dq[*]}]
 set_input_delay  -clock clk85 -min 1.5 [get_ports {IO_sdram_dq[*]}]
-set_output_delay -clock clk85 -max 2.0 [get_ports {IO_sdram_dq[*] O_sdram_addr[*] O_sdram_ba[*] O_sdram_dqm[*] O_sdram_cs_n O_sdram_ras_n O_sdram_cas_n O_sdram_wen_n}]
+set_output_delay -clock clk85 -max 4.5 [get_ports {IO_sdram_dq[*] O_sdram_addr[*] O_sdram_ba[*] O_sdram_dqm[*] O_sdram_cs_n O_sdram_ras_n O_sdram_cas_n O_sdram_wen_n}]
 set_output_delay -clock clk85 -min -1.0 [get_ports {IO_sdram_dq[*] O_sdram_addr[*] O_sdram_ba[*] O_sdram_dqm[*] O_sdram_cs_n O_sdram_ras_n O_sdram_cas_n O_sdram_wen_n}]
+set_max_delay 4.5  -from [get_ports {IO_sdram_dq[*]}] -to [get_clocks {clk85}]
+set_max_delay 10.0 -from [get_clocks {clk85}] -to [get_ports {IO_sdram_dq[*] O_sdram_addr[*] O_sdram_ba[*] O_sdram_dqm[*] O_sdram_cs_n O_sdram_ras_n O_sdram_cas_n O_sdram_wen_n}]
 
 # BL616 SPI signals: inputs 2-FF synchronized into clk85; bound MISO <= 16.0 ns to U13 pad
 # (with -23.4 ns mcu_spi_sync latency reduction, <= 16 ns passes 12/12 XML even at 16 MHz SPI

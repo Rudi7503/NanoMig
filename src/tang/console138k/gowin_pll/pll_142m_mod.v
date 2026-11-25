@@ -120,8 +120,8 @@ defparam PLL_inst.CLKOUT0_PE_COARSE = 0;
 defparam PLL_inst.CLKOUT0_PE_FINE = 0;
 defparam PLL_inst.CLKOUT1_PE_COARSE = 0;
 defparam PLL_inst.CLKOUT1_PE_FINE = 0;
-defparam PLL_inst.CLKOUT2_PE_COARSE = 6;
-defparam PLL_inst.CLKOUT2_PE_FINE = 0;
+defparam PLL_inst.CLKOUT2_PE_COARSE = 7; // 270 deg (-90 deg exact): 7.5/10 * 360 deg = center between 6 (red) and 9 (magenta)
+defparam PLL_inst.CLKOUT2_PE_FINE = 4;
 defparam PLL_inst.CLKOUT3_PE_COARSE = 5;
 defparam PLL_inst.CLKOUT3_PE_FINE = 0;
 defparam PLL_inst.CLKOUT4_PE_COARSE = 0;
