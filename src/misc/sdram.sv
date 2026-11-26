@@ -74,7 +74,7 @@ module sdram #(
   input  wire refresh,  // chipset requests a refresh cycle
 
   input  wire [15:0] din,     // data input from chipset
-  output wire [15:0] dout,    // data output for chipset
+  output reg  [15:0] dout,    // data output for chipset
   output reg  [47:0] dout48,  // 64-bit read data output for chipset
 
   input wire [21:0] addr,  // 22 bit word address for 8MB
@@ -182,8 +182,7 @@ localparam STATE_READ_0     = 6;
 localparam STATE_READ_1     = 7;
 localparam STATE_READ_2     = 8;
 localparam STATE_READ_3     = 9;
-localparam STATE_READ_4     = 10;
-localparam STATE_LAST       = STATE_READ_4;
+localparam STATE_LAST       = STATE_READ_3;
 
 localparam STATE_WIDTH = $clog2(STATE_LAST + 1);
 
@@ -232,8 +231,6 @@ always @(posedge clk, negedge reset_n) begin
       STATE_READ_2:
         state <= STATE_READ_3;
       STATE_READ_3:
-        state <= STATE_READ_4;
-      STATE_READ_4:
         state <= STATE_RAS;
     endcase
   end
@@ -283,11 +280,9 @@ generate
     assign sd_data     = sd_dq ? {ram_din, ram_din} : {DATA_WIDTH{1'bz}};
 
   end else begin
-    (* syn_useioff = 1 *) reg [15:0] sd_data_reg;
-    always @(posedge clk) sd_data_reg <= sd_data;
-    assign ram_dout_lo = sd_data_reg;
-    assign ram_dout_hi = sd_data_reg;
-    assign ram_dout    = sd_data_reg;
+    assign ram_dout_lo = sd_data;
+    assign ram_dout_hi = sd_data;
+    assign ram_dout    = sd_data;
     assign sd_data     = sd_dq ? ram_din : {DATA_WIDTH{1'bz}};
   end
 endgenerate
@@ -297,7 +292,6 @@ assign diag_write_din = 16'd0;
 assign diag_write_dqm = 2'd0;
 
 localparam PORT_1       = 2'd0;
-reg [15:0] dout_r;
 localparam PORT_2       = 2'd1;
 localparam PORT_REFRESH = 2'd2;
 localparam PORT_IDLE    = 2'd3;
@@ -419,22 +413,11 @@ always @(posedge clk) begin
       endcase
     end
     STATE_READ_0: begin
-      if (WIDTH32) begin
-        case (sdram_port)
-          PORT_1 : dout_r <= ram_dout;
-          PORT_2 : p2_dout <= ram_dout;
-          default: ;
-        endcase
-      end
-    end
-    STATE_READ_1: begin
-      if (!WIDTH32) begin
-        case (sdram_port)
-          PORT_1 : dout_r <= ram_dout;
-          PORT_2 : p2_dout <= ram_dout;
-          default: ;
-        endcase
-      end
+      case (sdram_port)
+        PORT_1 : dout    <= ram_dout;
+        PORT_2 : p2_dout <= ram_dout;
+        default: ;
+      endcase
     end
     STATE_LAST: begin
       sdram_port <= PORT_IDLE;
@@ -442,8 +425,6 @@ always @(posedge clk) begin
     default: ;
   endcase
 end
-
-assign dout = (!WIDTH32 && state == STATE_READ_1 && sdram_port == PORT_1) ? ram_dout : dout_r;
 
 generate
   if (WIDTH32) begin
@@ -525,29 +506,28 @@ generate
             default: ;
           endcase
         end
-        STATE_READ_0: ;
-        STATE_READ_1: begin
+        STATE_READ_0: begin
           case (sdram_port)
             PORT_1: ;
             PORT_2: if (!ram_we && !CHIP48_BURST) p2_ack_i <= ~p2_ack_i;
             default: ;
           endcase
         end
-        STATE_READ_2: begin
+        STATE_READ_1: begin
           case (sdram_port)
             PORT_1: dout48[47:32] <= ram_dout;
             PORT_2: p2_dout48[47:32] <= ram_dout;
             default: ;
           endcase
         end
-        STATE_READ_3: begin
+        STATE_READ_2: begin
           case (sdram_port)
             PORT_1: dout48[31:16] <= ram_dout;
             PORT_2: p2_dout48[31:16] <= ram_dout;
             default: ;
           endcase
         end
-        STATE_READ_4: begin
+        STATE_READ_3: begin
           case (sdram_port)
             PORT_1: dout48[15: 0] <= ram_dout;
             PORT_2: begin
