@@ -7,6 +7,7 @@
 `define CPU_SLOW14   // run TG68K at 14MHz effective (A1200 speed) for timing closure
 `define ENABLE_CACHE // MiSTer cpu cache between the cpu and the sdram (cached kickstart + fast ram)
 `define CHIPRAM_CACHE 
+`define ENABLE_RAM32 // Use 16MB of 32MB SDRAM for full 8MB Zorro-II Fast-RAM
 
 /* we need two copies in case of 256k kickroms
      openFPGALoader --external-flash -o 0x600000 kick13.rom
@@ -572,7 +573,7 @@ wire 	    ram_oe_n;
 wire		ram_refresh;   
    
 wire fastram_sel;
-wire [22:1] fastram_addr;
+wire [23:1] fastram_addr;
 wire fastram_lds;
 wire fastram_uds;
 wire [15:0] fastram_dout;
@@ -623,7 +624,7 @@ wire [5:0] chipset_config = { 1'b0, 3'd6, osd_video_mode, 1'b0 }; // AGA locked
 wire [1:0] cpu_config     = 2'b11;                                // 68020 locked
 wire [2:0] turbo_config   = 3'b111;                               // Turbo Both + TurboData locked
 wire [7:0] memory_config  = { 4'b0_000, 2'd0, 2'd3 };             // 0 Slow + 2MB Chip locked
-wire [2:0] fastram_config = { 1'b0, 2'd2 };                       // 4MB Fast locked (no ENABLE_RAM32)
+wire [2:0] fastram_config = { 1'b0, 2'd3 };                       // 8MB Fast locked (ENABLE_RAM32)
 wire [3:0] floppy_config  = { osd_floppy_drives, osd_floppy_wrprot, osd_floppy_turbo };
 wire [3:0] video_config   = { osd_video_filter, osd_video_scanlines };
 wire [5:0] ide_config     = { 5'b10000, osd_ide_enable };
@@ -1077,7 +1078,7 @@ sdram_p2_arbiter spr_arb (
 	.clk        ( clk_85m       ),
 	.rst_n      ( pll_lock      ),
 
-	.a_addr     ( rom_done ? {1'b0, fastram_addr} : {1'b0, verify_addr} ),
+	.a_addr     ( rom_done ? fastram_addr         : {1'b0, verify_addr} ),
 	.a_ds       ( rom_done ? fastram_be           : 2'b00                ),
 	.a_cs       ( rom_done ? fastram_sel          : flash_p2_cs          ),
 	.a_we       ( rom_done ? fastram_wr           : 1'b0                 ),
@@ -1120,7 +1121,7 @@ sprite_mem_adapter spr_adapter (
 `else
 
 // Prozessor haengt direkt am SDRAM-Anschluss p2 (kein Arbiter)
-assign p2_addr       = rom_done ? {1'b0, fastram_addr} : {1'b0, verify_addr};
+assign p2_addr       = rom_done ? fastram_addr         : {1'b0, verify_addr};
 assign p2_ds         = rom_done ? fastram_be           : 2'b00;
 assign p2_cs         = rom_done ? fastram_sel          : flash_p2_cs;
 assign p2_we         = rom_done ? fastram_wr           : 1'b0;
