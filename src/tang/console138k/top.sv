@@ -1409,9 +1409,27 @@ always @(posedge clk_28m) begin
     end
     if (mcu_osd_strobe) diag_osd_rst_seen <= 1'b1;
 end
+reg [7:0] diag_spi_cs_cnt  = 8'd0;
+reg [7:0] diag_sys_cnt     = 8'd0;
+reg [7:0] diag_sys_cmd     = 8'hFF;
+reg [7:0] diag_sys_out     = 8'h00;
+reg       diag_spi_cs_prev = 1'b1;
+always @(posedge clk_85m) begin
+    diag_spi_cs_prev <= spi_csn;
+    if (!spi_csn && diag_spi_cs_prev && diag_spi_cs_cnt != 8'hFF)
+        diag_spi_cs_cnt <= diag_spi_cs_cnt + 8'd1;
+    if (mcu_sys_strobe) begin
+        if (diag_sys_cnt != 8'hFF) diag_sys_cnt <= diag_sys_cnt + 8'd1;
+        if (mcu_start_fast)        diag_sys_cmd <= mcu_data_out_fast;
+    end
+    if (sys_data_out != 8'h00)
+        diag_sys_out <= sys_data_out;
+end
+
 wire diag_crc_ok = !diag_bad_wr_cnt && (diag_flash_64 == diag_sdram_64) && (diag_flash_64 != 64'd0);
 wire [7:0] diag_boot_byte = { rom_done, diag_crc_ok, diag_cpu_rst_n, diag_seen_rd, diag_rd_active, diag_bus_stage };
-wire [31:0] diag_row0 = { diag_fdc_rd_cnt, diag_ide_rd_cnt, diag_sd_done_cnt, diag_fdd_led_cnt, diag_df0_present, diag_df0_mnt_seen, diag_osd_rst_seen, sd_busy };
+wire [31:0] diag_row0_norm = { diag_fdc_rd_cnt, diag_ide_rd_cnt, diag_sd_done_cnt, diag_fdd_led_cnt, diag_df0_present, diag_df0_mnt_seen, diag_osd_rst_seen, sd_busy };
+wire [31:0] diag_row0 = diag_osd_rst_seen ? diag_row0_norm : { diag_spi_cs_cnt, diag_sys_cnt, diag_sys_cmd, diag_sys_out };
 wire [31:0] diag_row1 = { diag_boot_byte, diag_first_b0, diag_first_b1, diag_df0_size_hi };
 
 wire diag_ovl_x   = (hdmi_cx >= 11'd96) && (hdmi_cx < 11'd608);
