@@ -443,7 +443,7 @@ sysctrl #(
 `else
     .AGA(0),
 `endif
-    .RESET_TIMEOUT(28'd260_000_000) // ~1.82 s at clk_pixel_x5 (142.86 MHz)
+    .RESET_TIMEOUT(28'd268_000_000) // ~1.88 s at clk_pixel_x5 (142.86 MHz)
 ) sysctrl (
         .clk(clk_pixel_x5),
         .reset(!pll_lock),
