@@ -286,7 +286,7 @@ wire [7:0] sdc_data_out;
    
 mcu_spi_sync mcu (
 	 .clk(clk_28m),
-	 .clk_fast(clk_85m),
+	 .clk_fast(clk_pixel_x5),
 	 .reset(!pll_lock),
 
 	 // SPI interface to FPGA Companion
@@ -318,7 +318,7 @@ mcu_spi_sync mcu (
 // int_ack_s1 only feeds int_ack_s2; functional edge detection uses int_ack_s2 ^ int_ack_s3.
 wire [7:0] int_ack_fast;
 reg  [7:0] int_ack_tgl_85 = 8'd0;
-always @(posedge clk_85m) begin
+always @(posedge clk_pixel_x5) begin
     if (!pll_lock)
         int_ack_tgl_85 <= 8'd0;
     else
@@ -443,9 +443,9 @@ sysctrl #(
 `else
     .AGA(0),
 `endif
-    .RESET_TIMEOUT(28'd252_000_000) // ~2.94 s at clk_85m (85.59 MHz)
+    .RESET_TIMEOUT(28'd260_000_000) // ~1.82 s at clk_pixel_x5 (142.86 MHz)
 ) sysctrl (
-        .clk(clk_85m),
+        .clk(clk_pixel_x5),
         .reset(!pll_lock),
 
          // interface to send and receive generic system control
@@ -1066,7 +1066,7 @@ sdram #(
 //  SDRAM. Bootet dieser Stand, liegt der Fehler im Arbiter.
 // --------------------------------------------------------------------
 // `define SPR_BRAM_TEST
-`define USE_SPR_ARB
+// `define USE_SPR_ARB
 
 `ifdef USE_SPR_ARB
 
