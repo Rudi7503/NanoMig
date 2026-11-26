@@ -1065,7 +1065,7 @@ sdram #(
 //  SDRAM. Bootet dieser Stand, liegt der Fehler im Arbiter.
 // --------------------------------------------------------------------
 // `define SPR_BRAM_TEST
-// `define USE_SPR_ARB
+`define USE_SPR_ARB
 
 `ifdef USE_SPR_ARB
 
@@ -1077,10 +1077,10 @@ sdram_p2_arbiter spr_arb (
 	.clk        ( clk_85m       ),
 	.rst_n      ( pll_lock      ),
 
-	.a_addr     ( fastram_addr  ),
-	.a_ds       ( fastram_be    ),
-	.a_cs       ( fastram_sel   ),
-	.a_we       ( fastram_wr    ),
+	.a_addr     ( rom_done ? {1'b0, fastram_addr} : {1'b0, verify_addr} ),
+	.a_ds       ( rom_done ? fastram_be           : 2'b00                ),
+	.a_cs       ( rom_done ? fastram_sel          : flash_p2_cs          ),
+	.a_we       ( rom_done ? fastram_wr           : 1'b0                 ),
 	.a_dout     ( fastram_dout  ),
 	.a_dout48   ( fastram_dout48),
 	.a_ack      ( fastram_ready ),
