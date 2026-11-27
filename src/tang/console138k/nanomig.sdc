@@ -15,6 +15,9 @@ set_multicycle_path -from [get_clocks {clk28}] -to [get_clocks {clk85}]  -hold -
 set_max_delay 14.0 -from [get_regs {mcu/spi_target_* mcu/spi_in_data_* mcu/req_start*}] -to [get_clocks {clk28}]
 # int_ack_tgl_85 -> int_ack_s1 only (first stage of 2-FF toggle synchronizer)
 set_false_path -from [get_regs {int_ack_tgl_85*}] -to [get_regs {int_ack_s1*}]
+# audio_ext DMA toggle handshake (only first synchronizer stages)
+set_false_path -from [get_regs {aud_req_tgl_28*}] -to [get_regs {aud_req_s1*}]
+set_false_path -from [get_regs {aud_ack_tgl_85*}] -to [get_regs {aud_ack_s1*}]
 
 # SDRAM I/O timing constraints (W9825G6KH-6: tS=1.5ns, tH=0.8ns, tAC=5.4ns, tOH=2.5ns; O_sdram_clk @ 270 deg):
 # Bounded with both min (hold) and max (setup) delays; removed over-tight set_max_delay 4.5 which caused input hold failures.

@@ -293,7 +293,13 @@ module minimig
 	output        spr_mem_read,
 	input  [63:0] spr_mem_readdata,
 	input         spr_mem_readdatavalid,
-	input         spr_mem_waitrequest
+	input         spr_mem_waitrequest,
+
+	// 32-Channel Audio Extension DMA master
+	output        audio_dma_req,
+	output [31:0] audio_dma_addr,
+	input         audio_dma_ack,
+	input  [15:0] audio_dma_data
 	);
 `ifndef GATEMATE
  `ifndef LATTICE
@@ -986,21 +992,12 @@ wire audio_ext_access = audio_ext_selected && !dbr && (cpu_rd || cpu_hwr || cpu_
 wire [15:0] audio_ext_rdata;
 wire audio_ext_irq;
 wire signed [20:0] audio_ext_l, audio_ext_r;
-wire audio_dma_req;
-wire [31:0] audio_dma_addr;
-reg audio_dma_ack;
-wire [15:0] audio_dma_data = 16'd0;
 wire audio_dma_error = 1'b0;
 
 // Global Audio IRQ ($DFF804..$DFF80A)
 wire audio_irq_selected = (cpu_address_out[23:4] == (24'hDFF804 >> 4)) && (cpu_address_out[3:1] >= 3'd2 && cpu_address_out[3:1] <= 3'd5);
 wire audio_irq_access = audio_irq_selected && !dbr && (cpu_rd || cpu_hwr || cpu_lwr);
 wire [1:0] audio_irq_addr = cpu_address_out[3:1] - 3'd2;
-
-always @(posedge clk) begin
- if(reset) audio_dma_ack <= 1'b0;
- else audio_dma_ack <= audio_dma_req && !audio_dma_ack;
-end
 
 audio_ext AUDIO_EXT (
  .clk(clk),

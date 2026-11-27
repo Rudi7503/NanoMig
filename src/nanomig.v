@@ -121,6 +121,12 @@ module nanomig (
    input         spr_mem_readdatavalid,
    input         spr_mem_waitrequest,
 
+   // 32-Channel Audio Extension DMA master
+   output        audio_dma_req,
+   output [31:0] audio_dma_addr,
+   input         audio_dma_ack,
+   input  [15:0] audio_dma_data,
+
    // Diagnose-Ausgaenge fuer Board-LEDs
    output        diag_cpu_rst_n,
    output        diag_cpu_rd_ack,
@@ -1766,7 +1772,13 @@ minimig minimig
         .spr_mem_read         ( spr_mem_read         ),
         .spr_mem_readdata     ( spr_mem_readdata     ),
         .spr_mem_readdatavalid( spr_mem_readdatavalid),
-        .spr_mem_waitrequest  ( spr_mem_waitrequest  )
+        .spr_mem_waitrequest  ( spr_mem_waitrequest  ),
+
+        // 32-Channel Audio Extension DMA master
+        .audio_dma_req        ( audio_dma_req        ),
+        .audio_dma_addr       ( audio_dma_addr       ),
+        .audio_dma_ack        ( audio_dma_ack        ),
+        .audio_dma_data       ( audio_dma_data       )
 );
 
 Amber AMBER
