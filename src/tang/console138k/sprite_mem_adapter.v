@@ -204,7 +204,7 @@ module sprite_mem_adapter (
 
                 WAIT: begin
                     if (ack_edge) begin
-                        avm_readdata      <= {sd_dout48, sd_dout};
+                        avm_readdata      <= {sd_dout, sd_dout48}; // Motorola Big-Endian: w0 at [63:48], w1..3 at [47:0]
                         avm_readdatavalid <= 1'b1;
                         sd_cs             <= 1'b0;
                         state             <= BEAT;

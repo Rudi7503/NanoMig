@@ -153,18 +153,42 @@ module sprite_engine_dma (
     reg [3:0]  state;
     reg [31:0] cur_desc_addr;
 
-    // Latched descriptor fields
-    reg signed [11:0] d_y_pos;
-    reg signed [11:0] d_x_pos;
-    reg [7:0]         d_flags;
+    // Latched descriptor fields (Motorola Big-Endian Revision 4: 16 Bytes)
+    reg signed [15:0] d_y_pos;
+    reg signed [15:0] d_x_pos;
     reg [31:0]        d_data_ptr;
-    reg [11:0]        d_height;
-    reg [11:0]        d_width_px;
+    reg [15:0]        d_height;
+    reg [7:0]         d_width_b;       // Width in 256-bit / 32-byte bursts (1..64)
     reg [7:0]         d_fmt;
     reg [7:0]         d_prio;
     reg [7:0]         d_alpha;
-    reg [7:0]         d_x_scale;
-    reg [7:0]         d_y_scale;
+    reg [15:0]        d_ctrl;
+
+    function [8:0] get_burst_px(input [4:0] fmt);
+        case (fmt)
+            5'd0:    get_burst_px = 9'd256; // CLUT01
+            5'd1:    get_burst_px = 9'd128; // CLUT02
+            5'd2:    get_burst_px = 9'd85;  // CLUT03
+            5'd3:    get_burst_px = 9'd64;  // CLUT04
+            5'd4:    get_burst_px = 9'd51;  // CLUT05
+            5'd5:    get_burst_px = 9'd42;  // CLUT06
+            5'd6:    get_burst_px = 9'd36;  // CLUT07
+            5'd7:    get_burst_px = 9'd32;  // CLUT08
+            5'd8:    get_burst_px = 9'd64;  // HAM04
+            5'd9:    get_burst_px = 9'd64;  // HAM06
+            5'd10:   get_burst_px = 9'd32;  // HAM08
+            5'd11:   get_burst_px = 9'd32;  // HAM12 12_686
+            5'd12:   get_burst_px = 9'd40;  // HAM12 12_5555
+            5'd13:   get_burst_px = 9'd20;  // HAM16 12x4
+            5'd14:   get_burst_px = 9'd16;  // HAM16 Direct
+            5'd15:   get_burst_px = 9'd16;  // RGB16 Direct
+            5'd16:   get_burst_px = 9'd8;   // ARGB32
+            5'd17:   get_burst_px = 9'd40;  // HAM12 12_5555_DELTA
+            5'd18:   get_burst_px = 9'd32;  // HAM12 12_686_DELTA
+            5'd19:   get_burst_px = 9'd32;  // HAM08_DELTA
+            default: get_burst_px = 9'd32;
+        endcase
+    endfunction
 
     reg [11:0] bursts_needed;
     reg [11:0] burst_cnt;
@@ -215,10 +239,9 @@ module sprite_engine_dma (
 
                 S_WAIT_DESC0: begin
                     if (avm_readdatavalid) begin
-                        d_y_pos    <= avm_readdata[63:52];
-                        d_x_pos    <= avm_readdata[51:40];
-                        d_flags    <= avm_readdata[39:32];
-                        d_data_ptr <= avm_readdata[31:0];
+                        d_y_pos    <= avm_readdata[63:48]; // int16_t (signed)
+                        d_x_pos    <= avm_readdata[47:32]; // int16_t (signed)
+                        d_data_ptr <= avm_readdata[31:0];  // uint32_t clean pointer
                         state      <= S_WAIT_DESC1;
                     end
                 end
@@ -230,13 +253,12 @@ module sprite_engine_dma (
 
                 S_WAIT_DESC1: begin
                     if (avm_readdatavalid) begin
-                        d_height      <= avm_readdata[63:52];
-                        d_width_px    <= avm_readdata[51:40];
-                        d_fmt         <= avm_readdata[39:32];
-                        d_prio        <= avm_readdata[31:24];
-                        d_alpha       <= avm_readdata[23:16];
-                        d_x_scale     <= avm_readdata[15:8];
-                        d_y_scale     <= avm_readdata[7:0];
+                        d_height      <= avm_readdata[63:48]; // uint16_t (0 = Sentinel)
+                        d_width_b     <= avm_readdata[47:40]; // uint8_t bursts (1..64)
+                        d_fmt         <= avm_readdata[39:32]; // uint8_t format (0..19)
+                        d_prio        <= avm_readdata[31:24]; // uint8_t prio (1..255)
+                        d_alpha       <= avm_readdata[23:16]; // uint8_t alpha / pal_offset
+                        d_ctrl        <= avm_readdata[15:0];  // uint16_t ctrl flags
                         drain_cnt     <= 2'd2;
                         drain_timeout <= 6'd0;
                         state         <= S_DESC_DRAIN;
@@ -262,54 +284,62 @@ module sprite_engine_dma (
 
                 // --- Evaluate Descriptor against current Scanline Y ---
                 S_EVAL_DESC: begin
-                    if (d_height == 12'd0) begin
+                    if (d_height == 16'd0) begin
                         // Sentinel: End of descriptor list!
                         state <= S_DONE;
-                    end else if (cur_y >= d_y_pos && d_prio != 8'h00) begin
+                    end else if (d_prio != 8'h00) begin
                         begin: eval_active
-                            reg signed [11:0] dy;
-                            reg [11:0] src_y;
-                            reg [11:0] rel_y;
-                            reg [15:0] bursts_per_line;
+                            reg signed [15:0] dy;
+                            reg [15:0] src_y;
+                            reg [15:0] rel_y;
 
-                            dy = cur_y - d_y_pos;
+                            dy = {{4{cur_y[11]}}, cur_y} - d_y_pos;
 
-                            // Power-of-2 Y-Scale (Rev 4 code 0..4 or Q6 64)
-                            case (d_y_scale)
-                                8'd1, 8'd32:  src_y = dy >> 1; // 2x Zoom
-                                8'd2, 8'd16:  src_y = dy >> 2; // 4x Zoom
-                                8'd3, 8'd128: src_y = dy << 1; // 1/2 Shrink
-                                8'd4:         src_y = dy << 2; // 1/4 Shrink
-                                default:      src_y = dy;      // 1x Normal
-                            endcase
+                            if (dy >= 16'sd0) begin
+                                // Power-of-2 Y-Scale (ctrl[5:3]: 0=1x, 1=2x, 2=4x, 3=1/2, 4=1/4)
+                                case (d_ctrl[5:3])
+                                    3'd1:    src_y = dy >> 1; // 2x Zoom
+                                    3'd2:    src_y = dy >> 2; // 4x Zoom
+                                    3'd3:    src_y = dy << 1; // 1/2 Shrink
+                                    3'd4:    src_y = dy << 2; // 1/4 Shrink
+                                    default: src_y = dy;      // 1x Normal
+                                endcase
 
-                            if (src_y < d_height) begin
-                                rel_y = d_flags[1] ? (d_height - 12'd1 - src_y) : src_y; // V_FLIP check
-                                bursts_per_line = (d_width_px + 12'd31) >> 5; // Bursts needed per line
-                                bursts_needed <= bursts_per_line[11:0];
-                                cur_line_data_addr <= d_data_ptr + (rel_y * bursts_per_line * 32);
+                                if (src_y < d_height) begin
+                                    rel_y = d_ctrl[7] ? (d_height - 16'd1 - src_y) : src_y; // V_FLIP check
+                                    bursts_needed <= {4'd0, d_width_b};
+                                    cur_line_data_addr <= d_data_ptr + ({16'd0, rel_y} * {24'd0, d_width_b} * 32);
 
-                                // Latch sprite output parameters
-                                sprite_active  <= 1'b1;
-                                spr_x          <= d_x_pos;
-                                spr_fmt        <= d_fmt[4:0];
-                                spr_prio       <= d_prio;
-                                spr_alpha      <= d_alpha;
-                                spr_blend_mode <= d_flags[3:2];
-                                spr_x_scale    <= d_x_scale;
-                                spr_smooth     <= d_flags[4];
-                                spr_h_flip     <= d_flags[0];
-                                spr_w_px       <= d_width_px[10:0];
-                                spr_start_line <= 1'b1;
+                                    // Latch sprite output parameters
+                                    sprite_active  <= 1'b1;
+                                    spr_x          <= d_x_pos[11:0];
+                                    spr_fmt        <= d_fmt[4:0];
+                                    spr_prio       <= d_prio;
+                                    spr_alpha      <= d_alpha;
+                                    spr_blend_mode <= d_ctrl[10:9];
+                                    case (d_ctrl[2:0]) // X_SCALE
+                                        3'd1:    spr_x_scale <= 8'd32;  // 2x Zoom
+                                        3'd2:    spr_x_scale <= 8'd16;  // 4x Zoom
+                                        3'd3:    spr_x_scale <= 8'd128; // 1/2 Shrink
+                                        3'd4:    spr_x_scale <= 8'd255; // 1/4 Shrink
+                                        default: spr_x_scale <= 8'd64;  // 1x Normal
+                                    endcase
+                                    spr_smooth     <= d_ctrl[8];
+                                    spr_h_flip     <= d_ctrl[6];
+                                    spr_w_px       <= {3'd0, d_width_b} * get_burst_px(d_fmt[4:0]);
+                                    spr_start_line <= 1'b1;
 
-                                burst_cnt <= 12'd0;
-                                state     <= S_FETCH_DATA;
+                                    burst_cnt <= 12'd0;
+                                    state     <= S_FETCH_DATA;
+                                end else begin
+                                    state <= S_NEXT_DESC;
+                                end
                             end else begin
                                 state <= S_NEXT_DESC;
                             end
                         end
                     end else begin
-                        // Not active on this line: advance to next descriptor
+                        // Inactive (prio == 0): advance to next descriptor
                         state <= S_NEXT_DESC;
                     end
                 end
