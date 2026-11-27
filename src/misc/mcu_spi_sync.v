@@ -114,9 +114,13 @@ wire [7:0] in_byte =
     (spi_target == 8'd3) ? mcu_sdc_din :
     8'h00;
 
-// Direct mux from registered in_byte / spi_cnt / ss_high (zero extra pipeline cycle):
-// New MSB is valid on spi_io_dout within ~35..47 ns of bit 7 falling edge,
-// leaving >= 28 ns setup margin at 13.333 MHz (and working even at 20 MHz zero-gap SPI).
-assign spi_io_dout = ss_high ? 1'b0 : in_byte[~spi_cnt];
+// Registered glitch-free MISO output @ 142.86 MHz (single FF -> OBUF, zero combinational glitches):
+// New MSB is valid on spi_io_dout within ~35..43 ns of bit 7 falling edge,
+// leaving >= 32 ns setup margin at 13.333 MHz with deterministic clk-to-pad.
+(* syn_useioff = 1 *) reg spi_dout_reg = 1'b0;
+always @(posedge clk_fast) begin
+    spi_dout_reg <= ss_high ? 1'b0 : in_byte[~spi_cnt];
+end
+assign spi_io_dout = spi_dout_reg;
 
 endmodule

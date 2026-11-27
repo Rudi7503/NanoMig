@@ -26,10 +26,10 @@ set_input_delay  -clock clk85 -min 2.5 [get_ports {IO_sdram_dq[*]}]
 set_output_delay -clock clk85 -max 4.5 [get_ports {IO_sdram_dq[*] O_sdram_addr[*] O_sdram_ba[*] O_sdram_dqm[*] O_sdram_cs_n O_sdram_ras_n O_sdram_cas_n O_sdram_wen_n}]
 set_output_delay -clock clk85 -min -1.0 [get_ports {IO_sdram_dq[*] O_sdram_addr[*] O_sdram_ba[*] O_sdram_dqm[*] O_sdram_cs_n O_sdram_ras_n O_sdram_cas_n O_sdram_wen_n}]
 
-# BL616 SPI signals: mcu_spi_sync + sysctrl run on clk_hdmi (142.86 MHz) -> -14 ns sync latency,
-# 144/144 XML PASS up to 20 MHz SPI. Bound inputs <= 5.5 ns and MISO <= 14.5 ns to U13 pad.
+# BL616 SPI signals: mcu_spi_sync + sysctrl run on clk_hdmi (142.86 MHz) with registered spi_dout_reg
+# Bound inputs <= 5.5 ns and registered MISO <= 10.5 ns to U13 pad.
 set_max_delay 5.5  -from [get_ports {spi_sclk spi_dat spi_csn}] -to [get_clocks {clk_hdmi}]
-set_max_delay 14.5 -from [get_clocks {clk_hdmi}] -to [get_ports {spi_dir}]
+set_max_delay 10.5 -from [get_clocks {clk_hdmi}] -to [get_ports {spi_dir}]
 
 # sysctrl runs on clk85 for 16 MHz zero-gap SPI XML reads; its static config outputs feed clk28 logic
 set_false_path -from [get_regs {sysctrl/system_*}]

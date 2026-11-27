@@ -1130,6 +1130,11 @@ sprite_mem_adapter spr_adapter (
 `else
 
 // Prozessor + AUDIO_EXT DMA teilen sich SDRAM-Anschluss p2 (CPU hat Vorrang)
+localparam [1:0] P2_IDLE = 2'd0;
+localparam [1:0] P2_CPU  = 2'd1;
+localparam [1:0] P2_AUD  = 2'd2;
+localparam [1:0] P2_GAP  = 2'd3;
+
 reg        aud_req_busy_28 = 1'b0;
 reg        aud_req_tgl_28  = 1'b0;
 reg [31:0] aud_dma_addr_28 = 32'd0;
@@ -1137,11 +1142,19 @@ reg [31:0] aud_dma_addr_28 = 32'd0;
 (* syn_preserve = 1 *) reg aud_req_s2 = 1'b0;
 reg        aud_req_s3      = 1'b0;
 reg        aud_pending_85  = 1'b0;
-reg        aud_p2_active   = 1'b0;
-reg        aud_p2_cs       = 1'b0;
-reg [22:0] aud_p2_addr     = 23'd0;
-reg        aud_p2_ack_hold = 1'b0;
-reg        aud_p2_ack_d    = 1'b0;
+(* syn_preserve = 1 *) reg fastram_sel_s1 = 1'b0;
+(* syn_preserve = 1 *) reg fastram_sel_s2 = 1'b0;
+reg [1:0]  p2_state        = P2_IDLE;
+reg [1:0]  p2_gap_cnt      = 2'd0;
+reg        p2_cs_85        = 1'b0;
+reg [22:0] p2_addr_85      = 23'd0;
+reg [1:0]  p2_ds_85        = 2'b00;
+reg        p2_we_85        = 1'b0;
+reg        p2_ack_d        = 1'b0;
+reg        cpu_req_done_85 = 1'b0;
+reg        cpu_ack_85      = 1'b0;
+reg [15:0] cpu_dout_85     = 16'd0;
+reg [47:0] cpu_dout48_85   = 48'd0;
 reg [15:0] aud_p2_data     = 16'd0;
 reg        aud_ack_tgl_85  = 1'b0;
 (* syn_preserve = 1 *) reg aud_ack_s1 = 1'b0;
@@ -1154,7 +1167,7 @@ wire [22:0] aud_mapped_addr =
                                          aud_dma_addr_28[23:1];
 
 always @(posedge clk_28m) begin
-    if (!pll_lock || cpu_reset) begin
+    if (!pll_lock) begin
         aud_req_busy_28 <= 1'b0;
         aud_req_tgl_28  <= 1'b0;
         aud_ack_s1      <= 1'b0;
@@ -1168,10 +1181,15 @@ always @(posedge clk_28m) begin
         aud_ack_s3    <= aud_ack_s2;
         audio_dma_ack <= 1'b0;
 
-        if (aud_ack_s2 != aud_ack_s3) begin
-            audio_dma_data  <= aud_p2_data;
-            audio_dma_ack   <= 1'b1;
+        if (cpu_reset) begin
             aud_req_busy_28 <= 1'b0;
+            audio_dma_data  <= 16'd0;
+        end else if (aud_ack_s2 != aud_ack_s3) begin
+            aud_req_busy_28 <= 1'b0;
+            if (aud_req_busy_28) begin
+                audio_dma_data <= aud_p2_data;
+                audio_dma_ack  <= 1'b1;
+            end
         end else if (audio_dma_req && !aud_req_busy_28 && !audio_dma_ack) begin
             aud_dma_addr_28 <= audio_dma_addr;
             aud_req_busy_28 <= 1'b1;
@@ -1186,45 +1204,96 @@ always @(posedge clk_85m) begin
         aud_req_s2      <= 1'b0;
         aud_req_s3      <= 1'b0;
         aud_pending_85  <= 1'b0;
-        aud_p2_active   <= 1'b0;
-        aud_p2_cs       <= 1'b0;
-        aud_p2_ack_hold <= 1'b0;
-        aud_p2_ack_d    <= 1'b0;
+        fastram_sel_s1  <= 1'b0;
+        fastram_sel_s2  <= 1'b0;
+        p2_state        <= P2_IDLE;
+        p2_gap_cnt      <= 2'd0;
+        p2_cs_85        <= 1'b0;
+        p2_addr_85      <= 23'd0;
+        p2_ds_85        <= 2'b00;
+        p2_we_85        <= 1'b0;
+        p2_ack_d        <= 1'b0;
+        cpu_req_done_85 <= 1'b0;
+        cpu_ack_85      <= 1'b0;
+        cpu_dout_85     <= 16'd0;
+        cpu_dout48_85   <= 48'd0;
         aud_p2_data     <= 16'd0;
         aud_ack_tgl_85  <= 1'b0;
     end else begin
-        aud_req_s1   <= aud_req_tgl_28;
-        aud_req_s2   <= aud_req_s1;
-        aud_req_s3   <= aud_req_s2;
-        aud_p2_ack_d <= p2_ack;
-        if (!aud_p2_active) aud_p2_ack_hold <= p2_ack;
+        aud_req_s1     <= aud_req_tgl_28;
+        aud_req_s2     <= aud_req_s1;
+        aud_req_s3     <= aud_req_s2;
+        fastram_sel_s1 <= fastram_sel;
+        fastram_sel_s2 <= fastram_sel_s1;
+        p2_ack_d       <= p2_ack;
+
+        if (!fastram_sel_s2)
+            cpu_req_done_85 <= 1'b0;
 
         if (aud_req_s2 != aud_req_s3)
             aud_pending_85 <= 1'b1;
 
-        if (!aud_p2_active) begin
-            if (rom_done && aud_pending_85 && !fastram_sel) begin
-                aud_pending_85 <= 1'b0;
-                aud_p2_active  <= 1'b1;
-                aud_p2_cs      <= 1'b1;
-                aud_p2_addr    <= aud_mapped_addr;
+        case (p2_state)
+            P2_IDLE: begin
+                p2_cs_85 <= 1'b0;
+                if (rom_done) begin
+                    if (fastram_sel_s2 && !cpu_req_done_85) begin
+                        p2_state   <= P2_CPU;
+                        p2_cs_85   <= 1'b1;
+                        p2_addr_85 <= fastram_addr;
+                        p2_ds_85   <= fastram_be;
+                        p2_we_85   <= fastram_wr;
+                    end else if (aud_pending_85 && !fastram_sel_s2) begin
+                        aud_pending_85 <= 1'b0;
+                        p2_state       <= P2_AUD;
+                        p2_cs_85       <= 1'b1;
+                        p2_addr_85     <= aud_mapped_addr;
+                        p2_ds_85       <= 2'b11;
+                        p2_we_85       <= 1'b0;
+                    end
+                end
             end
-        end else if (p2_ack != aud_p2_ack_d) begin
-            aud_p2_data    <= p2_dout;
-            aud_p2_cs      <= 1'b0;
-            aud_p2_active  <= 1'b0;
-            aud_ack_tgl_85 <= ~aud_ack_tgl_85;
-        end
+
+            P2_CPU: begin
+                if (p2_ack != p2_ack_d) begin
+                    cpu_dout_85     <= p2_dout;
+                    cpu_dout48_85   <= p2_dout48;
+                    cpu_ack_85      <= ~cpu_ack_85;
+                    cpu_req_done_85 <= 1'b1;
+                    p2_cs_85        <= 1'b0;
+                    p2_gap_cnt      <= 2'd2;
+                    p2_state        <= P2_GAP;
+                end
+            end
+
+            P2_AUD: begin
+                if (p2_ack != p2_ack_d) begin
+                    aud_p2_data    <= p2_dout;
+                    aud_ack_tgl_85 <= ~aud_ack_tgl_85;
+                    p2_cs_85       <= 1'b0;
+                    p2_gap_cnt     <= 2'd2;
+                    p2_state       <= P2_GAP;
+                end
+            end
+
+            P2_GAP: begin
+                p2_cs_85 <= 1'b0;
+                if (p2_gap_cnt == 2'd0)
+                    p2_state <= P2_IDLE;
+                else
+                    p2_gap_cnt <= p2_gap_cnt - 2'd1;
+            end
+        endcase
     end
 end
 
-assign p2_addr       = aud_p2_active ? aud_p2_addr : (rom_done ? fastram_addr : {1'b0, verify_addr});
-assign p2_ds         = aud_p2_active ? 2'b11       : (rom_done ? fastram_be   : 2'b00);
-assign p2_cs         = aud_p2_active ? aud_p2_cs   : (rom_done ? fastram_sel  : flash_p2_cs);
-assign p2_we         = aud_p2_active ? 1'b0        : (rom_done ? fastram_wr   : 1'b0);
-assign fastram_dout   = p2_dout;
-assign fastram_dout48 = p2_dout48;
-assign fastram_ready  = aud_p2_active ? aud_p2_ack_hold : p2_ack;
+assign p2_addr        = rom_done ? p2_addr_85 : {1'b0, verify_addr};
+assign p2_ds          = rom_done ? p2_ds_85   : 2'b00;
+assign p2_cs          = rom_done ? p2_cs_85   : flash_p2_cs;
+assign p2_we          = rom_done ? p2_we_85   : 1'b0;
+assign fastram_dout   = cpu_dout_85;
+assign fastram_dout48 = cpu_dout48_85;
+assign fastram_ready  = cpu_ack_85;
 
 `ifdef SPR_BRAM_TEST
 // Block-RAM-Testmuster fuer die Sprite-Engine (Toby, 2026-11-13)
