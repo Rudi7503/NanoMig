@@ -11,9 +11,8 @@ set_multicycle_path -from [get_clocks {clk28}] -to [get_clocks {clk85}]  -setup 
 set_multicycle_path -from [get_clocks {clk28}] -to [get_clocks {clk85}]  -hold -start 2
 # mcu_spi_sync: req_85 -> req_28/strobe_28 (negedge clk28) is left UNEXEMPTED and checked synchronously (3.5 ns)!
 # spi_target/spi_in_data/req_start -> posedge clk28 consumers are guaranteed >= 21 ns (3 clk_hdmi cycles)
-# stable before strobe_28 fires on negedge->posedge clk28; -setup -end 2 (14 ns) is conservative.
-set_multicycle_path -from [get_regs {mcu/spi_target_* mcu/spi_in_data_* mcu/req_start*}] -to [get_clocks {clk28}] -setup -end 2
-set_multicycle_path -from [get_regs {mcu/spi_target_* mcu/spi_in_data_* mcu/req_start*}] -to [get_clocks {clk28}] -hold -end 1
+# stable before strobe_28 fires on negedge->posedge clk28; bound directly with set_max_delay 14.0 (0 ns hold unchanged).
+set_max_delay 14.0 -from [get_regs {mcu/spi_target_* mcu/spi_in_data_* mcu/req_start*}] -to [get_clocks {clk28}]
 # int_ack_tgl_85 -> int_ack_s1 only (first stage of 2-FF toggle synchronizer)
 set_false_path -from [get_regs {int_ack_tgl_85*}] -to [get_regs {int_ack_s1*}]
 
