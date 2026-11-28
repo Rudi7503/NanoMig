@@ -636,6 +636,7 @@ wire [5:0] ide_config     = { 5'b10000, osd_ide_enable };
 nanomig nanomig
 (
  .clk_sys(clk_28m),
+ .clk_spr_render(clk_85m),
  .reset(cpu_reset),
  .por(!pll_lock),
 
@@ -1082,20 +1083,8 @@ sdram #(
 reg [255:0]  spr_burst_85   = 256'd0;
 wire [255:0] spr_burst_data = spr_burst_85;
 
-(* syn_preserve = 1 *) reg spr_ack_s1 = 1'b0;
-(* syn_preserve = 1 *) reg spr_ack_s2 = 1'b0;
-always @(posedge clk_28m) begin
-	if (!pll_lock) begin
-		spr_ack_s1 <= 1'b0;
-		spr_ack_s2 <= 1'b0;
-	end else begin
-		spr_ack_s1 <= spr_sd_ack;
-		spr_ack_s2 <= spr_ack_s1;
-	end
-end
-
 sprite_mem_adapter spr_adapter (
-	.clk                ( clk_28m ),
+	.clk                ( clk_85m ),
 	.rst_n              ( pll_lock ),
 
 	.avm_address        ( spr_mem_address       ),
@@ -1107,7 +1096,7 @@ sprite_mem_adapter spr_adapter (
 	.sd_addr            ( spr_sd_addr    ),
 	.sd_cs              ( spr_sd_cs      ),
 	.sd_burst_data      ( spr_burst_data ),
-	.sd_ack             ( spr_ack_s2     )
+	.sd_ack             ( spr_sd_ack     )
 );
 
 `else
@@ -1135,7 +1124,7 @@ assign spr_mem_waitrequest   = 1'b0;
 
 `endif
 
-// Prozessor + Sprite-Engine + AUDIO_EXT DMA teilen sich SDRAM-Anschluss p2 (CPU > SPR > AUD)
+// AUDIO_EXT DMA + Sprite-Engine + Prozessor teilen sich SDRAM-Anschluss p2 (AUD > SPR > CPU)
 localparam [2:0] P2_IDLE = 3'd0;
 localparam [2:0] P2_CPU  = 3'd1;
 localparam [2:0] P2_SPR  = 3'd2;
@@ -1151,8 +1140,6 @@ reg        aud_req_s3      = 1'b0;
 reg        aud_pending_85  = 1'b0;
 (* syn_preserve = 1 *) reg fastram_sel_s1 = 1'b0;
 (* syn_preserve = 1 *) reg fastram_sel_s2 = 1'b0;
-(* syn_preserve = 1 *) reg spr_cs_s1      = 1'b0;
-(* syn_preserve = 1 *) reg spr_cs_s2      = 1'b0;
 reg [2:0]  p2_state        = P2_IDLE;
 reg [1:0]  p2_gap_cnt      = 2'd0;
 reg        p2_cs_85        = 1'b0;
@@ -1177,6 +1164,11 @@ wire [22:0] aud_mapped_addr =
     (aud_dma_addr_28[23:21] == 3'b011) ? {3'b101, aud_dma_addr_28[20:1]} :
     (aud_dma_addr_28[23:21] == 3'b100) ? {3'b100, aud_dma_addr_28[20:1]} :
                                          aud_dma_addr_28[23:1];
+
+wire [22:0] spr_mapped_addr =
+    (spr_sd_addr[22:20] == 3'b011) ? {3'b101, spr_sd_addr[19:0]} :
+    (spr_sd_addr[22:20] == 3'b100) ? {3'b100, spr_sd_addr[19:0]} :
+                                     spr_sd_addr;
 
 always @(posedge clk_28m) begin
     if (!pll_lock) begin
@@ -1218,8 +1210,6 @@ always @(posedge clk_85m) begin
         aud_pending_85  <= 1'b0;
         fastram_sel_s1  <= 1'b0;
         fastram_sel_s2  <= 1'b0;
-        spr_cs_s1       <= 1'b0;
-        spr_cs_s2       <= 1'b0;
         p2_state        <= P2_IDLE;
         p2_gap_cnt      <= 2'd0;
         p2_cs_85        <= 1'b0;
@@ -1243,14 +1233,12 @@ always @(posedge clk_85m) begin
         aud_req_s3     <= aud_req_s2;
         fastram_sel_s1 <= fastram_sel;
         fastram_sel_s2 <= fastram_sel_s1;
-        spr_cs_s1      <= spr_sd_cs;
-        spr_cs_s2      <= spr_cs_s1;
         p2_ack_d       <= p2_ack;
 
         if (!fastram_sel_s2)
             cpu_req_done_85 <= 1'b0;
 
-        if (!spr_cs_s2) begin
+        if (!spr_sd_cs) begin
             spr_req_done_85 <= 1'b0;
             spr_beat_85     <= 2'd0;
         end
@@ -1262,25 +1250,25 @@ always @(posedge clk_85m) begin
             P2_IDLE: begin
                 p2_cs_85 <= 1'b0;
                 if (rom_done) begin
-                    if (fastram_sel_s2 && !cpu_req_done_85) begin
-                        p2_state   <= P2_CPU;
-                        p2_cs_85   <= 1'b1;
-                        p2_addr_85 <= fastram_addr;
-                        p2_ds_85   <= fastram_be;
-                        p2_we_85   <= fastram_wr;
-                    end else if (spr_cs_s2 && !spr_req_done_85 && !fastram_sel_s2) begin
-                        p2_state   <= P2_SPR;
-                        p2_cs_85   <= 1'b1;
-                        p2_addr_85 <= spr_sd_addr + {spr_beat_85, 2'b00};
-                        p2_ds_85   <= 2'b11;
-                        p2_we_85   <= 1'b0;
-                    end else if (aud_pending_85 && !fastram_sel_s2) begin
+                    if (aud_pending_85) begin
                         aud_pending_85 <= 1'b0;
                         p2_state       <= P2_AUD;
                         p2_cs_85       <= 1'b1;
                         p2_addr_85     <= aud_mapped_addr;
                         p2_ds_85       <= 2'b11;
                         p2_we_85       <= 1'b0;
+                    end else if (spr_sd_cs && !spr_req_done_85) begin
+                        p2_state   <= P2_SPR;
+                        p2_cs_85   <= 1'b1;
+                        p2_addr_85 <= spr_mapped_addr + {spr_beat_85, 2'b00};
+                        p2_ds_85   <= 2'b11;
+                        p2_we_85   <= 1'b0;
+                    end else if (fastram_sel_s2 && !cpu_req_done_85) begin
+                        p2_state   <= P2_CPU;
+                        p2_cs_85   <= 1'b1;
+                        p2_addr_85 <= fastram_addr;
+                        p2_ds_85   <= fastram_be;
+                        p2_we_85   <= fastram_wr;
                     end
                 end
             end

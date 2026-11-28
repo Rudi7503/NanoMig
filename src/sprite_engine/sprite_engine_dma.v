@@ -59,6 +59,7 @@ module sprite_engine_dma (
     input  wire        stream_ack,
 
     // Status
+    input  wire        render_ready,    // Linebuf sweep-clear finished
     output reg         line_done,       // All sprites for this line finished
     output wire        engine_en_out,
     output wire        cap_en_out
@@ -149,8 +150,15 @@ module sprite_engine_dma (
     localparam S_STREAM_DATA = 4'd7;
     localparam S_NEXT_DESC   = 4'd8;
     localparam S_DONE        = 4'd9;
+    localparam S_WAIT_CLEAR  = 4'd11;
+    localparam S_EVAL_PREP   = 4'd12;
+    localparam S_EVAL_PREP2  = 4'd13;
 
     reg [3:0]  state;
+    reg signed [15:0] eval_dy;
+    reg [7:0]         eval_eff_w;
+    reg               eval_vis;
+    reg [15:0]        eval_rel_y;
     reg [31:0] cur_desc_addr;
 
     // Latched descriptor fields (Motorola Big-Endian Revision 4: 16 Bytes)
@@ -269,7 +277,7 @@ module sprite_engine_dma (
                 S_DESC_DRAIN: begin
                     if (avm_readdatavalid) begin
                         if (drain_cnt == 2'd1) begin
-                            state <= S_EVAL_DESC;
+                            state <= S_EVAL_PREP;
                         end else begin
                             drain_cnt <= drain_cnt - 2'd1;
                         end
@@ -277,9 +285,32 @@ module sprite_engine_dma (
                         drain_timeout <= drain_timeout + 6'd1;
                         if (drain_timeout == 6'd32) begin
                             // Fallback for legacy fixtures omitting trailing beats
-                            state <= S_EVAL_DESC;
+                            state <= S_EVAL_PREP;
                         end
                     end
+                end
+
+                // --- Pipeline Y visibility check to break scanline_y -> CE path at 85.6 MHz ---
+                S_EVAL_PREP: begin
+                    eval_dy    <= {{4{cur_y[11]}}, cur_y} - d_y_pos;
+                    eval_eff_w <= (d_width_b > 8'd64) ? 8'd64 : d_width_b;
+                    state      <= S_EVAL_PREP2;
+                end
+
+                S_EVAL_PREP2: begin
+                    begin: eval_prep2_blk
+                        reg [15:0] src_y;
+                        case (d_ctrl[5:3])
+                            3'd1:    src_y = eval_dy >> 1; // 2x Zoom
+                            3'd2:    src_y = eval_dy >> 2; // 4x Zoom
+                            3'd3:    src_y = eval_dy << 1; // 1/2 Shrink
+                            3'd4:    src_y = eval_dy << 2; // 1/4 Shrink
+                            default: src_y = eval_dy;      // 1x Normal
+                        endcase
+                        eval_vis   <= (d_height != 16'd0) && (d_prio != 8'h00) && (d_width_b != 8'd0) && !eval_dy[15] && (src_y < d_height);
+                        eval_rel_y <= d_ctrl[7] ? (d_height - 16'd1 - src_y) : src_y;
+                    end
+                    state <= S_EVAL_DESC;
                 end
 
                 // --- Evaluate Descriptor against current Scanline Y ---
@@ -287,63 +318,42 @@ module sprite_engine_dma (
                     if (d_height == 16'd0) begin
                         // Sentinel: End of descriptor list!
                         state <= S_DONE;
-                    end else if (d_prio != 8'h00 && d_width_b != 8'd0) begin
-                        begin: eval_active
-                            reg signed [15:0] dy;
-                            reg [15:0] src_y;
-                            reg [15:0] rel_y;
-                            reg [7:0]  eff_width_b;
+                    end else if (eval_vis) begin
+                        bursts_needed      <= {4'd0, eval_eff_w};
+                        cur_line_data_addr <= d_data_ptr + ({16'd0, eval_rel_y} * {24'd0, eval_eff_w} * 32);
 
-                            eff_width_b = (d_width_b > 8'd64) ? 8'd64 : d_width_b;
-                            dy = {{4{cur_y[11]}}, cur_y} - d_y_pos;
+                        // Latch sprite output parameters
+                        sprite_active  <= 1'b1;
+                        spr_x          <= d_x_pos;
+                        spr_fmt        <= d_fmt[4:0];
+                        spr_prio       <= d_prio;
+                        spr_alpha      <= d_alpha;
+                        spr_blend_mode <= d_ctrl[10:9];
+                        case (d_ctrl[2:0]) // X_SCALE
+                            3'd1:    spr_x_scale <= 9'd32;  // 2x Zoom
+                            3'd2:    spr_x_scale <= 9'd16;  // 4x Zoom
+                            3'd3:    spr_x_scale <= 9'd128; // 1/2 Shrink
+                            3'd4:    spr_x_scale <= 9'd256; // 1/4 Shrink
+                            default: spr_x_scale <= 9'd64;  // 1x Normal
+                        endcase
+                        spr_smooth     <= d_ctrl[8];
+                        spr_h_flip     <= d_ctrl[6];
+                        spr_w_px       <= {7'd0, eval_eff_w} * {6'd0, get_burst_px(d_fmt[4:0])};
+                        spr_start_line <= 1'b1;
 
-                            if (dy >= 16'sd0) begin
-                                // Power-of-2 Y-Scale (ctrl[5:3]: 0=1x, 1=2x, 2=4x, 3=1/2, 4=1/4)
-                                case (d_ctrl[5:3])
-                                    3'd1:    src_y = dy >> 1; // 2x Zoom
-                                    3'd2:    src_y = dy >> 2; // 4x Zoom
-                                    3'd3:    src_y = dy << 1; // 1/2 Shrink
-                                    3'd4:    src_y = dy << 2; // 1/4 Shrink
-                                    default: src_y = dy;      // 1x Normal
-                                endcase
-
-                                if (src_y < d_height) begin
-                                    rel_y = d_ctrl[7] ? (d_height - 16'd1 - src_y) : src_y; // V_FLIP check
-                                    bursts_needed <= {4'd0, eff_width_b};
-                                    cur_line_data_addr <= d_data_ptr + ({16'd0, rel_y} * {24'd0, eff_width_b} * 32);
-
-                                    // Latch sprite output parameters
-                                    sprite_active  <= 1'b1;
-                                    spr_x          <= d_x_pos;
-                                    spr_fmt        <= d_fmt[4:0];
-                                    spr_prio       <= d_prio;
-                                    spr_alpha      <= d_alpha;
-                                    spr_blend_mode <= d_ctrl[10:9];
-                                    case (d_ctrl[2:0]) // X_SCALE
-                                        3'd1:    spr_x_scale <= 9'd32;  // 2x Zoom
-                                        3'd2:    spr_x_scale <= 9'd16;  // 4x Zoom
-                                        3'd3:    spr_x_scale <= 9'd128; // 1/2 Shrink
-                                        3'd4:    spr_x_scale <= 9'd256; // 1/4 Shrink
-                                        default: spr_x_scale <= 9'd64;  // 1x Normal
-                                    endcase
-                                    spr_smooth     <= d_ctrl[8];
-                                    spr_h_flip     <= d_ctrl[6];
-                                    spr_w_px       <= {7'd0, eff_width_b} * {6'd0, get_burst_px(d_fmt[4:0])};
-                                    spr_start_line <= 1'b1;
-
-                                    burst_cnt <= 12'd0;
-                                    state     <= S_FETCH_DATA;
-                                end else begin
-                                    state <= S_NEXT_DESC;
-                                end
-                            end else begin
-                                state <= S_NEXT_DESC;
-                            end
-                        end
+                        burst_cnt <= 12'd0;
+                        if (render_ready)
+                            state <= S_FETCH_DATA;
+                        else
+                            state <= S_WAIT_CLEAR;
                     end else begin
-                        // Inactive (prio == 0): advance to next descriptor
                         state <= S_NEXT_DESC;
                     end
+                end
+
+                S_WAIT_CLEAR: begin
+                    if (render_ready)
+                        state <= S_FETCH_DATA;
                 end
 
                 // --- Issue DDR3 BL8 Burst Read for Sprite Pixels ---

@@ -9,6 +9,7 @@
 // - check IDE head adressing heads[0] vs heads[drive]
 module nanomig (
    input	 clk_sys,
+   input	 clk_spr_render,
    input	 reset,
    input	 por,
 
@@ -1767,6 +1768,7 @@ minimig minimig
  	.sdc_byte_out_data  ( sdc_byte_out_data_fdc ),
 
         // Sprite-Engine: Speicher-Master nach aussen fuehren
+        .clk_spr_render       ( clk_spr_render       ),
         .spr_mem_address      ( spr_mem_address      ),
         .spr_mem_burstcount   ( spr_mem_burstcount   ),
         .spr_mem_read         ( spr_mem_read         ),

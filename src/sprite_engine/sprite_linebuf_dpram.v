@@ -31,13 +31,15 @@ module sprite_linebuf_dpram #(
     always @(posedge clk_a) begin
         if (we_a)
             mem[addr_a] <= data_a;
-        q_a <= mem[addr_a];
+        else
+            q_a <= mem[addr_a];
     end
 
     always @(posedge clk_b) begin
         if (we_b)
             mem[addr_b] <= data_b;
-        q_b <= mem[addr_b];
+        else
+            q_b <= mem[addr_b];
     end
 
 endmodule

@@ -288,6 +288,7 @@ module minimig
 	input [1:0]   cpucfg,
 
 	// Sprite-Engine: eigener Speicher-Master (Avalon-MM, 64 Bit, Burst 4)
+	input         clk_spr_render,
 	output [31:0] spr_mem_address,
 	output [3:0]  spr_mem_burstcount,
 	output        spr_mem_read,
@@ -666,7 +667,7 @@ assign spr_mem_read         = 1'b0;
 `else
 
 (* syn_noprune = 1 *) sprite_engine SPRITE_ENGINE (
-	.clk_render      (clk),
+	.clk_render      (clk_spr_render),
 	.clk_sys         (clk),
 	.clk_vid         (clk),
 	.rst_n           (~reset),

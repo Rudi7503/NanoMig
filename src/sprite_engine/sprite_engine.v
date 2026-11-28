@@ -69,7 +69,6 @@ module sprite_engine (
     wire dma_engine_en;
     wire dma_cap_en;
     wire [3:0] dma_addr_mux = (reg_addr == 4'd6) ? 4'd3 : reg_addr;
-    wire dma_reg_we = reg_cs && reg_we && (reg_addr <= 4'd2);
     reg  pal_reg_we;
 
     reg [7:0]  pal_write_addr;
@@ -79,6 +78,18 @@ module sprite_engine (
     wire       reg_wr_now   = reg_cs && reg_we;
     wire       reg_wr_pulse = reg_wr_now && !reg_wr_d;
 
+    // CDC from clk_sys (28.57 MHz) -> clk_render (85.59 MHz) for DMA registers & video strobes
+    reg [3:0]  dma_wr_addr_sys;
+    reg [15:0] dma_wr_data_sys;
+    reg        dma_wr_tgl_sys;
+    (* syn_preserve = 1 *) reg dma_wr_s1, dma_wr_s2;
+    reg        dma_wr_s3;
+    (* syn_preserve = 1 *) reg vbl_s1, vbl_s2;
+    reg        vbl_s3;
+    (* syn_preserve = 1 *) reg sol_s1, sol_s2;
+    reg        sol_s3;
+    reg signed [11:0] scanline_y_r1, scanline_y_r2;
+
     always @(posedge clk_sys or negedge rst_n) begin
         if (!rst_n) begin
             pal_write_addr  <= 8'h00;
@@ -86,11 +97,18 @@ module sprite_engine (
             pal_write_data  <= 24'h000000;
             pal_reg_we      <= 1'b0;
             reg_wr_d        <= 1'b0;
+            dma_wr_addr_sys <= 4'd0;
+            dma_wr_data_sys <= 16'd0;
+            dma_wr_tgl_sys  <= 1'b0;
         end else begin
             reg_wr_d   <= reg_wr_now;
             pal_reg_we <= 1'b0;
             if (reg_wr_pulse) begin
-                if (reg_addr == 4'd3) begin
+                if (reg_addr <= 4'd2) begin
+                    dma_wr_addr_sys <= reg_addr;
+                    dma_wr_data_sys <= reg_wdata;
+                    dma_wr_tgl_sys  <= ~dma_wr_tgl_sys;
+                end else if (reg_addr == 4'd3) begin
                     pal_write_addr  <= reg_wdata[7:0];
                     pal_commit_addr <= reg_wdata[7:0];
                 end else if (reg_addr == 4'd4) begin
@@ -104,6 +122,38 @@ module sprite_engine (
             end
         end
     end
+
+    always @(posedge clk_render or negedge rst_n) begin
+        if (!rst_n) begin
+            dma_wr_s1     <= 1'b0;
+            dma_wr_s2     <= 1'b0;
+            dma_wr_s3     <= 1'b0;
+            vbl_s1        <= 1'b0;
+            vbl_s2        <= 1'b0;
+            vbl_s3        <= 1'b0;
+            sol_s1        <= 1'b0;
+            sol_s2        <= 1'b0;
+            sol_s3        <= 1'b0;
+            scanline_y_r1 <= 12'sd0;
+            scanline_y_r2 <= 12'sd0;
+        end else begin
+            dma_wr_s1     <= dma_wr_tgl_sys;
+            dma_wr_s2     <= dma_wr_s1;
+            dma_wr_s3     <= dma_wr_s2;
+            vbl_s1        <= vblank_pulse;
+            vbl_s2        <= vbl_s1;
+            vbl_s3        <= vbl_s2;
+            sol_s1        <= line_swap_pulse;
+            sol_s2        <= sol_s1;
+            sol_s3        <= sol_s2;
+            scanline_y_r1 <= scanline_y;
+            scanline_y_r2 <= scanline_y_r1;
+        end
+    end
+
+    wire dma_reg_we_render = (dma_wr_s2 != dma_wr_s3);
+    wire vbl_render        = vbl_s2 && !vbl_s3;
+    wire sol_render        = sol_s2 && !sol_s3;
 
     wire [15:0] dma_reg_rdata;
     wire [15:0] cap_reg_rdata;
@@ -169,14 +219,14 @@ module sprite_engine (
         .clk               (clk_render),
         .rst_n             (rst_n),
 
-        .reg_we            (dma_reg_we),
-        .reg_addr          (dma_addr_mux),
-        .reg_wdata         (reg_wdata),
+        .reg_we            (dma_reg_we_render),
+        .reg_addr          (dma_reg_we_render ? dma_wr_addr_sys : dma_addr_mux),
+        .reg_wdata         (dma_wr_data_sys),
         .reg_rdata         (dma_reg_rdata),
 
-        .vblank_pulse      (vblank_pulse),
-        .start_line        (line_swap_pulse),
-        .cur_y             (scanline_y),
+        .vblank_pulse      (vbl_render),
+        .start_line        (sol_render),
+        .cur_y             (scanline_y_r2),
 
         .avm_address       (avm_address),
         .avm_burstcount    (avm_burstcount),
@@ -200,6 +250,7 @@ module sprite_engine (
         .stream_word64     (stream_word64),
         .stream_valid      (stream_valid),
         .stream_ack        (stream_ack),
+        .render_ready      (render_ready),
         .line_done         (line_done),
         .engine_en_out     (dma_engine_en),
         .cap_en_out        (dma_cap_en)
@@ -380,24 +431,176 @@ module sprite_engine (
         .out_opaque (dec_opaque)
     );
 
-    // 2-Cycle Read-Modify-Write Pipeline for Blend Modes (Additive, 50/50, Alpha)
+    // 5-Cycle Read-Modify-Write Pipeline for Blend Modes (breaks DOA -> diff -> DSP -> DIA at 85.6 MHz)
     wire is_blend = (spr_blend_mode != 2'b00);
-    reg  rmw_phase;
+    reg [2:0]  rmw_phase;
+    reg [23:0] old_rgb_r;
+    reg [7:0]  old_prio_r;
+    reg signed [16:0] blend_prod_r_r, blend_prod_g_r, blend_prod_b_r;
+    reg [15:0] blend_pempty_r_r, blend_pempty_g_r, blend_pempty_b_r;
+    reg [8:0]  blend_add_r_r, blend_add_g_r, blend_add_b_r;
+    reg        blend_reg_we;
+    reg [7:0]  blend_reg_prio;
+    reg [23:0] blend_reg_rgb;
 
-    always @(posedge clk_render or negedge rst_n) begin
-        if (!rst_n) begin
-            rmw_phase <= 1'b0;
-        end else if (spr_start_line) begin
-            rmw_phase <= 1'b0;
-        end else if (is_blend && scale_dst_valid) begin
-            rmw_phase <= ~rmw_phase;
+    wire [7:0] old_r_w = old_rgb_r[23:16];
+    wire [7:0] old_g_w = old_rgb_r[15:8];
+    wire [7:0] old_b_w = old_rgb_r[7:0];
+
+    wire signed [8:0] diff_r_w = $signed({1'b0, scale_dst_r}) - $signed({1'b0, old_r_w});
+    wire signed [8:0] diff_g_w = $signed({1'b0, scale_dst_g}) - $signed({1'b0, old_g_w});
+    wire signed [8:0] diff_b_w = $signed({1'b0, scale_dst_b}) - $signed({1'b0, old_b_w});
+
+    wire signed [16:0] prod_r_w = diff_r_w * $signed({1'b0, scale_dst_alpha});
+    wire signed [16:0] prod_g_w = diff_g_w * $signed({1'b0, scale_dst_alpha});
+    wire signed [16:0] prod_b_w = diff_b_w * $signed({1'b0, scale_dst_alpha});
+
+    wire [15:0] pempty_r_w = scale_dst_r * scale_dst_alpha;
+    wire [15:0] pempty_g_w = scale_dst_g * scale_dst_alpha;
+    wire [15:0] pempty_b_w = scale_dst_b * scale_dst_alpha;
+
+    wire [8:0] add_r_w = {1'b0, scale_dst_r} + {1'b0, old_r_w};
+    wire [8:0] add_g_w = {1'b0, scale_dst_g} + {1'b0, old_g_w};
+    wire [8:0] add_b_w = {1'b0, scale_dst_b} + {1'b0, old_b_w};
+
+    wire [8:0] alpha_dest_r_w = $signed({1'b0, old_r_w}) + (blend_prod_r_r >>> 8);
+    wire [8:0] alpha_dest_g_w = $signed({1'b0, old_g_w}) + (blend_prod_g_r >>> 8);
+    wire [8:0] alpha_dest_b_w = $signed({1'b0, old_b_w}) + (blend_prod_b_r >>> 8);
+
+    reg        blend_comb_we;
+    reg [7:0]  blend_comb_prio;
+    reg [7:0]  blend_comb_r, blend_comb_g, blend_comb_b;
+
+    always @(*) begin
+        if (!scale_dst_opaque) begin
+            blend_comb_we   = 1'b0;
+            blend_comb_prio = 8'h00;
+            blend_comb_r    = 8'h00;
+            blend_comb_g    = 8'h00;
+            blend_comb_b    = 8'h00;
         end else begin
-            rmw_phase <= 1'b0;
+            case (spr_blend_mode)
+                2'b00: begin
+                    blend_comb_we   = 1'b1;
+                    blend_comb_prio = spr_prio;
+                    blend_comb_r    = scale_dst_r;
+                    blend_comb_g    = scale_dst_g;
+                    blend_comb_b    = scale_dst_b;
+                end
+                2'b01: begin
+                    blend_comb_we   = 1'b1;
+                    blend_comb_prio = (old_prio_r != 8'h00) ? ((spr_prio > old_prio_r) ? spr_prio : old_prio_r) : spr_prio;
+                    if (old_prio_r == 8'h00) begin
+                        blend_comb_r = scale_dst_r;
+                        blend_comb_g = scale_dst_g;
+                        blend_comb_b = scale_dst_b;
+                    end else begin
+                        blend_comb_r = blend_add_r_r[8] ? 8'hFF : blend_add_r_r[7:0];
+                        blend_comb_g = blend_add_g_r[8] ? 8'hFF : blend_add_g_r[7:0];
+                        blend_comb_b = blend_add_b_r[8] ? 8'hFF : blend_add_b_r[7:0];
+                    end
+                end
+                2'b10: begin
+                    blend_comb_we   = 1'b1;
+                    blend_comb_prio = (old_prio_r != 8'h00) ? ((spr_prio > old_prio_r) ? spr_prio : old_prio_r) : spr_prio;
+                    if (old_prio_r == 8'h00) begin
+                        blend_comb_r = scale_dst_r;
+                        blend_comb_g = scale_dst_g;
+                        blend_comb_b = scale_dst_b;
+                    end else begin
+                        blend_comb_r = blend_add_r_r[8:1];
+                        blend_comb_g = blend_add_g_r[8:1];
+                        blend_comb_b = blend_add_b_r[8:1];
+                    end
+                end
+                2'b11: begin
+                    if (scale_dst_alpha == 8'h00) begin
+                        blend_comb_we   = 1'b0;
+                        blend_comb_prio = old_prio_r;
+                        blend_comb_r    = old_r_w;
+                        blend_comb_g    = old_g_w;
+                        blend_comb_b    = old_b_w;
+                    end else if (scale_dst_alpha == 8'hFF) begin
+                        blend_comb_we   = 1'b1;
+                        blend_comb_prio = (spr_prio > old_prio_r) ? spr_prio : old_prio_r;
+                        blend_comb_r    = scale_dst_r;
+                        blend_comb_g    = scale_dst_g;
+                        blend_comb_b    = scale_dst_b;
+                    end else if (old_prio_r == 8'h00) begin
+                        blend_comb_we   = 1'b1;
+                        blend_comb_prio = spr_prio;
+                        blend_comb_r    = blend_pempty_r_r[15:8];
+                        blend_comb_g    = blend_pempty_g_r[15:8];
+                        blend_comb_b    = blend_pempty_b_r[15:8];
+                    end else begin
+                        blend_comb_we   = 1'b1;
+                        blend_comb_prio = (spr_prio > old_prio_r) ? spr_prio : old_prio_r;
+                        blend_comb_r    = alpha_dest_r_w[8] ? 8'h00 : alpha_dest_r_w[7:0];
+                        blend_comb_g    = alpha_dest_g_w[8] ? 8'h00 : alpha_dest_g_w[7:0];
+                        blend_comb_b    = alpha_dest_b_w[8] ? 8'h00 : alpha_dest_b_w[7:0];
+                    end
+                end
+            endcase
         end
     end
 
-    wire scale_step_en = !is_blend || (rmw_phase == 1'b1) || !scale_dst_valid;
-    wire render_wr_en  = scale_dst_valid && blend_out_we && (!is_blend || rmw_phase == 1'b1);
+    always @(posedge clk_render or negedge rst_n) begin
+        if (!rst_n) begin
+            rmw_phase        <= 3'd0;
+            old_rgb_r        <= 24'h000000;
+            old_prio_r       <= 8'h00;
+            blend_prod_r_r   <= 17'sd0;
+            blend_prod_g_r   <= 17'sd0;
+            blend_prod_b_r   <= 17'sd0;
+            blend_pempty_r_r <= 16'd0;
+            blend_pempty_g_r <= 16'd0;
+            blend_pempty_b_r <= 16'd0;
+            blend_add_r_r    <= 9'd0;
+            blend_add_g_r    <= 9'd0;
+            blend_add_b_r    <= 9'd0;
+            blend_reg_we     <= 1'b0;
+            blend_reg_prio   <= 8'h00;
+            blend_reg_rgb    <= 24'h000000;
+        end else if (spr_start_line) begin
+            rmw_phase    <= 3'd0;
+            blend_reg_we <= 1'b0;
+        end else if (is_blend && scale_dst_valid) begin
+            case (rmw_phase)
+                3'd0: rmw_phase <= 3'd1;
+                3'd1: begin
+                    old_rgb_r  <= eff_old_rgb;
+                    old_prio_r <= eff_old_prio;
+                    rmw_phase  <= 3'd2;
+                end
+                3'd2: begin
+                    blend_prod_r_r   <= prod_r_w;
+                    blend_prod_g_r   <= prod_g_w;
+                    blend_prod_b_r   <= prod_b_w;
+                    blend_pempty_r_r <= pempty_r_w;
+                    blend_pempty_g_r <= pempty_g_w;
+                    blend_pempty_b_r <= pempty_b_w;
+                    blend_add_r_r    <= add_r_w;
+                    blend_add_g_r    <= add_g_w;
+                    blend_add_b_r    <= add_b_w;
+                    rmw_phase        <= 3'd3;
+                end
+                3'd3: begin
+                    blend_reg_we   <= blend_comb_we;
+                    blend_reg_prio <= blend_comb_prio;
+                    blend_reg_rgb  <= {blend_comb_r, blend_comb_g, blend_comb_b};
+                    rmw_phase      <= 3'd4;
+                end
+                default: rmw_phase <= 3'd0;
+            endcase
+        end else begin
+            rmw_phase    <= 3'd0;
+            blend_reg_we <= 1'b0;
+        end
+    end
+
+    wire scale_step_en = !is_blend || (rmw_phase == 3'd4) || !scale_dst_valid;
+    wire render_wr_en  = is_blend ? (scale_dst_valid && (rmw_phase == 3'd4) && blend_reg_we)
+                                  : (scale_dst_valid && scale_dst_opaque);
 
     // ----------------------------------------------------------------
     // Submodule 4: Q6 Hardware Scaler
@@ -440,37 +643,10 @@ module sprite_engine (
     );
 
     // ----------------------------------------------------------------
-    // Submodule 5: Hardware Alpha-Blender
+    // Submodule 5: Hardware Alpha-Blender (pipelined in RMW above)
     // ----------------------------------------------------------------
-    wire [7:0]  blend_out_r;
-    wire [7:0]  blend_out_g;
-    wire [7:0]  blend_out_b;
-    wire [7:0]  blend_out_prio;
-    wire        blend_out_we;
-
     wire [7:0]  eff_old_prio;
     wire [23:0] eff_old_rgb;
-
-    sprite_engine_blender u_blender (
-        .blend_mode   (spr_blend_mode),
-        .src_alpha    (scale_dst_alpha),
-        .src_r        (scale_dst_r),
-        .src_g        (scale_dst_g),
-        .src_b        (scale_dst_b),
-        .src_prio     (spr_prio),
-        .src_opaque   (scale_dst_opaque),
-
-        .dst_r        (eff_old_rgb[23:16]),
-        .dst_g        (eff_old_rgb[15:8]),
-        .dst_b        (eff_old_rgb[7:0]),
-        .dst_prio     (eff_old_prio),
-
-        .out_r        (blend_out_r),
-        .out_g        (blend_out_g),
-        .out_b        (blend_out_b),
-        .out_prio     (blend_out_prio),
-        .out_we       (blend_out_we)
-    );
 
     // ----------------------------------------------------------------
     // Submodule 6: Dual Ping-Pong Scanline Buffer
@@ -503,8 +679,8 @@ module sprite_engine (
 
         .wr_en           (render_wr_en),
         .wr_x            (scale_dst_x),
-        .wr_prio         (blend_out_prio),
-        .wr_rgb          ({blend_out_r, blend_out_g, blend_out_b}),
+        .wr_prio         (is_blend ? blend_reg_prio : spr_prio),
+        .wr_rgb          (is_blend ? blend_reg_rgb  : {scale_dst_r, scale_dst_g, scale_dst_b}),
 
         .rd_render_x     (scale_dst_x),
         .eff_old_prio    (eff_old_prio),

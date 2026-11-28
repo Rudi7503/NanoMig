@@ -51,6 +51,7 @@ module sprite_engine_scaler (
     reg signed [16:0] cur_dst_x;
     wire dst_in_bounds = (cur_dst_x >= 17'sd0) && (cur_dst_x < 17'sd2048);
     reg [14:0] src_px_cnt;
+    reg [14:0] orig_w_m1;
 
     // Previous pixel staging for smooth interpolation / box filtering
     reg [7:0] prev_r, prev_g, prev_b, prev_alpha;
@@ -94,8 +95,9 @@ module sprite_engine_scaler (
             q6_accum    <= 21'd0;
             cur_dst_x   <= h_flip ? ($signed({2'b00, orig_w_px}) + $signed({x_pos[15], x_pos}) - 17'sd1) : $signed({x_pos[15], x_pos});
             src_px_cnt  <= 15'd0;
+            orig_w_m1   <= (orig_w_px != 15'd0) ? (orig_w_px - 15'd1) : 15'd0;
             dst_valid   <= 1'b0;
-            src_ack     <= 1'b1; // Request first pixel
+            src_ack     <= (orig_w_px != 15'd0); // Request first pixel
             prev_opaque <= 1'b0;
         end else if (src_valid && src_ack && step_en) begin
             // 1:1 Scale Pass-through (Fast Path)
@@ -110,7 +112,7 @@ module sprite_engine_scaler (
 
                 cur_dst_x   <= h_flip ? (cur_dst_x - 17'sd1) : (cur_dst_x + 17'sd1);
                 src_px_cnt  <= src_px_cnt + 15'd1;
-                src_ack     <= (src_px_cnt + 15'd1 < orig_w_px);
+                src_ack     <= (src_px_cnt != orig_w_m1);
             end else if (x_scale < 9'd64) begin
                 // Upscaling / Stretch with optional linear interpolation
                 dst_valid   <= dst_in_bounds;
@@ -139,14 +141,14 @@ module sprite_engine_scaler (
                     prev_alpha  <= src_alpha;
                     prev_opaque <= src_opaque;
                     src_px_cnt  <= src_px_cnt + 15'd1;
-                    src_ack     <= (src_px_cnt + 15'd1 < orig_w_px);
+                    src_ack     <= (src_px_cnt != orig_w_m1);
                 end else begin
                     src_ack <= 1'b0; // Repeat current pixel for stretch
                 end
             end else begin
                 // Downscaling / Shrink (x_scale > 64)
                 src_px_cnt <= src_px_cnt + 15'd1;
-                src_ack    <= (src_px_cnt + 15'd1 < orig_w_px);
+                src_ack    <= (src_px_cnt != orig_w_m1);
                 if (x_scale == 9'd128) begin
                     // 2:1 Box-Filter
                     if (!prev_opaque && src_opaque) begin

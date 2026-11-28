@@ -84,8 +84,8 @@ module sprite_engine_linebuf (
             sweep_col <= 11'd0;
             sweeping  <= 1'b1;
         end else if (swap_edge) begin
-            sweep_col <= clip_xmax; // Start clearing above clip_xmax
-            sweeping  <= (clip_xmax != 11'd2047);
+            sweep_col <= 11'd0;
+            sweeping  <= 1'b1;
         end else if (sweeping) begin
             if (!wr_en) begin
                 if (sweep_col == 11'd2047) begin
@@ -143,7 +143,7 @@ module sprite_engine_linebuf (
     wire        ram0_render_we = (buf_sel == 1'b0) ? (wr_en || sweeping) : 1'b0;
     wire [10:0] ram0_render_addr = (buf_sel == 1'b0 && wr_en) ? wr_x : (sweeping ? sweep_col : rd_render_x);
     wire [31:0] ram0_render_d = (buf_sel == 1'b0 && wr_en) ? {wr_prio, wr_rgb} : 32'h00000000;
-    wire        ram0_vid_we = (buf_sel == 1'b1) && vid_read_en;
+    wire        ram0_vid_we = 1'b0;
 
     sprite_linebuf_dpram #(
         .DATA_WIDTH(32),
@@ -169,7 +169,7 @@ module sprite_engine_linebuf (
     wire        ram1_render_we = (buf_sel == 1'b1) ? (wr_en || sweeping) : 1'b0;
     wire [10:0] ram1_render_addr = (buf_sel == 1'b1 && wr_en) ? wr_x : (sweeping ? sweep_col : rd_render_x);
     wire [31:0] ram1_render_d = (buf_sel == 1'b1 && wr_en) ? {wr_prio, wr_rgb} : 32'h00000000;
-    wire        ram1_vid_we = (buf_sel == 1'b0) && vid_read_en;
+    wire        ram1_vid_we = 1'b0;
 
     sprite_linebuf_dpram #(
         .DATA_WIDTH(32),

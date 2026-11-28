@@ -64,6 +64,20 @@ module sprite_engine_decoder (
     assign out_alpha  = is_transparent ? 8'h00 : (is_clut ? 8'hFF           : dec_alpha);
     assign out_opaque = is_transparent ? 1'b0  : (is_clut ? 1'b1            : dec_opaque);
 
+    // Power-of-2 shift helper (replaces variable * mult DSP inference)
+    function signed [8:0] scale_p2;
+        input signed [4:0] v;
+        input [4:0]        m;
+        begin
+            case (m)
+                5'd16:   scale_p2 = v <<< 4;
+                5'd8:    scale_p2 = v <<< 3;
+                5'd4:    scale_p2 = v <<< 2;
+                default: scale_p2 = v;
+            endcase
+        end
+    endfunction
+
     // Helper function for 2-bit delta: 00=-2, 01=-1, 10=+1, 11=+2
     function signed [2:0] two_delta;
         input [1:0] code;
@@ -211,9 +225,9 @@ module sprite_engine_decoder (
                                 reg [4:0] mult;
                                 reg signed [8:0] dr_val, dg_val, db_val;
                                 mult = raw_code[4] ? 5'd16 : 5'd4;
-                                dr_val = (raw_code[3] ? 3'sd1 : -3'sd1) * mult;
-                                dg_val = two_delta(raw_code[2:1]) * mult;
-                                db_val = (raw_code[0] ? 3'sd1 : -3'sd1) * mult;
+                                dr_val = scale_p2((raw_code[3] ? 3'sd1 : -3'sd1), mult);
+                                dg_val = scale_p2(two_delta(raw_code[2:1]), mult);
+                                db_val = scale_p2((raw_code[0] ? 3'sd1 : -3'sd1), mult);
                                 acc_r <= clamp_add(acc_r, dr_val);
                                 acc_g <= clamp_add(acc_g, dg_val);
                                 acc_b <= clamp_add(acc_b, db_val);
@@ -279,9 +293,9 @@ module sprite_engine_decoder (
                                 dr_s3 = raw_code[9:7]; if (dr_s3 >= 3'sd4) dr_s3 = dr_s3 - 4'sd8;
                                 dg_s4 = raw_code[6:3]; if (dg_s4 >= 4'sd8) dg_s4 = dg_s4 - 5'sd16;
                                 db_s3 = raw_code[2:0]; if (db_s3 >= 3'sd4) db_s3 = db_s3 - 4'sd8;
-                                dr_val = dr_s3 * mult;
-                                dg_val = dg_s4 * mult;
-                                db_val = db_s3 * mult;
+                                dr_val = scale_p2(dr_s3, mult);
+                                dg_val = scale_p2(dg_s4, mult);
+                                db_val = scale_p2(db_s3, mult);
                                 acc_r <= clamp_add(acc_r, dr_val);
                                 acc_g <= clamp_add(acc_g, dg_val);
                                 acc_b <= clamp_add(acc_b, db_val);
@@ -307,9 +321,9 @@ module sprite_engine_decoder (
                                 reg [4:0] mult;
                                 reg signed [8:0] dr_val, dg_val, db_val;
                                 mult = raw_code[4] ? 5'd16 : 5'd4;
-                                dr_val = (raw_code[3] ? 3'sd1 : -3'sd1) * mult;
-                                dg_val = two_delta(raw_code[2:1]) * mult;
-                                db_val = (raw_code[0] ? 3'sd1 : -3'sd1) * mult;
+                                dr_val = scale_p2((raw_code[3] ? 3'sd1 : -3'sd1), mult);
+                                dg_val = scale_p2(two_delta(raw_code[2:1]), mult);
+                                db_val = scale_p2((raw_code[0] ? 3'sd1 : -3'sd1), mult);
                                 acc_r <= clamp_add(acc_r, dr_val);
                                 acc_g <= clamp_add(acc_g, dg_val);
                                 acc_b <= clamp_add(acc_b, db_val);
@@ -335,9 +349,9 @@ module sprite_engine_decoder (
                                 reg [4:0] mult;
                                 reg signed [8:0] dr_val, dg_val, db_val;
                                 mult = raw_code[6] ? 5'd16 : 5'd4;
-                                dr_val = two_delta(raw_code[5:4]) * mult;
-                                dg_val = two_delta(raw_code[3:2]) * mult;
-                                db_val = two_delta(raw_code[1:0]) * mult;
+                                dr_val = scale_p2(two_delta(raw_code[5:4]), mult);
+                                dg_val = scale_p2(two_delta(raw_code[3:2]), mult);
+                                db_val = scale_p2(two_delta(raw_code[1:0]), mult);
                                 acc_r <= clamp_add(acc_r, dr_val);
                                 acc_g <= clamp_add(acc_g, dg_val);
                                 acc_b <= clamp_add(acc_b, db_val);
@@ -373,9 +387,9 @@ module sprite_engine_decoder (
                                 dr_s3 = raw_code[9:7]; if (dr_s3 >= 3'sd4) dr_s3 = dr_s3 - 4'sd8;
                                 dg_s4 = raw_code[6:3]; if (dg_s4 >= 4'sd8) dg_s4 = dg_s4 - 5'sd16;
                                 db_s3 = raw_code[2:0]; if (db_s3 >= 3'sd4) db_s3 = db_s3 - 4'sd8;
-                                dr_val = dr_s3 * mult;
-                                dg_val = dg_s4 * mult;
-                                db_val = db_s3 * mult;
+                                dr_val = scale_p2(dr_s3, mult);
+                                dg_val = scale_p2(dg_s4, mult);
+                                db_val = scale_p2(db_s3, mult);
                                 acc_r <= clamp_add(acc_r, dr_val);
                                 acc_g <= clamp_add(acc_g, dg_val);
                                 acc_b <= clamp_add(acc_b, db_val);
@@ -401,9 +415,9 @@ module sprite_engine_decoder (
                                 reg signed [8:0] dr_val, dg_val, db_val;
                                 reg [4:0] mult;
                                 mult = raw_code[3] ? 5'd16 : 5'd4;
-                                dr_val = (raw_code[2] ? 3'sd1 : -3'sd1) * mult;
-                                dg_val = (raw_code[1] ? 3'sd1 : -3'sd1) * mult;
-                                db_val = (raw_code[0] ? 3'sd1 : -3'sd1) * mult;
+                                dr_val = scale_p2((raw_code[2] ? 3'sd1 : -3'sd1), mult);
+                                dg_val = scale_p2((raw_code[1] ? 3'sd1 : -3'sd1), mult);
+                                db_val = scale_p2((raw_code[0] ? 3'sd1 : -3'sd1), mult);
                                 acc_r <= clamp_add(acc_r, dr_val);
                                 acc_g <= clamp_add(acc_g, dg_val);
                                 acc_b <= clamp_add(acc_b, db_val);
@@ -434,12 +448,12 @@ module sprite_engine_decoder (
                             dr_s4 = raw_code[11:8]; if (dr_s4 >= 4'sd8) dr_s4 = dr_s4 - 5'sd16;
                             dg_s4 = raw_code[7:4];  if (dg_s4 >= 4'sd8) dg_s4 = dg_s4 - 5'sd16;
                             db_s4 = raw_code[3:0];  if (db_s4 >= 4'sd8) db_s4 = db_s4 - 5'sd16;
-                            acc_r <= clamp_add(acc_r, dr_s4 * 9'sd4);
-                            acc_g <= clamp_add(acc_g, dg_s4 * 9'sd4);
-                            acc_b <= clamp_add(acc_b, db_s4 * 9'sd4);
-                            dec_r <= clamp_add(acc_r, dr_s4 * 9'sd4);
-                            dec_g <= clamp_add(acc_g, dg_s4 * 9'sd4);
-                            dec_b <= clamp_add(acc_b, db_s4 * 9'sd4);
+                            acc_r <= clamp_add(acc_r, dr_s4 <<< 2);
+                            acc_g <= clamp_add(acc_g, dg_s4 <<< 2);
+                            acc_b <= clamp_add(acc_b, db_s4 <<< 2);
+                            dec_r <= clamp_add(acc_r, dr_s4 <<< 2);
+                            dec_g <= clamp_add(acc_g, dg_s4 <<< 2);
+                            dec_b <= clamp_add(acc_b, db_s4 <<< 2);
                             dec_alpha  <= 8'hFF;
                             dec_opaque <= 1'b1;
                         end
@@ -464,9 +478,9 @@ module sprite_engine_decoder (
                             reg [4:0] mult;
                             reg signed [8:0] dr_val, dg_val, db_val;
                             mult = raw_code[6] ? 5'd16 : 5'd4;
-                            dr_val = two_delta(raw_code[5:4]) * mult;
-                            dg_val = two_delta(raw_code[3:2]) * mult;
-                            db_val = two_delta(raw_code[1:0]) * mult;
+                            dr_val = scale_p2(two_delta(raw_code[5:4]), mult);
+                            dg_val = scale_p2(two_delta(raw_code[3:2]), mult);
+                            db_val = scale_p2(two_delta(raw_code[1:0]), mult);
 
                             acc_r <= clamp_add(acc_r, dr_val);
                             acc_g <= clamp_add(acc_g, dg_val);
@@ -510,9 +524,9 @@ module sprite_engine_decoder (
                             db_s5 = raw_code[4:0];
                             if (db_s5 >= 5'sd16) db_s5 = db_s5 - 6'sd32;
 
-                            dr_val = dr_s4 * mult;
-                            dg_val = dg_s5 * mult;
-                            db_val = db_s5 * mult;
+                            dr_val = scale_p2(dr_s4, mult);
+                            dg_val = scale_p2(dg_s5, mult);
+                            db_val = scale_p2(db_s5, mult);
 
                             acc_r <= clamp_add(acc_r, dr_val);
                             acc_g <= clamp_add(acc_g, dg_val);
@@ -544,9 +558,9 @@ module sprite_engine_decoder (
                             reg [4:0] mult;
                             reg signed [8:0] dr_val, dg_val, db_val;
                             mult = raw_code[4] ? 5'd16 : 5'd4;
-                            dr_val = (raw_code[3] ? 3'sd1 : -3'sd1) * mult;
-                            dg_val = two_delta(raw_code[2:1]) * mult;
-                            db_val = (raw_code[0] ? 3'sd1 : -3'sd1) * mult;
+                            dr_val = scale_p2((raw_code[3] ? 3'sd1 : -3'sd1), mult);
+                            dg_val = scale_p2(two_delta(raw_code[2:1]), mult);
+                            db_val = scale_p2((raw_code[0] ? 3'sd1 : -3'sd1), mult);
 
                             acc_r <= clamp_add(acc_r, dr_val);
                             acc_g <= clamp_add(acc_g, dg_val);
@@ -583,9 +597,9 @@ module sprite_engine_decoder (
                                 2'b10: mult = 5'd8;
                                 2'b11: mult = 5'd16;
                             endcase
-                            dr_val = (raw_code[3] ? 3'sd1 : -3'sd1) * mult;
-                            dg_val = two_delta(raw_code[2:1]) * mult;
-                            db_val = (raw_code[0] ? 3'sd1 : -3'sd1) * mult;
+                            dr_val = scale_p2((raw_code[3] ? 3'sd1 : -3'sd1), mult);
+                            dg_val = scale_p2(two_delta(raw_code[2:1]), mult);
+                            db_val = scale_p2((raw_code[0] ? 3'sd1 : -3'sd1), mult);
 
                             acc_r <= clamp_add(acc_r, dr_val);
                             acc_g <= clamp_add(acc_g, dg_val);
@@ -607,9 +621,9 @@ module sprite_engine_decoder (
                                 2'b10: mult = 5'd8;
                                 2'b11: mult = 5'd16;
                             endcase
-                            dr_val = two_delta(raw_code[5:4]) * mult;
-                            dg_val = two_delta(raw_code[3:2]) * mult;
-                            db_val = two_delta(raw_code[1:0]) * mult;
+                            dr_val = scale_p2(two_delta(raw_code[5:4]), mult);
+                            dg_val = scale_p2(two_delta(raw_code[3:2]), mult);
+                            db_val = scale_p2(two_delta(raw_code[1:0]), mult);
 
                             acc_r <= clamp_add(acc_r, dr_val);
                             acc_g <= clamp_add(acc_g, dg_val);
@@ -634,9 +648,9 @@ module sprite_engine_decoder (
                             2'b10: mult = 5'd8;
                             2'b11: mult = 5'd16;
                         endcase
-                        dr_val = two_delta(raw_code[5:4]) * mult;
-                        dg_val = two_delta(raw_code[3:2]) * mult;
-                        db_val = two_delta(raw_code[1:0]) * mult;
+                        dr_val = scale_p2(two_delta(raw_code[5:4]), mult);
+                        dg_val = scale_p2(two_delta(raw_code[3:2]), mult);
+                        db_val = scale_p2(two_delta(raw_code[1:0]), mult);
 
                         acc_r <= clamp_add(acc_r, dr_val);
                         acc_g <= clamp_add(acc_g, dg_val);
