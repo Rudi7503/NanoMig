@@ -27,6 +27,13 @@ module sprite_linebuf_dpram #(
 );
 
     (* ramstyle = "no_rw_check, M10K" *) reg [DATA_WIDTH-1:0] mem [(1 << ADDR_WIDTH)-1:0];
+`ifdef __ICARUS__
+    integer init_i;
+    initial begin
+        for (init_i = 0; init_i < (1 << ADDR_WIDTH); init_i = init_i + 1)
+            mem[init_i] = {DATA_WIDTH{1'b0}};
+    end
+`endif
 
     always @(posedge clk_a) begin
         if (we_a)

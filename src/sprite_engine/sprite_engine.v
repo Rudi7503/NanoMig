@@ -87,22 +87,26 @@ module sprite_engine (
     (* syn_preserve = 1 *) reg vbl_s1, vbl_s2;
     reg        vbl_s3;
     (* syn_preserve = 1 *) reg sol_s1, sol_s2;
-    reg        sol_s3;
+    reg        sol_s3, sol_s4;
+    reg signed [11:0] scanline_y_latched_sys;
     reg signed [11:0] scanline_y_r1, scanline_y_r2;
 
     always @(posedge clk_sys or negedge rst_n) begin
         if (!rst_n) begin
-            pal_write_addr  <= 8'h00;
-            pal_commit_addr <= 8'h00;
-            pal_write_data  <= 24'h000000;
-            pal_reg_we      <= 1'b0;
-            reg_wr_d        <= 1'b0;
-            dma_wr_addr_sys <= 4'd0;
-            dma_wr_data_sys <= 16'd0;
-            dma_wr_tgl_sys  <= 1'b0;
+            pal_write_addr         <= 8'h00;
+            pal_commit_addr        <= 8'h00;
+            pal_write_data         <= 24'h000000;
+            pal_reg_we             <= 1'b0;
+            reg_wr_d               <= 1'b0;
+            dma_wr_addr_sys        <= 4'd0;
+            dma_wr_data_sys        <= 16'd0;
+            dma_wr_tgl_sys         <= 1'b0;
+            scanline_y_latched_sys <= 12'sd0;
         end else begin
             reg_wr_d   <= reg_wr_now;
             pal_reg_we <= 1'b0;
+            if (line_swap_pulse)
+                scanline_y_latched_sys <= scanline_y;
             if (reg_wr_pulse) begin
                 if (reg_addr <= 4'd2) begin
                     dma_wr_addr_sys <= reg_addr;
@@ -134,6 +138,7 @@ module sprite_engine (
             sol_s1        <= 1'b0;
             sol_s2        <= 1'b0;
             sol_s3        <= 1'b0;
+            sol_s4        <= 1'b0;
             scanline_y_r1 <= 12'sd0;
             scanline_y_r2 <= 12'sd0;
         end else begin
@@ -146,14 +151,15 @@ module sprite_engine (
             sol_s1        <= line_swap_pulse;
             sol_s2        <= sol_s1;
             sol_s3        <= sol_s2;
-            scanline_y_r1 <= scanline_y;
+            sol_s4        <= sol_s3;
+            scanline_y_r1 <= scanline_y_latched_sys;
             scanline_y_r2 <= scanline_y_r1;
         end
     end
 
     wire dma_reg_we_render = (dma_wr_s2 != dma_wr_s3);
     wire vbl_render        = vbl_s2 && !vbl_s3;
-    wire sol_render        = sol_s2 && !sol_s3;
+    wire sol_render        = sol_s3 && !sol_s4;
 
     wire [15:0] dma_reg_rdata;
     wire [15:0] cap_reg_rdata;
