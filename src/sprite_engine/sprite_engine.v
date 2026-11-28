@@ -75,6 +75,9 @@ module sprite_engine (
     reg [7:0]  pal_write_addr;
     reg [7:0]  pal_commit_addr;
     reg [23:0] pal_write_data;
+    reg        reg_wr_d;
+    wire       reg_wr_now   = reg_cs && reg_we;
+    wire       reg_wr_pulse = reg_wr_now && !reg_wr_d;
 
     always @(posedge clk_sys or negedge rst_n) begin
         if (!rst_n) begin
@@ -82,9 +85,11 @@ module sprite_engine (
             pal_commit_addr <= 8'h00;
             pal_write_data  <= 24'h000000;
             pal_reg_we      <= 1'b0;
+            reg_wr_d        <= 1'b0;
         end else begin
+            reg_wr_d   <= reg_wr_now;
             pal_reg_we <= 1'b0;
-            if (reg_cs && reg_we) begin
+            if (reg_wr_pulse) begin
                 if (reg_addr == 4'd3) begin
                     pal_write_addr  <= reg_wdata[7:0];
                     pal_commit_addr <= reg_wdata[7:0];
