@@ -1079,6 +1079,9 @@ sdram #(
 
 `ifdef USE_SPR_ARB
 
+reg [255:0]  spr_burst_85   = 256'd0;
+wire [255:0] spr_burst_data = spr_burst_85;
+
 (* syn_preserve = 1 *) reg spr_ack_s1 = 1'b0;
 (* syn_preserve = 1 *) reg spr_ack_s2 = 1'b0;
 always @(posedge clk_28m) begin
@@ -1101,11 +1104,10 @@ sprite_mem_adapter spr_adapter (
 	.avm_readdata       ( spr_mem_readdata      ),
 	.avm_readdatavalid  ( spr_mem_readdatavalid ),
 
-	.sd_addr            ( spr_sd_addr   ),
-	.sd_cs              ( spr_sd_cs     ),
-	.sd_dout            ( spr_sd_dout   ),
-	.sd_dout48          ( spr_sd_dout48 ),
-	.sd_ack             ( spr_ack_s2    )
+	.sd_addr            ( spr_sd_addr    ),
+	.sd_cs              ( spr_sd_cs      ),
+	.sd_burst_data      ( spr_burst_data ),
+	.sd_ack             ( spr_ack_s2     )
 );
 
 `else
@@ -1164,8 +1166,7 @@ reg [15:0] cpu_dout_85     = 16'd0;
 reg [47:0] cpu_dout48_85   = 48'd0;
 reg        spr_req_done_85 = 1'b0;
 reg        spr_ack_85      = 1'b0;
-reg [15:0] spr_dout_85     = 16'd0;
-reg [47:0] spr_dout48_85   = 48'd0;
+reg [1:0]  spr_beat_85     = 2'd0;
 reg [15:0] aud_p2_data     = 16'd0;
 reg        aud_ack_tgl_85  = 1'b0;
 (* syn_preserve = 1 *) reg aud_ack_s1 = 1'b0;
@@ -1232,8 +1233,8 @@ always @(posedge clk_85m) begin
         cpu_dout48_85   <= 48'd0;
         spr_req_done_85 <= 1'b0;
         spr_ack_85      <= 1'b0;
-        spr_dout_85     <= 16'd0;
-        spr_dout48_85   <= 48'd0;
+        spr_beat_85     <= 2'd0;
+        spr_burst_85    <= 256'd0;
         aud_p2_data     <= 16'd0;
         aud_ack_tgl_85  <= 1'b0;
     end else begin
@@ -1249,8 +1250,10 @@ always @(posedge clk_85m) begin
         if (!fastram_sel_s2)
             cpu_req_done_85 <= 1'b0;
 
-        if (!spr_cs_s2)
+        if (!spr_cs_s2) begin
             spr_req_done_85 <= 1'b0;
+            spr_beat_85     <= 2'd0;
+        end
 
         if (aud_req_s2 != aud_req_s3)
             aud_pending_85 <= 1'b1;
@@ -1268,7 +1271,7 @@ always @(posedge clk_85m) begin
                     end else if (spr_cs_s2 && !spr_req_done_85 && !fastram_sel_s2) begin
                         p2_state   <= P2_SPR;
                         p2_cs_85   <= 1'b1;
-                        p2_addr_85 <= spr_sd_addr;
+                        p2_addr_85 <= spr_sd_addr + {spr_beat_85, 2'b00};
                         p2_ds_85   <= 2'b11;
                         p2_we_85   <= 1'b0;
                     end else if (aud_pending_85 && !fastram_sel_s2) begin
@@ -1296,13 +1299,21 @@ always @(posedge clk_85m) begin
 
             P2_SPR: begin
                 if (p2_ack != p2_ack_d) begin
-                    spr_dout_85     <= p2_dout;
-                    spr_dout48_85   <= p2_dout48;
-                    spr_ack_85      <= ~spr_ack_85;
-                    spr_req_done_85 <= 1'b1;
-                    p2_cs_85        <= 1'b0;
-                    p2_gap_cnt      <= 2'd2;
-                    p2_state        <= P2_GAP;
+                    case (spr_beat_85)
+                        2'd0: spr_burst_85[63:0]    <= {p2_dout, p2_dout48};
+                        2'd1: spr_burst_85[127:64]  <= {p2_dout, p2_dout48};
+                        2'd2: spr_burst_85[191:128] <= {p2_dout, p2_dout48};
+                        2'd3: spr_burst_85[255:192] <= {p2_dout, p2_dout48};
+                    endcase
+                    if (spr_beat_85 == 2'd3) begin
+                        spr_ack_85      <= ~spr_ack_85;
+                        spr_req_done_85 <= 1'b1;
+                    end else begin
+                        spr_beat_85 <= spr_beat_85 + 2'd1;
+                    end
+                    p2_cs_85   <= 1'b0;
+                    p2_gap_cnt <= 2'd2;
+                    p2_state   <= P2_GAP;
                 end
             end
 
@@ -1334,8 +1345,8 @@ assign p2_we          = rom_done ? p2_we_85   : 1'b0;
 assign fastram_dout   = cpu_dout_85;
 assign fastram_dout48 = cpu_dout48_85;
 assign fastram_ready  = cpu_ack_85;
-assign spr_sd_dout    = spr_dout_85;
-assign spr_sd_dout48  = spr_dout48_85;
+assign spr_sd_dout    = spr_burst_85[15:0];
+assign spr_sd_dout48  = spr_burst_85[63:16];
 assign spr_sd_ack     = spr_ack_85;
 
 

@@ -144,29 +144,23 @@ module sprite_mem_adapter (
     output reg  [63:0] avm_readdata,
     output reg         avm_readdatavalid,
 
-    // SDRAM-Seite des Arbiters (Teilnehmer B)
-    output reg  [22:0] sd_addr,
-    output reg         sd_cs,
-    input  wire [15:0] sd_dout,
-    input  wire [47:0] sd_dout48,
-    input  wire        sd_ack
+    // SDRAM-Seite des Arbiters (Teilnehmer B - 4-Beat Burst Prefetch)
+    output reg  [22:0]  sd_addr,
+    output reg          sd_cs,
+    input  wire [255:0] sd_burst_data,
+    input  wire         sd_ack
 );
 
-    localparam IDLE   = 3'd0;
-    localparam ISSUE  = 3'd1;
-    localparam WAIT   = 3'd2;
-    localparam BEAT   = 3'd3;
-    localparam DONE   = 3'd4;
+    localparam IDLE    = 3'd0;
+    localparam ISSUE   = 3'd1;
+    localparam WAIT    = 3'd2;
+    localparam DELIVER = 3'd3;
 
     reg [2:0]  state;
-    reg [22:0] base_word;      // Wortadresse des ersten Beats
+    reg [22:0] base_word;
     reg [1:0]  beat;
     reg        ack_d;
 
-    // Byte-Adresse -> Wortadresse; die Engine liefert 8-Byte-Bursts
-    wire [22:0] beat_word = base_word + {beat, 2'b00};
-
-    // Das Ack ist ein Toggle: auf Flankenwechsel reagieren.
     wire ack_edge = (sd_ack != ack_d);
 
     always @(posedge clk or negedge rst_n) begin
@@ -197,42 +191,32 @@ module sprite_mem_adapter (
                 end
 
                 ISSUE: begin
-                    sd_addr <= beat_word;
+                    sd_addr <= base_word;
                     sd_cs   <= 1'b1;
                     state   <= WAIT;
                 end
 
                 WAIT: begin
                     if (ack_edge) begin
-                        avm_readdata      <= {sd_dout, sd_dout48}; // Motorola Big-Endian: w0 at [63:48], w1..3 at [47:0]
-                        avm_readdatavalid <= 1'b1;
-                        sd_cs             <= 1'b0;
-                        state             <= BEAT;
+                        sd_cs <= 1'b0;
+                        beat  <= 2'd0;
+                        state <= DELIVER;
                     end
                 end
 
-                BEAT: begin
+                DELIVER: begin
+                    case (beat)
+                        2'd0: avm_readdata <= sd_burst_data[63:0];
+                        2'd1: avm_readdata <= sd_burst_data[127:64];
+                        2'd2: avm_readdata <= sd_burst_data[191:128];
+                        2'd3: avm_readdata <= sd_burst_data[255:192];
+                    endcase
+                    avm_readdatavalid <= 1'b1;
                     if (beat == 2'd3) begin
                         avm_waitrequest <= 1'b0;
-                        state           <= IDLE;   // Toby: direkt nach IDLE, nicht ueber DONE
+                        state           <= IDLE;
                     end else begin
-                        beat  <= beat + 2'd1;
-                        state <= ISSUE;
-                    end
-                end
-
-                // Review 18: Nach dem letzten Beat faellt waitrequest, und
-                // der Master darf im naechsten Takt einen neuen Auftrag
-                // stellen. Wird er hier nicht angenommen, geht er verloren.
-                // DONE nimmt deshalb genauso an wie IDLE.
-                DONE: begin
-                    if (avm_read) begin
-                        base_word       <= avm_address[23:1];
-                        beat            <= 2'd0;
-                        avm_waitrequest <= 1'b1;
-                        state           <= ISSUE;
-                    end else begin
-                        state <= IDLE;
+                        beat <= beat + 2'd1;
                     end
                 end
 
