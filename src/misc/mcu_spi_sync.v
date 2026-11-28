@@ -39,9 +39,9 @@ module mcu_spi_sync (
   output [7:0] mcu_dout
 );
 
-// 2-FF synchronizers in clk_fast domain (85.59 MHz)
-reg [2:0] ss_s   = 3'b111;
-reg [2:0] sclk_s = 3'b000;
+// 2-FF synchronizers in clk_fast domain (142.86 MHz)
+(* syn_maxfan = 4 *) reg [2:0] ss_s   = 3'b111;
+(* syn_maxfan = 4 *) reg [2:0] sclk_s = 3'b000;
 reg [1:0] din_s  = 2'b00;
 
 always @(posedge clk_fast) begin
