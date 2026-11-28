@@ -244,6 +244,7 @@ wire sdram_ready;
 
 // map output data onto both spi outputs
 wire spi_io_dout;
+wire pmod_io_dout;
 wire spi_intn;
 
 // intn and dout are outputs driven by the FPGA to the MCU
@@ -251,7 +252,7 @@ wire spi_intn;
 assign spi_dir = spi_io_dout;
 assign spi_irqn = spi_intn;
 
-assign pmod_companion_dout = spi_io_dout;
+assign pmod_companion_dout = pmod_io_dout;
 assign pmod_companion_intn = spi_intn;
    
 // On Tang Console, the onboard BL616 is always used
@@ -294,6 +295,7 @@ mcu_spi_sync mcu (
      .spi_io_clk(spi_io_clk),
      .spi_io_din(spi_io_din),
      .spi_io_dout(spi_io_dout),
+     .pmod_io_dout(pmod_io_dout),
 
 	 // fast clk_85m interface for sysctrl (passes 12/12 full 932-byte XML reads @ 16 MHz zero-gap SPI)
      .mcu_sys_strobe(mcu_sys_strobe),

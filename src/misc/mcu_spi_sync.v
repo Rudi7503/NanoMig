@@ -21,6 +21,7 @@ module mcu_spi_sync (
   input        spi_io_clk,
   input        spi_io_din,
   output       spi_io_dout,
+  output       pmod_io_dout,
 
   // fast (clk_fast) byte interface for sysctrl
   output       mcu_sys_strobe,
@@ -126,10 +127,13 @@ wire [7:0] in_byte =
 // Registered glitch-free MISO output @ 142.86 MHz (single FF -> OBUF, zero combinational glitches):
 // New MSB is valid on spi_io_dout within ~35..43 ns of bit 7 falling edge,
 // leaving >= 32 ns setup margin at 13.333 MHz with deterministic clk-to-pad.
-(* syn_useioff = 1 *) reg spi_dout_reg = 1'b0;
+(* syn_preserve = 1, syn_useioff = 1 *) reg spi_dout_reg = 1'b0;
+(* syn_preserve = 1 *) reg pmod_dout_reg = 1'b0;
 always @(posedge clk_fast) begin
-    spi_dout_reg <= ss_high ? 1'b0 : in_byte[~spi_cnt];
+    spi_dout_reg  <= ss_high ? 1'b0 : in_byte[~spi_cnt];
+    pmod_dout_reg <= ss_high ? 1'b0 : in_byte[~spi_cnt];
 end
-assign spi_io_dout = spi_dout_reg;
+assign spi_io_dout  = spi_dout_reg;
+assign pmod_io_dout = pmod_dout_reg;
 
 endmodule
