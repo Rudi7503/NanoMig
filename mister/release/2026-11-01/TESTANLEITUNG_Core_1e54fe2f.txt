@@ -1,0 +1,61 @@
+==============================================================================
+TESTANLEITUNG: Minimig Core 1e54fe2f & 32-Kanal Audio-Testsuite
+Datum: 05.11.2026
+Ziel: MiSTer FPGA (Minimig-AGA Core)
+==============================================================================
+
+Hallo Toby und Tobys KI,
+
+hier ist der neue Core `Minimig_1e54fe2f.rbf` mit dem RTL-Fix fuer das DC-Offset
+in den Biquad-Filtern sowie einer erweiterten Testsuite (inklusive Stufentests,
+32-Kanal ADPCM, 48 kHz Stresstest und 32-Band Spektral-Sweeper).
+
+1. DATEIEN & PRUEFSUMMEN (SHA-256)
+------------------------------------------------------------------------------
+* Minimig_1e54fe2f.rbf:
+  Groesse: 4140288 Bytes
+  SHA-256: 1e54fe2f1b9cee0c53376f87f99abb41685cb4935f8802d39d19d4fbd2c7b782
+
+* Minimig_1e54fe2f_Gesamtpaket_20261105.zip:
+  Groesse: 2097773 Bytes
+  SHA-256: 0285100a05e51365604723c6c75f35986b8ea6ffee2f74978e70fcd37b8d703c
+
+Enthaltene Programme:
+  - kaskade_stufen: Stufentest (1, 2, 4, 8 Stufen Biquad) mit je 2 Sek. Ton & Capture
+  - filterbank_sweep: 32-Band Equalizer / Vocoder (Sweep 0..31 + Outside-In 31,0,30,1...)
+  - adpcm_32ch: 32 Stimmen gleichzeitig 4-Bit ADPCM (48 kHz)
+  - stress_48k: 32 Stimmen 16-Bit Stereo PCM @ 48 kHz (~6,14 MB/s Audio-DMA)
+  - rechteck: 32 Stufen Kaskadentest (jetzt mit symmetrischem Runden ohne DC-Offset)
+  - ton_test: Direktausgabe 200 Hz (gefixt, bestaetigt)
+  - filter1_test: 1-Stufen Biquad 300 Hz (bestaetigt)
+  - adpcm_test: 2-Phasen ADPCM Test (1 Stimme + 4 Stimmen Raumhall)
+
+2. WAS IM HARDWARE-CORE GEFIXT WURDE
+------------------------------------------------------------------------------
+* Symmetrisches Runden im Biquad IIR DSP:
+  In `biquad_iir_ringbuffer.v` wurde vor dem Bit-Shift das Runden hinzugefuegt:
+  `wire signed [34:0] acc_rounded = acc + 35'sd8192;`
+  `wire signed [19:0] y_sc = acc_rounded[33:14];`
+  Dies beseitigt die mathematische Asymmetrie der Festkomma-Truncation,
+  die bei hohen Filterordnungen zum DC-Latchup (-8687) gefuehrt hatte.
+
+3. EMPFOHLENE TESTREIHENFOLGE
+------------------------------------------------------------------------------
+Schritt 1: `kaskade_stufen`
+  - Startet nacheinander 1, 2, 4 und 8 Stufen.
+  - Jede Stufe spielt 2 Sekunden laut ab und zeigt Min/Max/Peak-to-Peak an.
+  - Erwartung: Wechselsignal bei allen Stufen, keine DC-Kippung!
+
+Schritt 2: `rechteck`
+  - 32-Stufen-Kaskade mit voller Lautstaerke $FFFF.
+  - Erwartung: Sinus-Wechselsignal um die Nulllinie, kein Verharren bei -8687.
+
+Schritt 3: `filterbank_sweep`
+  - Phase 1: Wandernder Sweep durch alle 32 Frequenzbaender (50 Hz bis 16 kHz).
+  - Phase 2: Outside-In Aufbau (31, 0, 30, 1... im 100 ms Takt zuschalten).
+  - Phase 3: Outside-In Abbau (im 100 ms Takt wieder abschalten).
+
+Schritt 4: `adpcm_32ch` & `stress_48k`
+  - Testet die Speicherbandbreite und DMA-Arbitrierung unter Volllast.
+
+Vielen Dank fuer eure Tests!

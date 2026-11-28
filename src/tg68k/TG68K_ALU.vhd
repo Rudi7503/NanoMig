@@ -36,8 +36,8 @@ generic(
 		);
 	port(clk						: in std_logic;
 		Reset						: in std_logic;
-		clkena_lw				: in std_logic:='1';
-		CPU						: in std_logic_vector(1 downto 0):="00";  -- 00->68000  01->68010  11->68020(only some parts - yet)
+		clkena_lw				: in std_logic;
+		CPU						: in std_logic_vector(1 downto 0);  -- 00->68000  01->68010  11->68020(only some parts - yet)
 		execOPC					: in bit;
 		decodeOPC				: in bit;
 		exe_condition			: in std_logic;
@@ -992,7 +992,10 @@ PROCESS (clk, Reset, exe_opcode, exe_datatype, Flags, last_data_read, OP2out, fl
 		ELSE 						--Word
 			set_flags <= OP1IN(15)&flag_z(1)&addsub_ofl(1)&c_out(1);
 		END IF;
-		
+	END PROCESS;
+
+PROCESS (clk)
+	BEGIN
 		IF rising_edge(clk) THEN		
 			IF Reset='1' THEN
 				Flags(7 downto 0) <= "00000000"; 

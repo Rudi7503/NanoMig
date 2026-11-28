@@ -59,9 +59,9 @@ module sdram #(
   output wire ready,    // ram is ready and has been initialized
 
   inout  wire [DATA_WIDTH-1:0]   sd_data, // 16/32 bit bidirectional data bus
-  output reg  [RAS_WIDTH-1:0]    sd_addr, // multiplexed address bus
-  output reg  [DATA_WIDTH/8-1:0] sd_dqm,  // two/four byte masks
-  output reg  [1:0]              sd_ba,   // four banks
+  (* syn_useioff = 1 *) output reg  [RAS_WIDTH-1:0]    sd_addr, // multiplexed address bus
+  (* syn_useioff = 1 *) output reg  [DATA_WIDTH/8-1:0] sd_dqm,  // two/four byte masks
+  (* syn_useioff = 1 *) output reg  [1:0]              sd_ba,   // four banks
 
   output reg  sd_cke,  // clock enable
   output wire sd_cs,   // single chip select
@@ -91,7 +91,12 @@ module sdram #(
   input  wire  [1:0] p2_ds,    // upper/lower data strobe
   input  wire        p2_cs,    // cpu requests read/wrie
   input  wire        p2_we,    // cpu requests write
-  output wire        p2_ack    // cpu ack
+  output wire        p2_ack,   // cpu ack
+
+  // read-only debug outputs for write verification
+  output wire        diag_cmd_write,
+  output wire [15:0] diag_write_din,
+  output wire  [1:0] diag_write_dqm
 );
 
 localparam WIDTH32 = (DATA_WIDTH == 32);
@@ -245,7 +250,7 @@ localparam CMD_PRECHARGE       = 3'b010;
 localparam CMD_AUTO_REFRESH    = 3'b001;
 localparam CMD_LOAD_MODE       = 3'b000;
 
-reg [2:0] sd_cmd;   // current command sent to sd ram
+(* syn_useioff = 1 *) reg [2:0] sd_cmd;   // current command sent to sd ram
 
 // drive control signals according to current command
 assign sd_cs  = 1'b0;
@@ -253,7 +258,7 @@ assign sd_ras = sd_cmd[2];
 assign sd_cas = sd_cmd[1];
 assign sd_we  = sd_cmd[0];
 
-reg  [15:0] ram_din;
+(* syn_useioff = 1 *) reg  [15:0] ram_din;
 reg         ram_we;
 reg   [1:0] ram_ds;
 
@@ -261,10 +266,11 @@ wire [15:0] ram_dout_lo;
 wire [15:0] ram_dout_hi;
 wire [15:0] ram_dout;
 
-reg                 sd_dq;
+(* syn_useioff = 1 *) reg                 sd_dq;
+reg                 diag_cmd_write_r = 1'b0;
 reg [RAS_WIDTH-1:0] sd_addr_cas;
 
-reg p2_ack_i;
+reg p2_ack_i = 1'b0;
 
 generate
   if (WIDTH32) begin
@@ -281,12 +287,18 @@ generate
   end
 endgenerate
 
+assign diag_cmd_write = diag_cmd_write_r;
+assign diag_write_din = 16'd0;
+assign diag_write_dqm = 2'd0;
+
 localparam PORT_1       = 2'd0;
 localparam PORT_2       = 2'd1;
 localparam PORT_REFRESH = 2'd2;
 localparam PORT_IDLE    = 2'd3;
 
 reg [1:0] sdram_port;
+reg [2:0] p2_cs_sync;
+reg       p2_req;
 
 always @(posedge clk, negedge reset_n) begin
   if (!reset_n)
@@ -296,8 +308,15 @@ always @(posedge clk, negedge reset_n) begin
 end
 
 always @(posedge clk) begin
-  sd_cmd <= CMD_NOP;
-  sd_dq  <= 0;
+  sd_cmd           <= CMD_NOP;
+  sd_dq            <= 0;
+  diag_cmd_write_r <= 1'b0;
+  p2_cs_sync       <= {p2_cs_sync[1:0], p2_cs};
+
+  if (state == STATE_INIT)
+    p2_req <= 1'b0;
+  else if (p2_cs_sync[1] && !p2_cs_sync[2])
+    p2_req <= 1'b1;
 
   case (state)
     STATE_INIT: begin
@@ -332,7 +351,7 @@ always @(posedge clk) begin
 
         addr_0  <= addr[0];
 
-      end else if (p2_cs) begin
+      end else if (p2_req) begin
         sd_addr <= p2_addr32[RAS_WIDTH+CAS_WIDTH-1:CAS_WIDTH];
 
         sd_addr_cas[RAS_WIDTH-1:0] <= {RAS_WIDTH{1'b0}};
@@ -362,9 +381,10 @@ always @(posedge clk) begin
 
           refreshcnt <= SYNC_CYCLES_PER_REFRESH[REFRESHCNT_MAX_WIDTH-1:0];
 
-        end else if (p2_cs) begin
+        end else if (p2_req) begin
           sdram_port <= PORT_2;
           sd_cmd     <= CMD_ACTIVE;
+          p2_req     <= 1'b0;
         end
       end
     end
@@ -375,13 +395,15 @@ always @(posedge clk) begin
         PORT_1: begin
           sd_cmd <= ram_we ? CMD_WRITE : CMD_READ;
           if (ram_we) begin
-            sd_dq <= 1;
+            sd_dq            <= 1;
+            diag_cmd_write_r <= 1'b1;
           end
         end
         PORT_2: begin
           sd_cmd <= ram_we ? CMD_WRITE : CMD_READ;
           if (ram_we) begin
-            sd_dq <= 1;
+            sd_dq            <= 1;
+            diag_cmd_write_r <= 1'b1;
           end
         end
         PORT_REFRESH: begin
@@ -392,12 +414,8 @@ always @(posedge clk) begin
     end
     STATE_READ_0: begin
       case (sdram_port)
-        PORT_1 : begin
-          dout <= ram_dout;
-        end
-        PORT_2 : begin
-          p2_dout <= ram_dout;
-        end
+        PORT_1 : dout    <= ram_dout;
+        PORT_2 : p2_dout <= ram_dout;
         default: ;
       endcase
     end

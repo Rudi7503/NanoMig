@@ -1,0 +1,47 @@
+Testanleitung & Release-Hinweise fuer Core Minimig_6186b83f.rbf
+============================================================
+Datum: 04.11.2026
+Autor: Rudis KI
+Branch: rudi/chain-stereo (Commit: 543dadc)
+
+Paket: Minimig_6186b83f_Option2_Tests.zip
+SHA-256: 03eb07674b4ac38473fe62809963d233580d87c34f0047cac1bdced25d4a6160
+Groesse: 2.049.563 Bytes
+
+Enthaltene Dateien:
+-------------------
+1. Minimig_6186b83f.rbf
+   Groesse: 4.122.716 Bytes
+   SHA-256: 6186b83fbbe3253fa4cd3b0f0b265e6f79121290aca9a98d7e5fec3f9795fa60
+2. rechteck
+   Groesse: 9.988 Bytes
+   SHA-256: 33145dace0c03c1d00567b34a7bf235d10341959c6605e62fe4988fef128baaa
+3. kaskade
+   Groesse: 10.020 Bytes
+   SHA-256: 7d9b3e23f9c375855e135bd95be92627a7c2dc7ada01d1ec5ff982627c9baa82
+4. bandpass
+   Groesse: 9.948 Bytes
+   SHA-256: ff721fb6cad947dd4b946e990c52233f4894d82465156f6b6cfcbeab8bdc3718
+5. adpcm, am, delay, stereotest, README.txt
+
+Ursachenanalyse der vorherigen Beobachtung ("blaues Bild und kein Ton"):
+----------------------------------------------------------------------
+1. "Kein Ton" (Hardware: Chip-RAM DMA):
+   Beim Starten aus dem AmigaOS liegt der Audiosample-Puffer im Chip-RAM (< $02000000).
+   In audio_dma_master.v war der Chip-RAM-Pfad unvollstaendig (fehlendes chipDMA=0 und falsche SDRAM-Lesetaktsynchronisation).
+   Korrektur: audio_dma_master uebergibt Chip-RAM-Anforderungen jetzt sauber an chipdma_arb.v.
+   chipdma_arb synchronisiert auf minimig_idle (Agnus-Leerlauf) und liest die Audiodaten im korrekten SDRAM-Slot 3 aus.
+   DDR3-FastRAM (>= $08000000) laeuft weiterhin direkt und ultraschnell mit 114 MHz ohne Agnus.
+2. "Blaues Bild" (Software: Amiga-Copper):
+   Die Testprogramme schrieben COLOR00 nur einmal. Der Hintergrund-Copper der Amiga-Workbench ueberschrieb das Register im naechsten VBlank sofort wieder mit Workbench-Blau (RGB 0, 85, 170).
+   Korrektur: Testprogramme halten COLOR00 jetzt in einer kontinuierlichen Schleife. Zudem schlaegt der Test fehl (Rot), falls kein Signalpegel anliegt (TST.W D5).
+
+Testdurchfuehrung fuer Toby & Tobys KI:
+-------------------------------------
+1. Bitstream Minimig_6186b83f.rbf auf den MiSTer kopieren.
+2. Neues Testprogramm "rechteck" auf die Testdisk/Workbench kopieren.
+3. Toby per Signal/Pieptoene informieren und Praesenz am Bildschirm sicherstellen.
+4. "rechteck" starten.
+   Erwartetes Ergebnis:
+   - Bild: GRUEN (Dauerhaft, wird nicht mehr von Workbench-Blau ueberschrieben)
+   - Ton: Weicher, oberwellenarmer 200-Hz-Sinus/Tiefpassklang (32 Tiefpass-Stufen in Kaskade)

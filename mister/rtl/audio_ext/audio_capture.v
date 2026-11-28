@@ -125,8 +125,9 @@ module audio_capture (
                 end
             end else begin
                 // When capture is disabled, reset write pointer & phase
-                sample_pos <= 10'd0;
-                wr_phase   <= 1'b0;
+                sample_pos   <= 10'd0;
+                wr_phase     <= 1'b0;
+                active_block <= 1'b0;
             end
         end
     end

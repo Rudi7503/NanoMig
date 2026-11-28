@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>ADPCM-XQ Studio v18 - Ultimate (Clean Integer MSE & 15-Byte Blocks)</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background-color: #1e1e1e; color: #f0f0f0; margin: 0; padding: 20px; display: flex; flex-direction: column; gap: 20px; }
+        h1, h2, h3, h4 { margin: 0 0 10px 0; font-weight: 500; }
+        .panel { background-color: #2a2a2a; border-radius: 8px; padding: 20px; border: 1px solid #3a3a3a; position: relative;}
+        
+        .grid-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        
+        .cfg-row { display: flex; align-items: center; gap: 15px; margin-bottom: 10px; }
+        .cfg-label { width: 180px; font-weight: bold; color: #00d2ff; font-size: 0.9em; }
+        .mode-select, input[type="number"] { background: #333; color: #fff; border: 1px solid #555; border-radius: 4px; padding: 6px; font-size: 0.9em; font-weight: bold; width: 100%; }
+        
+        input[type="checkbox"].std-check { width: 20px; height: 20px; cursor: pointer; }
+        
+        .btn { background-color: #333; color: white; border: 1px solid #555; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 0.9em; font-weight: bold; transition: all 0.2s;}
+        .btn:hover { background-color: #444; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-play { background-color: #E91E63; border-color: #E91E63; }
+        .btn-play:hover { background-color: #c2185b; }
+        .btn-play-filtered { background-color: #9c27b0; border-color: #9c27b0; }
+        .btn-play-filtered:hover { background-color: #7b1fa2; }
+        .btn-save { background-color: #00bcd4; border-color: #00bcd4; }
+        .btn-save:hover { background-color: #0097a7; }
+        .btn-recalc { background-color: #4CAF50; border-color: #4CAF50; width: 100%; padding: 12px; font-size: 1.1em; margin-top: 10px;}
+        .btn-recalc:hover { background-color: #45a049; }
+        .btn-auto { background-color: #ff9800; border-color: #ff9800; display: none; width: 100%; margin-top: 5px;}
+        .btn-auto:hover { background-color: #e68a00; }
+        
+        .upload-area { border: 2px dashed #555; padding: 20px; text-align: center; border-radius: 8px; background: #222; margin-bottom: 20px;}
+        input[type="file"] { display: none; }
+        .custom-file-upload { display: inline-block; padding: 10px 20px; cursor: pointer; background: #E91E63; border-radius: 4px; color: white; font-weight: bold; margin-bottom: 10px;}
+        .status-bar { margin-top: 10px; font-weight: bold; color: #00d2ff; }
+        
+        .range-toggle-wrapper { display: flex; align-items: center; justify-content: center; gap: 15px; margin-top: 20px; background: #1a1a1a; padding: 12px; border-radius: 6px; border: 1px solid #333; }
+        .toggle-label { font-size: 0.9em; font-weight: bold; color: #666; transition: color 0.3s; }
+        .toggle-label.active { color: #E91E63; }
+        .switch { position: relative; display: inline-block; width: 50px; height: 26px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #444; transition: .3s; border-radius: 26px; }
+        .slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 4px; bottom: 4px; background-color: white; transition: .3s; border-radius: 50%; }
+        input:checked + .slider { background-color: #00d2ff; }
+        input:checked + .slider:before { transform: translateX(24px); }
+        input:disabled + .slider { opacity: 0.5; cursor: not-allowed; }
+        input:checked:disabled + .slider { background-color: #00768f; }
+
+        .metrics { display: flex; gap: 20px; font-size: 1.1em; color: #4CAF50; font-weight: bold; margin-top: 15px; background: #1a1a1a; padding: 10px; border-radius: 6px; flex-wrap: wrap; justify-content: center;}
+        .metric-item { display: flex; flex-direction: column; align-items: center;}
+        .metric-label { font-size: 0.7em; color: #aaa; text-transform: uppercase; }
+        .metric-val { color: #ffeb3b; font-family: monospace; font-size: 1.2em; }
+
+        .history-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.85em; }
+        .history-table th, .history-table td { padding: 8px; text-align: left; border-bottom: 1px solid #444; }
+        .history-table th { background-color: #222; color: #aaa; }
+        .history-row:hover { background-color: #333; }
+        .progress-bar-container { width: 100%; background-color: #111; border-radius: 4px; margin-top: 15px; height: 10px; overflow: hidden; display: none; }
+        .progress-bar { height: 100%; background-color: #4CAF50; width: 0%; transition: width 0.1s; }
+
+        .analyzer-container { width: 100%; height: 160px; background: #111; border-radius: 6px; border: 1px solid #333; margin-top: 15px; overflow: hidden; position: relative;}
+        canvas { display: block; width: 100%; height: 100%; }
+        .analyzer-label { position: absolute; top: 5px; left: 10px; font-size: 0.7em; color: #888; font-weight: bold; text-transform: uppercase; pointer-events: none;}
+    </style>
+</head>
+<body>
+    <div class="panel">
+        <h2>1. ADPCM-XQ Studio v18 (Integer MSE & 15-Byte Blocks)</h2>
+        <div class="grid-2col">
+            <div class="upload-area">
+                <label class="custom-file-upload"><input type="file" id="audio-upload" accept="audio/*"> WAV / MP3 laden... </label>
+                <div id="file-status" class="status-bar">Warte auf Datei...</div>
+                
+                <div class="range-toggle-wrapper">
+                    <span class="toggle-label active" id="lbl-10s">Erste 10s</span>
+                    <label class="switch">
+                        <input type="checkbox" id="range-toggle" onchange="applyRangeSelection()" disabled>
+                        <span class="slider"></span>
+                    </label>
+                    <span class="toggle-label" id="lbl-all">Alles kodieren</span>
+                </div>
+
+                <div class="analyzer-container">
+                    <span class="analyzer-label">Spektrum: Grau (Raw) vs. Cyan (Filt) & Filter Kurve</span>
+                    <canvas id="analyzer-canvas"></canvas>
+                </div>
+
+                <div class="progress-bar-container" id="progress-container"><div class="progress-bar" id="progress-bar"></div></div>
+                <div class="metrics">
+                    <div class="metric-item"><span class="metric-label">MSE (Pre-Filter)</span><span id="metric-mse-pre" class="metric-val">0</span></div>
+                    <div class="metric-item"><span class="metric-label">MSE (Post-Filter)</span><span id="metric-mse-post" class="metric-val">0</span></div>
+                    <div class="metric-item"><span class="metric-label">Max Err (Post)</span><span id="metric-maxerr" class="metric-val" style="color: #ff9800;">0</span></div>
+                </div>
+                <div style="margin-top: 15px; display:flex; gap:10px; flex-wrap:wrap;">
+                    <button class="btn" style="flex:1;" onclick="streamAudio('original')">▶ Original</button>
+                    <button class="btn btn-play" style="flex:1;" onclick="streamAudio('fpga_raw')">▶ ADPCM (Raw)</button>
+                    <button class="btn btn-play-filtered" style="flex:1;" onclick="streamAudio('fpga_filt')">▶ ADPCM (Filt)</button>
+                    <button class="btn" style="flex:0.3; background-color:#dc3545;" onclick="stopAudio()">■</button>
+                </div>
+            </div>
+            <div>
+                <div class="cfg-row"><div class="cfg-label" style="color:#E91E63;">Bit-Tiefe:</div><select id="cfg-bps" class="mode-select" onchange="triggerReprocess()">
+                    <option value="2">2-Bit</option>
+                    <option value="3">3-Bit</option>
+                    <option value="4" selected>4-Bit (Standard)</option>
+                    <option value="5">5-Bit (HQ)</option>
+                    <option value="6">6-Bit (Ultra HQ)</option>
+                    <option disabled>─── Asymmetrisch (M/S) ───</option>
+                    <option value="53">5/3-Bit M/S Hybrid</option>
+                    <option value="42">4/2-Bit M/S Hybrid</option>
+                    <option value="32">3/2-Bit M/S Hybrid</option>
+                    <option value="332">3/3/2-Bit Sequential (2.67 Bit/Smp)</option>
+                </select></div>
+                <div class="cfg-row"><div class="cfg-label">Noise Shaping:</div><select id="cfg-dns" class="mode-select" onchange="triggerReprocess()"><option value="1024">Psychoakustisch (FFT)</option><option value="512" selected>Dynamic (15-Tap)</option><option value="0">Off</option></select></div>
+                <div class="cfg-row"><div class="cfg-label">Lookahead Depth:</div><select id="cfg-lookahead" class="mode-select" onchange="triggerReprocess()"><option value="99" selected>Adaptive Smart (1-4)</option><option value="100">Adaptive Deep (1-8)</option><option value="3">3 Samples</option></select></div>
+                <div class="cfg-row"><div class="cfg-label">Hybrid-Gewichtung:</div><select id="cfg-weight" class="mode-select" onchange="triggerReprocess()">
+                    <option value="1.0" selected>100% Pre / 0% Post (Sicher für IIR)</option>
+                    <option value="0.9">90% Pre / 10% Post</option>
+                    <option value="0.8">80% Pre / 20% Post</option>
+                    <option value="0.7">70% Pre / 30% Post</option>
+                    <option value="0.6">60% Pre / 40% Post</option>
+                    <option value="0.5">50% Pre / 50% Post</option>
+                    <option value="0.4">40% Pre / 60% Post</option>
+                    <option value="0.3">30% Pre / 70% Post</option>
+                    <option value="0.2">20% Pre / 80% Post</option>
+                    <option value="0.1">10% Pre / 90% Post</option>
+                    <option value="0.0">0% Pre / 100% Post</option>
+                </select></div>
+                <div class="cfg-row" style="position:relative;">
+                    <div class="cfg-label">Playback Filter:</div>
+                    <div style="width:100%;">
+                        <select id="cfg-filter" class="mode-select" onchange="updateFilterCanvas(); liveUpdateFilterIfPlaying();">
+                            <option value="-1" selected>Bypass (Off)</option>
+                            <option disabled>─── FIR Filter ───</option>
+                            <option value="0">0: FIR 1/8, 3/4, 1/8</option>
+                            <option value="1">1: FIR 1/8, 6/8, 1/8</option>
+                            <option value="2">2: FIR 1/8, 7/8, 1/8</option>
+                            <option value="3">3: FIR 2/8, 4/8, 2/8</option>
+                            <option value="4">4: FIR 2/8, 5/8, 1/8</option>
+                            <option value="5">5: FIR 1/16, 3/16, 3/16, 1/4...</option>
+                            <option value="6">6: FIR 1/8, 1/8, 1/8, 1/4...</option>
+                            <option value="7">7: FIR 3/16, 2/16, 1/16, 1/4...</option>
+                            <option value="8">8: FIR 1/4, 1/8, 0, 1/4, 0...</option>
+                            <option value="9">9: FIR 5/16, 5/16, 0, 1/4, 0...</option>
+                            <option disabled>─── IIR Filter (Biquad) ───</option>
+                            <option value="10">10: Sprache Bandpass mild</option>
+                            <option value="11">11: Sprache Bandpass stark</option>
+                            <option value="12">12: Sprache Tiefpass mild</option>
+                            <option value="13">13: Sprache Tiefpass stark</option>
+                            <option value="14">14: Musik Tiefpass sanft</option>
+                            <option value="15">15: Musik Tiefpass moderat</option>
+                            <option value="16">16: Musik Bandpass Subsonic</option>
+                            <option value="17">17: Musik Höhen sanft</option>
+                            <option value="18">18: Musik Präsenz</option>
+                            <option value="19">19: Musik Bass-Boost</option>
+                        </select>
+                        <button id="btn-auto-filter" class="btn btn-auto" onclick="applySuggestedFilter()">💡 Filter Empfehlung anwenden</button>
+                    </div>
+                </div>
+                <div class="cfg-row"><div class="cfg-label">Mid/Side Stereo:</div><input type="checkbox" id="cfg-ms" class="std-check" onchange="triggerReprocess()"> <span style="font-size:0.8em; color:#aaa;">(Wird bei Mono / Hybrid ignoriert)</span></div>
+                <button class="btn btn-recalc" id="btn-start-encode" onclick="triggerReprocess()" disabled>⚙️ Kodierung starten (Worker)</button>
+            </div>
+        </div>
+    </div>
+    
+    <div class="panel">
+        <h2>2. Historie & Export (Letzte 5 Läufe)</h2>
+        <table class="history-table" id="history-table"><thead><tr><th>ID / Settings</th><th>Lookahead</th><th>MSE (Pre)</th><th>MSE (Post)</th><th>Max Err</th><th>Aktion</th></tr></thead><tbody></tbody></table>
+    </div>
+
+<script id="worker-script" type="javascript/worker">
+    const step_table = [ 7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66, 73, 80, 88, 97, 107, 118, 130, 143, 157, 173, 190, 209, 230, 253, 279, 307, 337, 371, 408, 449, 494, 544, 598, 658, 724, 796, 876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066, 2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871, 5358, 5894, 6484, 7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899, 15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767 ];
+    const index_table_3 = [-1, -1, 1, 2]; 
+    const index_table_4 = [-1, -1, -1, -1, 2, 4, 6, 8]; 
+    const index_table_5 = [-1, -1, -1, -1, -1, -1, -1, -1, 1, 2, 4, 6, 8, 10, 13, 16]; 
+    const index_table_6 = [-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16, 19, 22, 25, 28];
+    
+    const iir_coeffs_f = [
+        [7583.0/32768.0, 0.0, -7583.0/32768.0, -44000.0/32768.0, 17600.0/32768.0],
+        [5784.0/32768.0, 0.0, -5784.0/32768.0, -46747.0/32768.0, 21201.0/32768.0],
+        [1622.0/32768.0, 3244.0/32768.0, 1622.0/32768.0, -41929.0/32768.0, 15650.0/32768.0],
+        [659.0/32768.0, 1317.0/32768.0, 659.0/32768.0, -51152.0/32768.0, 21018.0/32768.0],
+        [1622.0/32768.0, 3244.0/32768.0, 1622.0/32768.0, -41929.0/32768.0, 15650.0/32768.0],
+        [659.0/32768.0, 1317.0/32768.0, 659.0/32768.0, -51152.0/32768.0, 21018.0/32768.0],
+        [31406.0/32768.0, -62813.0/32768.0, 31406.0/32768.0, -62762.0/32768.0, 30060.0/32768.0],
+        [28180.0/32768.0, -56360.0/32768.0, 28180.0/32768.0, -55426.0/32768.0, 23478.0/32768.0],
+        [26214.0/32768.0, 0.0, -26214.0/32768.0, -49152.0/32768.0, 16384.0/32768.0],
+        [32767.0/32768.0, -32767.0/32768.0, 0.0, -32767.0/32768.0, 0.0]
+    ];
+
+    function CLIP(val, min, max) { return val > max ? max : (val < min ? min : val); }
+    function noise_shape(chan, sample) { let temp = -((chan.shaping_weight * chan.error + 512) >> 10); if (chan.shaping_weight < 0 && temp !== 0) { if (temp === chan.error) temp = (temp < 0) ? temp + 1 : temp - 1; chan.error = -sample; sample += temp; } else { chan.error = -(sample += temp); } return sample; }
+    function clone_fstate(st) { return { actual: st.actual, prev1: st.prev1, prev2: st.prev2, prev3: st.prev3, prev4: st.prev4, prev5: st.prev5, prev6: st.prev6, y_prev1: st.y_prev1, y_prev2: st.y_prev2 }; }
+
+    function apply_filter_single_sim(input_pcm, filter_index, st) {
+        if (filter_index < 0 || filter_index > 19) {
+            st.prev6 = st.prev5; st.prev5 = st.prev4; st.prev4 = st.prev3; st.prev3 = st.prev2; st.prev2 = st.prev1; st.prev1 = st.actual; st.actual = input_pcm;
+            return input_pcm;
+        }
+        st.prev6 = st.prev5; st.prev5 = st.prev4; st.prev4 = st.prev3; st.prev3 = st.prev2; st.prev2 = st.prev1; st.prev1 = st.actual; st.actual = input_pcm;
+
+        if (filter_index <= 9) {
+            let p = 0;
+            if (filter_index === 0) p = (st.actual+st.prev2)*0.125+st.prev1*0.625;
+            else if (filter_index === 1) p = (st.actual+st.prev2)*0.125+st.prev1*0.75;
+            else if (filter_index === 2) p = (st.actual+st.prev2)*0.125+st.prev1*0.875;
+            else if (filter_index === 3) p = (st.actual+st.prev2)*0.25+st.prev1*0.5;
+            else if (filter_index === 4) p = (st.actual+st.prev2)*0.25+st.prev1*0.625;
+            else if (filter_index === 5) p = (st.actual+st.prev6)*0.0625+(st.prev1+st.prev5)*0.125+(st.prev2+st.prev4)*0.1875+st.prev3*0.250;
+            else if (filter_index === 6) p = (st.actual+st.prev6)*0.125+(st.prev1+st.prev5)*0.125+(st.prev2+st.prev4)*0.125+st.prev3*0.250;
+            else if (filter_index === 7) p = (st.actual+st.prev6)*0.1875+(st.prev1+st.prev5)*0.125+(st.prev2+st.prev4)*0.0625+st.prev3*0.25;
+            else if (filter_index === 8) p = (st.actual+st.prev6)*0.2500+(st.prev1+st.prev5)*0.125+(st.prev2+st.prev4)*0.0+st.prev3*0.25;
+            else if (filter_index === 9) p = (st.actual+st.prev6)*0.3125+(st.prev1+st.prev5)*0.625+(st.prev2+st.prev4)*0.0+st.prev3*0.25;
+            return CLIP(Math.trunc(p), -32768, 32767);
+        } else {
+            let idx = filter_index - 10;
+            let b0 = iir_coeffs_f[idx][0], b1 = iir_coeffs_f[idx][1], b2 = iir_coeffs_f[idx][2];
+            let a1 = iir_coeffs_f[idx][3], a2 = iir_coeffs_f[idx][4];
+            let yM = b0 * st.actual + b1 * st.prev1 + b2 * st.prev2 - a1 * st.y_prev1 - a2 * st.y_prev2;
+            let out_clamped = CLIP(Math.trunc(yM), -32768, 32767);
+            st.y_prev2 = st.y_prev1; st.y_prev1 = out_clamped; 
+            return out_clamped;
+        }
+    }
+
+    function min_error_4bit(chan, csample, psample, pIdx, flags, max_error, filterIndex, wPre, wPost) {
+        let delta = csample - chan.pcmdata; 
+        let cchan = { pcmdata: chan.pcmdata, error: chan.error, shaping_weight: chan.shaping_weight, index: chan.index, fstate: clone_fstate(chan.fstate) }; 
+        let step = step_table[cchan.index]; let trial_delta = (step >> 3); let nibble = 0;
+        
+        if (delta < 0) { let mag = Math.floor(((-delta << 2) + (step & 3) + ((step & 1) << 1)) / step); nibble = 0x8 | (mag > 7 ? 7 : mag); } 
+        else { let mag = Math.floor(((delta << 2) + (step & 3) + ((step & 1) << 1)) / step); nibble = mag > 7 ? 7 : mag; }
+        
+        if (nibble & 1) trial_delta += (step >> 2); if (nibble & 2) trial_delta += (step >> 1); if (nibble & 4) trial_delta += step; if (nibble & 8) cchan.pcmdata -= trial_delta; else cchan.pcmdata += trial_delta;
+        cchan.pcmdata = CLIP(cchan.pcmdata, -32768, 32767); cchan.index = CLIP(cchan.index + index_table_4[nibble & 0x07], 0, 88);
+        
+        let out_c = apply_filter_single_sim(cchan.pcmdata, filterIndex, cchan.fstate);
+        let errPre = (cchan.pcmdata - csample); let errPost = (out_c - csample);
+        let res_min_error = (errPre * errPre * wPre) + (errPost * errPost * wPost);
+        let res_best_nibble = nibble; let depth = flags & 0x0ff; 
+        
+        if (depth === 0 || res_min_error >= max_error) return { min_error: res_min_error, best_nibble: res_best_nibble };
+        
+        let csample2 = (flags & 0x200) ? noise_shape((cchan.error += out_c, cchan), psample[pIdx]) : psample[pIdx];
+        let next = min_error_4bit(cchan, csample2, psample, pIdx + 1, flags - 1, max_error - res_min_error, filterIndex, wPre, wPost); 
+        res_min_error += next.min_error;
+        if (flags & 0x400) return { min_error: res_min_error, best_nibble: res_best_nibble };
+        
+        for (let testnbl = 0; testnbl <= 0xF; ++testnbl) {
+            if (testnbl === nibble) continue;
+            if (!(~testnbl & 0x7) || Math.abs((testnbl < 8 ? testnbl+1 : 7-(testnbl&7)) - (nibble < 8 ? nibble+1 : 7-(nibble&7))) <= 3) {
+                let tchan = { pcmdata: chan.pcmdata, error: chan.error, shaping_weight: chan.shaping_weight, index: chan.index, fstate: clone_fstate(chan.fstate) };
+                trial_delta = (step >> 3);
+                if (testnbl & 1) trial_delta += (step >> 2); if (testnbl & 2) trial_delta += (step >> 1); if (testnbl & 4) trial_delta += step; if (testnbl & 8) tchan.pcmdata -= trial_delta; else tchan.pcmdata += trial_delta;
+                tchan.pcmdata = CLIP(tchan.pcmdata, -32768, 32767); tchan.index = CLIP(tchan.index + index_table_4[testnbl & 0x07], 0, 88);
+                
+                let out_t = apply_filter_single_sim(tchan.pcmdata, filterIndex, tchan.fstate);
+                let ePre = (tchan.pcmdata - csample); let ePost = (out_t - csample);
+                let error = (ePre * ePre * wPre) + (ePost * ePost * wPost);
+                let threshold = max_error < res_min_error ? max_error : res_min_error;
+                
+                if (error < threshold) { 
+                    csample2 = (flags & 0x200) ? noise_shape((tchan.error += out_t, tchan), psample[pIdx]) : psample[pIdx]; 
+                    let tnext = min_error_4bit(tchan, csample2, psample, pIdx + 1, flags - 1, threshold - error, filterIndex, wPre, wPost); 
+                    error += tnext.min_error; 
+                    if (error < res_min_error) { res_best_nibble = testnbl; res_min_error = error; } 
+                }
+            }
+        } return { min_error: res_min_error, best_nibble: res_best_nibble };
+    }
+
+    function encode_sample_c(chan, pcm_val, psample, pIdx, num_samples, flags, bps, filterIndex, wPre, wPost) {
+        let step = step_table[chan.index]; let csample = pcm_val; 
+        if (flags & 0x200) csample = noise_shape(chan, csample);
+        let nibble;
+        
+        if (bps === 4) { 
+            let res = min_error_4bit(chan, csample, psample, pIdx, flags, Number.MAX_SAFE_INTEGER, filterIndex, wPre, wPost); 
+            nibble = res.best_nibble; let trial_delta = (step >> 3); 
+            if (nibble & 1) trial_delta += (step >> 2); if (nibble & 2) trial_delta += (step >> 1); if (nibble & 4) trial_delta += step; if (nibble & 8) chan.pcmdata -= trial_delta; else chan.pcmdata += trial_delta; 
+            chan.pcmdata = CLIP(chan.pcmdata, -32768, 32767); chan.index = CLIP(chan.index + index_table_4[nibble & 0x07], 0, 88); 
+            let out_main = apply_filter_single_sim(chan.pcmdata, filterIndex, chan.fstate);
+            if (flags & 0x200) chan.error += out_main; 
+        } 
+        else {
+            let best_nibble = 0, min_err = Number.MAX_SAFE_INTEGER, best_pcm = chan.pcmdata, best_idx = chan.index, best_fstate = null, best_out = 0;
+            let num_nibbles = (bps === 2) ? 4 : (bps === 3 ? 8 : (bps === 5 ? 32 : 64));
+
+            for (let testnbl = 0; testnbl < num_nibbles; testnbl++) {
+                let tchan = { pcmdata: chan.pcmdata, index: chan.index, fstate: clone_fstate(chan.fstate) };
+                let trial_delta = 0;
+                if (bps === 2) {
+                    trial_delta = step >> 1; if (testnbl & 1) trial_delta += step;
+                    if (testnbl & 2) tchan.pcmdata -= trial_delta; else tchan.pcmdata += trial_delta;
+                    tchan.index += (testnbl & 1) * 3 - 1;
+                } else if (bps === 3) {
+                    trial_delta = step >> 2; if (testnbl & 1) trial_delta += (step >> 1); if (testnbl & 2) trial_delta += step;
+                    if (testnbl & 4) tchan.pcmdata -= trial_delta; else tchan.pcmdata += trial_delta;
+                    tchan.index += index_table_3[testnbl & 3];
+                } else if (bps === 5) {
+                    trial_delta = step >> 4; if (testnbl & 1) trial_delta += (step >> 3); if (testnbl & 2) trial_delta += (step >> 2); if (testnbl & 4) trial_delta += (step >> 1); if (testnbl & 8) trial_delta += step;
+                    if (testnbl & 16) tchan.pcmdata -= trial_delta; else tchan.pcmdata += trial_delta;
+                    tchan.index += index_table_5[testnbl & 15];
+                } else if (bps === 6) {
+                    trial_delta = step >> 5; 
+                    if (testnbl & 1) trial_delta += (step >> 4);
+                    if (testnbl & 2) trial_delta += (step >> 3);
+                    if (testnbl & 4) trial_delta += (step >> 2);
+                    if (testnbl & 8) trial_delta += (step >> 1);
+                    if (testnbl & 16) trial_delta += step;
+                    if (testnbl & 32) tchan.pcmdata -= trial_delta; else tchan.pcmdata += trial_delta;
+                    tchan.index += index_table_6[testnbl & 31];
+                }
+                tchan.pcmdata = CLIP(tchan.pcmdata, -32768, 32767); tchan.index = CLIP(tchan.index, 0, 88);
+
+                let tout = apply_filter_single_sim(tchan.pcmdata, filterIndex, tchan.fstate);
+                let ePre = (tchan.pcmdata - csample); let ePost = (tout - csample);
+                let err = (ePre * ePre * wPre) + (ePost * ePost * wPost);
+
+                if (err < min_err) { min_err = err; best_nibble = testnbl; best_pcm = tchan.pcmdata; best_idx = tchan.index; best_fstate = tchan.fstate; best_out = tout; }
+            }
+            nibble = best_nibble; chan.pcmdata = best_pcm; chan.index = best_idx; chan.fstate = best_fstate;
+            if (flags & 0x200) chan.error += best_out;
+        }
+        return nibble;
+    }
+
+    self.onmessage = function(e) {
+        const { arrL, arrR, count, bps, dnsFlags, lookDepth, filterIndex, useMS, sampleRate, channels, weightPre } = e.data;
+        let wPre = parseFloat(weightPre); let wPost = 1.0 - wPre;
+        let flags = dnsFlags | (lookDepth > 90 ? 0 : lookDepth);
+        let workL = arrL.slice(); let workR = channels === 2 ? arrR.slice() : new Int16Array(0);
+        
+        let is332 = (bps === 332);
+        let bpsL = bps, bpsR = bps;
+        if (channels === 2 && !is332) {
+            if (bps === 53) { bpsL = 5; bpsR = 3; }
+            else if (bps === 42) { bpsL = 4; bpsR = 2; }
+            else if (bps === 32) { bpsL = 3; bpsR = 2; }
+        }
+        
+        if (channels === 2 && useMS) { for(let i=0; i<count; i++) { let m = (arrL[i] + arrR[i]) >> 1; let s = (arrL[i] - arrR[i]) >> 1; workL[i] = m; workR[i] = s; } }
+
+        let base_fstate = { actual:0, prev1:0, prev2:0, prev3:0, prev4:0, prev5:0, prev6:0, y_prev1:0.0, y_prev2:0.0 };
+        let chanL = { pcmdata: workL[0], index: 0, error: 0, shaping_weight: 0, fstate: clone_fstate(base_fstate) }; 
+        let chanR = { pcmdata: channels === 2 ? workR[0] : 0, index: 0, error: 0, shaping_weight: 0, fstate: clone_fstate(base_fstate) };
+        const filter_state_final = [ clone_fstate(base_fstate), clone_fstate(base_fstate) ];
+
+        let avgBps = is332 ? (8.0 / 3.0) : ((bps > 10 && channels === 2) ? Math.ceil((bpsL+bpsR)/2) : bps);
+        let bitBuf = new Uint8Array(Math.ceil((count * channels * avgBps) / 8) + 256);
+        let bytePos = 21; let bitPos = 0; let dv = new DataView(bitBuf.buffer);
+        
+        dv.setUint8(0, 65); dv.setUint8(1, 68); dv.setUint8(2, 80); dv.setUint8(3, 88); 
+        dv.setUint32(4, sampleRate, true); dv.setUint8(8, channels); dv.setUint8(9, bps); dv.setUint8(10, (channels === 2 && useMS) ? 1 : 0);
+        dv.setUint32(11, count, true); dv.setInt16(15, chanL.pcmdata, true); dv.setUint8(17, chanL.index); dv.setInt16(18, chanR.pcmdata, true); dv.setUint8(20, chanR.index);
+
+        function writeBits(val, bits) { for(let i=0; i<bits; i++) { bitBuf[bytePos] |= (((val >> i) & 1) << bitPos); bitPos++; if(bitPos === 8) { bitPos = 0; bytePos++; } } }
+
+        let fpgaL_raw = new Float32Array(count); let fpgaR_raw = channels === 2 ? new Float32Array(count) : new Float32Array(0);
+        let maxErr = 0, mseTotalPre = 0, mseTotalPost = 0;
+        
+        const chunkSize = 2000;
+        for (let offset = 0; offset < count; offset += chunkSize) {
+            let end = Math.min(offset + chunkSize, count);
+            for(let i = offset; i < end; i++) {
+                let curFlags = flags;
+                if (lookDepth >= 99) { let maxL = lookDepth === 99 ? 4 : 8; let dL = chanL.index > 60 ? maxL : (chanL.index > 40 ? Math.min(4, maxL) : 2); curFlags = (flags & ~0x0ff) | dL; }
+                
+                let phase = i % 3;
+                let curBpsL = is332 ? (phase === 2 ? 2 : 3) : bpsL;
+                let curBpsR = is332 ? (phase === 2 ? 2 : 3) : bpsR;
+
+                let nL = encode_sample_c(chanL, workL[i], workL, i+1, count - i, curFlags, curBpsL, filterIndex, wPre, wPost); writeBits(nL, curBpsL);
+                
+                if (channels === 2) {
+                    let nR = encode_sample_c(chanR, workR[i], workR, i+1, count - i, curFlags, curBpsR, filterIndex, wPre, wPost); writeBits(nR, curBpsR);
+                    
+                    let rawL = chanL.pcmdata; let rawR = chanR.pcmdata; 
+                    if (useMS) { rawL = CLIP(chanL.pcmdata + chanR.pcmdata, -32768, 32767); rawR = CLIP(chanL.pcmdata - chanR.pcmdata, -32768, 32767); }
+                    
+                    fpgaL_raw[i] = rawL / 32768.0; fpgaR_raw[i] = rawR / 32768.0;
+                    let ePreL = Math.abs(arrL[i] - rawL); let ePreR = Math.abs(arrR[i] - rawR);
+                    mseTotalPre += (ePreL*ePreL + ePreR*ePreR) / 2.0;
+                    
+                    let finalL = apply_filter_single_sim(rawL, filterIndex, filter_state_final[0]);
+                    let finalR = apply_filter_single_sim(rawR, filterIndex, filter_state_final[1]);
+                    
+                    let eL = Math.abs(arrL[i] - finalL); let eR = Math.abs(arrR[i] - finalR);
+                    if (eL > maxErr) maxErr = eL; if (eR > maxErr) maxErr = eR;
+                    mseTotalPost += (eL*eL + eR*eR) / 2.0;
+                } else {
+                    let rawL = chanL.pcmdata; fpgaL_raw[i] = rawL / 32768.0;
+                    let ePreL = Math.abs(arrL[i] - rawL); mseTotalPre += ePreL*ePreL;
+                    let finalL = apply_filter_single_sim(rawL, filterIndex, filter_state_final[0]);
+                    let eL = Math.abs(arrL[i] - finalL); if (eL > maxErr) maxErr = eL; mseTotalPost += eL*eL;
+                }
+            } self.postMessage({ type: 'progress', percent: (end/count)*100 });
+        }
+        
+        if (bitPos > 0) { bitPos = 0; bytePos++; }
+        let dataLen = bytePos - 21; 
+        let remainder = dataLen % 15;
+        if (remainder !== 0) {
+            let padBytes = 15 - remainder;
+            for (let i = 0; i < padBytes; i++) {
+                bitBuf[bytePos++] = 0;
+            }
+        }
+        
+        let finalSize = bytePos;
+        let adpxFile = new Uint8Array(bitBuf.buffer.slice(0, finalSize));
+        self.postMessage({ type: 'done', fpgaL_raw, fpgaR_raw, metrics: { mseTotalPre: Math.round(mseTotalPre/count), mseTotalPost: Math.round(mseTotalPost/count), maxErr }, adpxFile }, [adpxFile.buffer]);
+    }
+</script>
+
+<script>
+    let audioContext = null; let sampleRate = 44100; let channels = 2; let originalL = new Float32Array(0); let originalR = new Float32Array(0);
+    let fpgaL_raw = new Float32Array(0), fpgaR_raw = new Float32Array(0);
+    let fullOriginalL = new Float32Array(0); let fullOriginalR = new Float32Array(0);
+    let liveSource = null; let encodeHistory = []; let encodeCounter = 1; let lastPlayedType = null;
+    let originalFileName = "Audio"; 
+    
+    const iir_coeffs_f = [
+        [7583.0/32768.0, 0.0, -7583.0/32768.0, -44000.0/32768.0, 17600.0/32768.0],
+        [5784.0/32768.0, 0.0, -5784.0/32768.0, -46747.0/32768.0, 21201.0/32768.0],
+        [1622.0/32768.0, 3244.0/32768.0, 1622.0/32768.0, -41929.0/32768.0, 15650.0/32768.0],
+        [659.0/32768.0, 1317.0/32768.0, 659.0/32768.0, -51152.0/32768.0, 21018.0/32768.0],
+        [1622.0/32768.0, 3244.0/32768.0, 1622.0/32768.0, -41929.0/32768.0, 15650.0/32768.0],
+        [659.0/32768.0, 1317.0/32768.0, 659.0/32768.0, -51152.0/32768.0, 21018.0/32768.0],
+        [31406.0/32768.0, -62813.0/32768.0, 31406.0/32768.0, -62762.0/32768.0, 30060.0/32768.0],
+        [28180.0/32768.0, -56360.0/32768.0, 28180.0/32768.0, -55426.0/32768.0, 23478.0/32768.0],
+        [26214.0/32768.0, 0.0, -26214.0/32768.0, -49152.0/32768.0, 16384.0/32768.0],
+        [32767.0/32768.0, -32767.0/32768.0, 0.0, -32767.0/32768.0, 0.0]
+    ];
+    const fir_coeffs = [
+        [0.125, 0.625, 0.125], [0.125, 0.75, 0.125], [0.125, 0.875, 0.125], [0.25, 0.5, 0.25], [0.125, 0.625, 0.25],
+        [0.250, 0.1875, 0.125, 0.0625], [0.250, 0.125, 0.125, 0.125], [0.25, 0.0625, 0.125, 0.1875], [0.25, 0.0, 0.125, 0.25], [0.25, 0.0, 0.625, 0.3125]
+    ];
+    
+    let analyserNode = null; let preAnalyzerNode = null; let animationId = null; let canvasCtx = null; let suggestedFilterIndex = -1;
+    let playbackStartTime = 0; 
+
+    function initAudioContext() { 
+        if (!audioContext) {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)(); 
+            analyserNode = audioContext.createAnalyser();
+            analyserNode.fftSize = 1024;
+            analyserNode.smoothingTimeConstant = 0.8;
+
+            preAnalyzerNode = audioContext.createAnalyser();
+            preAnalyzerNode.fftSize = 1024;
+            preAnalyzerNode.smoothingTimeConstant = 0.8;
+
+            let canvas = document.getElementById('analyzer-canvas');
+            canvasCtx = canvas.getContext('2d');
+            resizeCanvas(); window.addEventListener('resize', resizeCanvas);
+            updateFilterCanvas();
+        }
+    }
+
+    function resizeCanvas() {
+        let canvas = document.getElementById('analyzer-canvas');
+        canvas.width = canvas.parentElement.clientWidth;
+        canvas.height = canvas.parentElement.clientHeight;
+        updateFilterCanvas();
+    }
+
+    function drawStaticFilterCurve() {
+        if (!canvasCtx) return;
+        let w = canvasCtx.canvas.width; let h = canvasCtx.canvas.height;
+        
+        canvasCtx.fillStyle = '#666'; canvasCtx.font = "10px monospace";
+        canvasCtx.fillText("20Hz", 5, h - 5); canvasCtx.fillText("1kHz", w * 0.05, h - 5); canvasCtx.fillText("10kHz", w * 0.45, h - 5); canvasCtx.fillText("20kHz", w - 40, h - 5);
+        canvasCtx.fillText("0dB", 5, 12); canvasCtx.fillText("-12dB", 5, h * 0.3); canvasCtx.fillText("-24dB", 5, h * 0.6);
+        
+        let filterIdx = parseInt(document.getElementById('cfg-filter').value);
+        if (filterIdx < 0) return;
+
+        canvasCtx.beginPath();
+        canvasCtx.strokeStyle = "rgba(255, 255, 255, 0.5)";
+        canvasCtx.lineWidth = 2;
+
+        for (let x = 0; x < w; x++) {
+            let freqRatio = x / w; 
+            let w_ang = freqRatio * Math.PI; 
+            let mag = 1.0;
+            
+            if (filterIdx <= 9) {
+                let real = 0, imag = 0;
+                if (filterIdx < 5) {
+                    let c = fir_coeffs[filterIdx];
+                    real = c[1] + c[0]*Math.cos(w_ang) + c[2]*Math.cos(-w_ang);
+                    imag = c[0]*Math.sin(w_ang) + c[2]*Math.sin(-w_ang);
+                } else {
+                    let c = fir_coeffs[filterIdx];
+                    real = c[0] + c[1]*Math.cos(w_ang) + c[2]*Math.cos(2*w_ang) + c[3]*Math.cos(3*w_ang);
+                    imag = c[1]*Math.sin(w_ang) + c[2]*Math.sin(2*w_ang) + c[3]*Math.sin(3*w_ang);
+                }
+                mag = Math.sqrt(real*real + imag*imag);
+            } else {
+                let idx = filterIdx - 10;
+                let b0 = iir_coeffs_f[idx][0], b1 = iir_coeffs_f[idx][1], b2 = iir_coeffs_f[idx][2];
+                let a1 = iir_coeffs_f[idx][3], a2 = iir_coeffs_f[idx][4];
+                
+                let num_real = b0 + b1*Math.cos(-w_ang) + b2*Math.cos(-2*w_ang);
+                let num_imag = b1*Math.sin(-w_ang) + b2*Math.sin(-2*w_ang);
+                let den_real = 1 + a1*Math.cos(-w_ang) + a2*Math.cos(-2*w_ang);
+                let den_imag = a1*Math.sin(-w_ang) + a2*Math.sin(-2*w_ang);
+                
+                mag = Math.sqrt(num_real*num_real + num_imag*num_imag) / Math.sqrt(den_real*den_real + den_imag*den_imag);
+            }
+
+            let db = 20 * Math.log10(mag || 0.0001);
+            let y = h - ((db + 40) / 40) * h; 
+            y = Math.max(0, Math.min(h, y)); 
+
+            if (x === 0) canvasCtx.moveTo(x, y); else canvasCtx.lineTo(x, y);
+        }
+        canvasCtx.stroke();
+    }
+
+    function updateFilterCanvas() {
+        if (!canvasCtx) return;
+        let w = canvasCtx.canvas.width; let h = canvasCtx.canvas.height;
+        canvasCtx.clearRect(0, 0, w, h);
+        drawStaticFilterCurve();
+    }
+
+    function drawAnalyzer() {
+        if (!analyserNode || !preAnalyzerNode || !canvasCtx) return;
+        animationId = requestAnimationFrame(drawAnalyzer);
+        
+        let bufferLength = analyserNode.frequencyBinCount;
+        let postDataArray = new Uint8Array(bufferLength);
+        let preDataArray = new Uint8Array(bufferLength);
+        
+        analyserNode.getByteFrequencyData(postDataArray);
+        preAnalyzerNode.getByteFrequencyData(preDataArray);
+        
+        let w = canvasCtx.canvas.width; let h = canvasCtx.canvas.height;
+        canvasCtx.clearRect(0, 0, w, h);
+        
+        canvasCtx.beginPath();
+        canvasCtx.moveTo(0, h);
+        let sliceWidth = w * 1.0 / bufferLength;
+        let x = 0;
+        for (let i = 0; i < bufferLength; i++) {
+            let v = preDataArray[i] / 255.0;
+            let y = h - (v * h);
+            canvasCtx.lineTo(x, y);
+            x += sliceWidth;
+        }
+        canvasCtx.lineTo(w, h);
+        canvasCtx.lineTo(0, h);
+        canvasCtx.closePath();
+        canvasCtx.fillStyle = "rgba(100, 100, 100, 0.3)";
+        canvasCtx.fill();
+
+        drawStaticFilterCurve();
+
+        canvasCtx.beginPath();
+        canvasCtx.moveTo(0, h);
+        x = 0;
+        for (let i = 0; i < bufferLength; i++) {
+            let v = postDataArray[i] / 255.0;
+            let y = h - (v * h);
+            canvasCtx.lineTo(x, y);
+            x += sliceWidth;
+        }
+        canvasCtx.lineTo(w, h);
+        canvasCtx.lineTo(0, h);
+        canvasCtx.closePath();
+        
+        let gradient = canvasCtx.createLinearGradient(0, 0, 0, h);
+        gradient.addColorStop(0, "rgba(0, 210, 255, 0.8)");
+        gradient.addColorStop(1, "rgba(0, 210, 255, 0.1)");
+        canvasCtx.fillStyle = gradient;
+        canvasCtx.fill();
+    }
+
+    function calculateAutoSuggest(buffer) {
+        let actx = new OfflineAudioContext(1, Math.min(buffer.length, 44100 * 5), buffer.sampleRate);
+        let src = actx.createBufferSource(); src.buffer = buffer;
+        let analyzer = actx.createAnalyser(); analyzer.fftSize = 2048;
+        src.connect(analyzer); analyzer.connect(actx.destination);
+        src.start(0);
+        
+        actx.startRendering().then(() => {
+            let data = new Float32Array(analyzer.frequencyBinCount);
+            analyzer.getFloatFrequencyData(data); 
+            
+            let hfEnergy = 0; let mfEnergy = 0;
+            for(let i=200; i<500; i++) hfEnergy += data[i]; 
+            for(let i=20; i<100; i++) mfEnergy += data[i];  
+            
+            let ratio = hfEnergy / mfEnergy;
+            suggestedFilterIndex = 14; 
+            
+            if (ratio > 1.5) suggestedFilterIndex = 12; 
+            else if (ratio > 1.2) suggestedFilterIndex = 15; 
+            
+            let btn = document.getElementById('btn-auto-filter');
+            btn.innerText = `💡 Filter ${suggestedFilterIndex} empfohlen - Anwenden`;
+            btn.style.display = 'block';
+        });
+    }
+
+    function applySuggestedFilter() {
+        if (suggestedFilterIndex >= 0) {
+            document.getElementById('cfg-filter').value = suggestedFilterIndex;
+            document.getElementById('btn-auto-filter').style.display = 'none';
+            updateFilterCanvas();
+            liveUpdateFilterIfPlaying();
+        }
+    }
+    
+    document.getElementById('audio-upload').addEventListener('change', function(e) {
+        let file = e.target.files[0]; if (!file) return; initAudioContext(); 
+        originalFileName = file.name.replace(/\.[^/.]+$/, ""); 
+        document.getElementById('file-status').innerText = "Lade...";
+        let reader = new FileReader(); reader.onload = function(ev) {
+            audioContext.decodeAudioData(ev.target.result, function(buffer) {
+                sampleRate = buffer.sampleRate; channels = buffer.numberOfChannels; let len = buffer.length;
+                fullOriginalL = new Float32Array(len); fullOriginalL.set(buffer.getChannelData(0));
+                if (channels > 1) { fullOriginalR = new Float32Array(len); fullOriginalR.set(buffer.getChannelData(1)); }
+                
+                document.getElementById('cfg-ms').disabled = (channels === 1);
+                document.getElementById('range-toggle').disabled = false; document.getElementById('btn-start-encode').disabled = false;
+                
+                calculateAutoSuggest(buffer);
+                applyRangeSelection();
+            });
+        }; reader.readAsArrayBuffer(file);
+    });
+
+    function applyRangeSelection() {
+        let isAll = document.getElementById('range-toggle').checked;
+        document.getElementById('lbl-10s').className = isAll ? 'toggle-label' : 'toggle-label active';
+        document.getElementById('lbl-all').className = isAll ? 'toggle-label active' : 'toggle-label';
+
+        let len = fullOriginalL.length; let start = 0; let end = len; let tenSec = 10 * sampleRate; 
+        if (!isAll) end = Math.min(len, tenSec);
+        
+        originalL = fullOriginalL.subarray(start, end); if (channels > 1) originalR = fullOriginalR.subarray(start, end);
+        let secStr = (end / sampleRate).toFixed(2);
+        document.getElementById('file-status').innerText = `Bereit (${secStr}s, ${channels===1?'Mono':'Stereo'}) - ${isAll ? 'Alles' : 'Erste 10s'} gewählt.`;
+        triggerReprocess(); 
+    }
+
+    let activeWorker = null;
+    function triggerReprocess() {
+        if (originalL.length === 0) return; if (activeWorker) activeWorker.terminate();
+        let btn = document.getElementById('btn-start-encode'); let progBar = document.getElementById('progress-bar');
+        btn.disabled = true; document.getElementById('progress-container').style.display = "block";
+        
+        let bps = parseInt(document.getElementById('cfg-bps').value); 
+        let dnsFlags = parseInt(document.getElementById('cfg-dns').value);
+        let lookDepth = parseInt(document.getElementById('cfg-lookahead').value); 
+        let filterIndex = parseInt(document.getElementById('cfg-filter').value);
+        let weightPre = document.getElementById('cfg-weight').value;
+        let useMS = channels === 1 ? false : document.getElementById('cfg-ms').checked;
+        
+        if (bps > 10 && bps !== 332 && channels === 2) useMS = true;
+        
+        let count = originalL.length; let arrL = new Int16Array(count); let arrR = channels === 2 ? new Int16Array(count) : new Int16Array(0);
+        for(let i=0; i<count; i++) { arrL[i] = Math.round(originalL[i]*32767); if(channels===2) arrR[i] = Math.round(originalR[i]*32767); }
+
+        const blob = new Blob([document.getElementById('worker-script').textContent], {type: "text/javascript"});
+        activeWorker = new Worker(window.URL.createObjectURL(blob));
+        activeWorker.onmessage = function(e) {
+            if (e.data.type === 'progress') { progBar.style.width = e.data.percent + "%"; } 
+            else if (e.data.type === 'done') {
+                fpgaL_raw = e.data.fpgaL_raw; fpgaR_raw = e.data.fpgaR_raw;
+                let { mseTotalPre, mseTotalPost, maxErr } = e.data.metrics;
+                
+                // Zahlen formatisieren mit 1000er-Trennzeichen (de-DE locale für Punkte)
+                document.getElementById('metric-mse-pre').innerText = mseTotalPre.toLocaleString('de-DE'); 
+                document.getElementById('metric-mse-post').innerText = mseTotalPost.toLocaleString('de-DE'); 
+                document.getElementById('metric-maxerr').innerText = maxErr.toLocaleString('de-DE');
+                btn.disabled = false; 
+                
+                let modeStr = (bps === 332) ? "3/3/2-Bit (2.67b)" : ((bps > 10) ? Math.floor(bps/10) + "/" + (bps%10) + "-Bit" : bps + "-Bit");
+                let msStr = channels===1 ? "Mono" : (useMS ? "M/S" : "L/R");
+                addToHistory(encodeCounter++, `${modeStr}, ${msStr}`, lookDepth > 90 ? `Smart` : lookDepth, mseTotalPre, mseTotalPost, maxErr, fpgaL_raw, fpgaR_raw, e.data.adpxFile);
+                
+                if (lastPlayedType) streamAudio(lastPlayedType, false);
+            }
+        }; activeWorker.postMessage({ arrL, arrR, count, bps, dnsFlags, lookDepth, filterIndex, useMS, sampleRate, channels, weightPre });
+    }
+
+    function addToHistory(id, setStr, lookStr, msePre, msePost, maxErr, lRaw, rRaw, adpxFile) {
+        encodeHistory.unshift({ id, setStr, lookStr, msePre, msePost, maxErr, lRaw, rRaw, adpxFile }); if (encodeHistory.length > 5) encodeHistory.pop();
+        let tbody = document.querySelector('#history-table tbody'); tbody.innerHTML = '';
+        encodeHistory.forEach((h, idx) => {
+            let tr = document.createElement('tr'); tr.className = 'history-row';
+            tr.innerHTML = `<td><b>Run #${h.id}</b><br><span style="color:#aaa; font-size:0.9em">${h.setStr}</span></td><td>${h.lookStr}</td><td style="color:#bbb; font-family:monospace">${h.msePre.toLocaleString('de-DE')}</td><td style="color:#ffeb3b; font-family:monospace">${h.msePost.toLocaleString('de-DE')}</td><td style="color:#ff9800; font-family:monospace">${h.maxErr.toLocaleString('de-DE')}</td><td><button class="btn btn-play" onclick="playHistory(${idx}, 'raw')">▶ Raw</button> <button class="btn btn-play-filtered" onclick="playHistory(${idx}, 'filt')">▶ Filt</button> <button class="btn btn-save" onclick="saveHistory(${idx})">💾</button></td>`;
+            tbody.appendChild(tr);
+        });
+    }
+
+    function playHistory(idx, mode) { 
+        let h = encodeHistory[idx]; 
+        fpgaL_raw = h.lRaw; fpgaR_raw = h.rRaw; 
+        streamAudio(mode === 'raw' ? 'fpga_raw' : 'fpga_filt', false); 
+    }
+    
+    function saveHistory(idx) {
+        let h = encodeHistory[idx]; 
+        let safeSet = h.setStr.replace(/[\/\\]/g, '_').replace(/[: ]/g, ''); 
+        let blob = new Blob([h.adpxFile], {type: "application/octet-stream"});
+        let url = window.URL.createObjectURL(blob); 
+        let a = document.createElement("a"); a.href = url; 
+        a.download = `${originalFileName}_Run${h.id}_${safeSet}.adpx`; 
+        document.body.appendChild(a); a.click(); document.body.removeChild(a); window.URL.revokeObjectURL(url);
+    }
+
+    function clip(v) { return v > 32767 ? 32767 : (v < -32768 ? -32768 : v); }
+    
+    function filterBufferLive(inputFloatArray, filterIdx) {
+        if (filterIdx < 0) return inputFloatArray;
+        let out = new Float32Array(inputFloatArray.length);
+        let st = { actual:0, prev1:0, prev2:0, prev3:0, prev4:0, prev5:0, prev6:0, y_prev1:0, y_prev2:0 };
+        
+        let isFIR = filterIdx <= 9;
+        let c = isFIR ? fir_coeffs[filterIdx] : [];
+        let b0 = 0, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
+        if (!isFIR) {
+            let idx = filterIdx - 10;
+            b0 = iir_coeffs_f[idx][0]; b1 = iir_coeffs_f[idx][1]; b2 = iir_coeffs_f[idx][2];
+            a1 = iir_coeffs_f[idx][3]; a2 = iir_coeffs_f[idx][4];
+        }
+
+        for (let i = 0; i < inputFloatArray.length; i++) {
+            let pcm = Math.round(inputFloatArray[i] * 32768.0);
+            st.prev6 = st.prev5; st.prev5 = st.prev4; st.prev4 = st.prev3; st.prev3 = st.prev2; st.prev2 = st.prev1; st.prev1 = st.actual; st.actual = pcm;
+            
+            if (isFIR) {
+                let p = 0;
+                if (filterIdx === 0) p = (st.actual+st.prev2)*c[0]+st.prev1*c[1];
+                else if (filterIdx === 1) p = (st.actual+st.prev2)*c[0]+st.prev1*c[1];
+                else if (filterIdx === 2) p = (st.actual+st.prev2)*c[0]+st.prev1*c[1];
+                else if (filterIdx === 3) p = (st.actual+st.prev2)*c[0]+st.prev1*c[1];
+                else if (filterIdx === 4) p = (st.actual+st.prev2)*c[0]+st.prev1*c[1];
+                else if (filterIdx === 5) p = (st.actual+st.prev6)*c[3]+(st.prev1+st.prev5)*c[2]+(st.prev2+st.prev4)*c[1]+st.prev3*c[0];
+                else if (filterIdx === 6) p = (st.actual+st.prev6)*c[3]+(st.prev1+st.prev5)*c[2]+(st.prev2+st.prev4)*c[1]+st.prev3*c[0];
+                else if (filterIdx === 7) p = (st.actual+st.prev6)*c[3]+(st.prev1+st.prev5)*c[2]+(st.prev2+st.prev4)*c[1]+st.prev3*c[0];
+                else if (filterIdx === 8) p = (st.actual+st.prev6)*c[3]+(st.prev1+st.prev5)*c[2]+(st.prev2+st.prev4)*c[1]+st.prev3*c[0];
+                else if (filterIdx === 9) p = (st.actual+st.prev6)*c[3]+(st.prev1+st.prev5)*c[2]+(st.prev2+st.prev4)*c[1]+st.prev3*c[0];
+                out[i] = clip(Math.trunc(p)) / 32768.0;
+            } else {
+                let yM = b0 * st.actual + b1 * st.prev1 + b2 * st.prev2 - a1 * st.y_prev1 - a2 * st.y_prev2;
+                let out_clamped = clip(Math.trunc(yM));
+                st.y_prev2 = st.y_prev1; st.y_prev1 = out_clamped; 
+                out[i] = out_clamped / 32768.0;
+            }
+        }
+        return out;
+    }
+
+    function liveUpdateFilterIfPlaying() {
+        if (lastPlayedType === 'fpga_filt') {
+            streamAudio('fpga_filt', true); 
+        }
+    }
+
+    function streamAudio(type, keepPosition = false) {
+        if (audioContext && audioContext.state === 'suspended') { audioContext.resume(); }
+        
+        let offset = 0;
+        if (keepPosition && liveSource) {
+            offset = audioContext.currentTime - playbackStartTime;
+        }
+
+        lastPlayedType = type;
+        if (liveSource) { liveSource.onended = null; liveSource.stop(); } 
+        if (originalL.length === 0) return;
+        
+        let srcL, srcR;
+        if (type === 'original') { srcL = originalL; srcR = originalR; }
+        else if (type === 'fpga_raw') { srcL = fpgaL_raw; srcR = fpgaR_raw; }
+        else { 
+            let fIdx = parseInt(document.getElementById('cfg-filter').value);
+            srcL = filterBufferLive(fpgaL_raw, fIdx); 
+            srcR = channels > 1 ? filterBufferLive(fpgaR_raw, fIdx) : new Float32Array(0); 
+        }
+
+        let buffer = audioContext.createBuffer(channels, srcL.length, sampleRate); 
+        buffer.getChannelData(0).set(srcL); 
+        if(channels > 1) buffer.getChannelData(1).set(srcR);
+        
+        let rawSrcL = (type === 'original') ? originalL : fpgaL_raw;
+        let rawSrcR = (type === 'original') ? originalR : fpgaR_raw;
+        let preBuffer = audioContext.createBuffer(channels, rawSrcL.length, sampleRate);
+        preBuffer.getChannelData(0).set(rawSrcL);
+        if(channels > 1) preBuffer.getChannelData(1).set(rawSrcR);
+
+        if (offset >= buffer.duration) { offset = 0; }
+        
+        liveSource = audioContext.createBufferSource(); 
+        liveSource.buffer = buffer; 
+        liveSource.connect(analyserNode); 
+        analyserNode.connect(audioContext.destination); 
+
+        let preSource = audioContext.createBufferSource();
+        preSource.buffer = preBuffer;
+        let muteNode = audioContext.createGain();
+        muteNode.gain.value = 0; 
+        preSource.connect(preAnalyzerNode);
+        preAnalyzerNode.connect(muteNode);
+        muteNode.connect(audioContext.destination);
+        
+        if (!animationId) drawAnalyzer(); 
+
+        playbackStartTime = audioContext.currentTime - offset;
+
+        liveSource.onended = function() { 
+            lastPlayedType = null; 
+            cancelAnimationFrame(animationId); animationId = null;
+            updateFilterCanvas(); 
+        };
+        
+        liveSource.start(0, offset);
+        preSource.start(0, offset);
+    }
+    
+    function stopAudio() { 
+        lastPlayedType = null; 
+        if (liveSource) { liveSource.onended = null; liveSource.stop(); } 
+        if (animationId) { cancelAnimationFrame(animationId); animationId = null; updateFilterCanvas(); }
+    }
+</script>
+</body>
+</html>

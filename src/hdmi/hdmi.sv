@@ -60,7 +60,9 @@ module hdmi
 `else
    // These outputs go to your HDMI port
     output logic [2:0] tmds,
-    output logic tmds_clock
+    output logic tmds_clock,
+    output logic [10:0] cx_out,
+    output logic [9:0]  cy_out
 `endif    
 );
 
@@ -109,6 +111,10 @@ assign invert = 2'b11;
 
 reg [10:0] cx;
 reg [9:0] cy;
+`ifndef TANG_MEGA_138K
+assign cx_out = cx;
+assign cy_out = cy;
+`endif
 
 always_comb begin
     hsync <= invert[0] ^ (cx >= screen_width + hsync_pulse_start && cx < screen_width + hsync_pulse_start + hsync_pulse_size);

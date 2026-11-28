@@ -64,17 +64,7 @@ module adpcm_decoder_shared (
                      (p1_bps == 3'd4) ? {1'b0, p1_code[2:0]} : p1_code[3:0];
 
     // Hardware DSP multiplier for exact delta: delta = (p1_step * ((mag << 1) | 1)) >> sh
-    wire [35:0] mult_out;
-    MULT18X18 adpcm_mult (
-        .DOUT(mult_out), .SOA(), .SOB(),
-        .A({2'b00, p1_step}),
-        .B({13'd0, mag, 1'b1}),
-        .SIA(18'd0), .SIB(18'd0), .ASEL(1'b0), .BSEL(1'b0),
-        .ASIGN(1'b0), .BSIGN(1'b0), .CLK(clk), .CE(1'b1), .RESET(1'b0)
-    );
-    defparam adpcm_mult.AREG = 1'b0;
-    defparam adpcm_mult.BREG = 1'b0;
-    defparam adpcm_mult.OUT_REG = 1'b0;
+    wire [35:0] mult_out = {2'b00, p1_step} * {13'd0, mag, 1'b1};
 
     wire [16:0] delta = mult_out[20:0] >> sh;
 

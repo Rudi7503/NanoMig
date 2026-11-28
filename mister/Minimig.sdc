@@ -57,6 +57,11 @@ set_false_path -from {*chipdma_arb*dma_ddr_u_r*}    -to {*ddram_ctrl*}
 # cycle and reports -3.7 ns slack.
 set_false_path -from {*chipdma_arb*dma_ddr_cs_r*}   -to {*ddram_ctrl*dmaCS_sync*}
 set_false_path -from {*ddram_ctrl*dmaACK_r*}        -to {*chipdma_arb*ddr_in_ack_sync*}
+set_false_path -from {*audio_dma_master*ddr_addr*} -to {*ddram_ctrl*}
+set_false_path -from {*audio_dma_master*ddr_cs*}   -to {*ddram_ctrl*dmaCS_sync*}
+set_false_path -from {*ddram_ctrl*dmaACK_r*}        -to {*audio_dma_master*ddr_ack_s*}
+set_multicycle_path -from {emu|audio_dma_master|*} -to {emu|ram1|*} -setup 2
+set_multicycle_path -from {emu|audio_dma_master|*} -to {emu|ram1|*} -hold 1
 
 # Audio extension stereo mailbox. Only the first synchronizer stage is
 # asynchronous; keep stage-to-stage timing. Payload is held until the return

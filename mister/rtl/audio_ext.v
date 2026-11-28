@@ -13,19 +13,28 @@ module audio_ext #(
     input wire [1:0] reg_be,
     input wire [15:0] reg_wdata,
     output reg [15:0] reg_rdata,
+    input wire irq_cs,
+    input wire [1:0] irq_addr,
     output wire irq,
     output wire dma_req,
     output wire [31:0] dma_addr,
     input wire dma_ack,
     input wire [15:0] dma_data,
     input wire dma_error,
-    output reg signed [15:0] sample_l, sample_r
+    output reg signed [20:0] sample_l, sample_r
 );
 
     wire [9:0] address = {reg_addr, 1'b0};
     wire [4:0] ch  = address[9:5]; // 32 channels (0..31), 32 bytes each
     wire [3:0] off = address[4:1]; // 16 words per channel
-    wire is_ch31 = (ch == 5'd31);
+    wire irq_active = (irq_cs === 1'b1);
+    reg irq_bus_held;
+    reg [1:0] irq_bus_last;
+    wire irq_write_once = irq_active && reg_wr && (!irq_bus_held || irq_addr != irq_bus_last);
+    always @(posedge clk) begin
+        if (reset) begin irq_bus_held <= 0; irq_bus_last <= 0; end
+        else begin irq_bus_held <= irq_active && reg_wr; irq_bus_last <= irq_addr; end
+    end
 
     reg bus_held;
     reg [9:1] bus_last;
@@ -72,7 +81,7 @@ module audio_ext #(
     end
 
     // Configuration registers (32-bit pointer & 32-bit length on MiSTer)
-    reg [7:0]  cfg_ptr_hi [0:NUM_VOICES-1];
+    reg [15:0] cfg_ptr_hi [0:NUM_VOICES-1];
     reg [15:0] cfg_ptr_lo [0:NUM_VOICES-1];
     reg [15:0] cfg_len_hi [0:NUM_VOICES-1];
     reg [15:0] cfg_len_lo [0:NUM_VOICES-1];
@@ -85,16 +94,19 @@ module audio_ext #(
     always @(posedge clk) begin
         if (reset) begin
             voice_irq_en <= {NUM_VOICES{1'b0}};
-        end else if (write_once) begin
-            case (off)
-                4'd0: cfg_ptr_hi[ch] <= reg_wdata[7:0];
-                4'd1: cfg_ptr_lo[ch] <= reg_wdata;
-                4'd2: cfg_len_hi[ch] <= reg_wdata;
-                4'd3: cfg_len_lo[ch] <= reg_wdata;
-                // Channel 31 Global Interrupt Enable (32-bit across words 12 and 13)
-                4'd12: if (is_ch31) voice_irq_en[31:16] <= reg_wdata; // $DFF7F8: INTENA HI
-                4'd13: if (is_ch31) voice_irq_en[15:0]  <= reg_wdata; // $DFF7FA: INTENA LO
-            endcase
+        end else begin
+            if (write_once) begin
+                case (off)
+                    4'd0: cfg_ptr_hi[ch] <= reg_wdata;
+                    4'd1: cfg_ptr_lo[ch] <= reg_wdata;
+                    4'd2: cfg_len_hi[ch] <= reg_wdata;
+                    4'd3: cfg_len_lo[ch] <= reg_wdata;
+                endcase
+            end
+            if (irq_write_once) begin
+                if (irq_addr == 2'd0) voice_irq_en[31:16] <= reg_wdata;
+                if (irq_addr == 2'd1) voice_irq_en[15:0]  <= reg_wdata;
+            end
         end
     end
 
@@ -102,10 +114,10 @@ module audio_ext #(
     reg [1:0] voice_state [0:NUM_VOICES-1];
     reg [NUM_VOICES-1:0] dma_need_init, tdm_need_init;
 
-    wire cmd_we = write_once && (off == 4'd13) && !is_ch31 && reg_be[0];
+    wire cmd_we = write_once && (off == 4'd13) && reg_be[0];
 
     // Runtime DMA voice state (23-bit word pointer, 32-bit length)
-    reg [22:0] ram_ptr   [0:NUM_VOICES-1];
+    reg [30:0] ram_ptr   [0:NUM_VOICES-1];
     reg [31:0] ram_len   [0:NUM_VOICES-1];
     reg [5:0]  ram_wrptr [0:NUM_VOICES-1];
     reg [5:0]  ram_rdptr [0:NUM_VOICES-1];
@@ -115,13 +127,13 @@ module audio_ext #(
     reg dma_active;
     assign dma_req = dma_active;
 
-    wire [23:0] dma_ptr   = {ram_ptr[dma_voice], 1'b0};
+    wire [31:0] dma_ptr   = {ram_ptr[dma_voice], 1'b0};
     wire [31:0] dma_len   = ram_len[dma_voice];
     wire [5:0]  dma_wrptr = ram_wrptr[dma_voice];
-    assign dma_addr = {8'd0, dma_ptr};
+    assign dma_addr = dma_ptr;
 
     wire dma_push = dma_active && dma_ack;
-    wire [22:0] next_dma_ptr = ram_ptr[dma_voice] + 1'b1;
+    wire [30:0] next_dma_ptr = ram_ptr[dma_voice] + 1'b1;
     wire [31:0] next_dma_len = (|dma_len[31:1]) ? dma_len - 32'd2 : 32'd0;
 
     // FIFO RAM: 2048x16 -> 64 words per voice for 32 voices
@@ -197,11 +209,12 @@ module audio_ext #(
     reg [31:0] dout_timer_bc;
     reg [31:0] dout_res;
 
-    wire signed [15:0] cur_pcm  = dout_pcm_idx[31:16];
-    wire [6:0]         cur_idx  = dout_pcm_idx[15:9];
+    wire signed [15:0] cur_pcm   = dout_pcm_idx[15:0];
+    wire signed [15:0] cur_pcm_r = dout_pcm_idx[31:16];
+    wire [6:0]         cur_idx   = dout_timer_bc[9:3];
     wire [15:0]        v_timer  = dout_timer_bc[31:16];
-    wire [4:0]         v_bc     = dout_timer_bc[15:11];
-    wire [23:0]        v_res    = dout_res[31:8];
+    wire [5:0]         v_bc     = dout_timer_bc[15:10];
+    wire [31:0]        v_res    = dout_res;
 
     wire        v_act    = voice_state[cur_voice][1]; // PREFILL (2'b10) or PLAYING (2'b11)
     wire        v_pref   = (voice_state[cur_voice] == 2'b10);
@@ -219,26 +232,32 @@ module audio_ext #(
     wire [15:0] timer_diff = v_timer - tick_step;
 
     wire do_decode = v_act && !v_pref && v_timer_exp && (v_bc >= v_frame_bits);
-    wire do_refill = v_act && (v_bc <= 8) && (|tdm_fifo_fill) && !do_decode;
+    wire do_refill = v_act && (v_bc <= 6'd16) && (v_bc < v_frame_bits) && (|tdm_fifo_fill) && !do_decode;
 
     wire [15:0] be_fifo = {fifo_dout[7:0], fifo_dout[15:8]};
     // FIFO data is a little-endian bit reservoir; retain only valid residual bits.
-    wire [23:0] residual_mask = 24'hffffff >> (24 - v_bc);
-    wire [23:0] next_res_fill = (v_res & residual_mask) | ({8'd0, be_fifo} << v_bc);
+    wire [31:0] residual_mask = (v_bc == 6'd0) ? 32'd0 : (32'hffffffff >> (32 - v_bc));
+    wire [31:0] next_res_fill = (v_res & residual_mask) | ({16'd0, be_fifo} << v_bc);
 
-    reg [23:0] next_res_consume;
+    reg [31:0] next_res_consume;
     always @* begin
         case (v_frame_bits)
-            6'd2:    next_res_consume = {2'd0,  v_res[23:2]};
-            6'd4:    next_res_consume = {4'd0,  v_res[23:4]};
-            6'd5:    next_res_consume = {5'd0,  v_res[23:5]};
-            6'd8:    next_res_consume = {8'd0,  v_res[23:8]};
-            6'd16:   next_res_consume = {16'd0, v_res[23:16]};
-            default: next_res_consume = 24'd0;
+            6'd2:    next_res_consume = {2'd0,  v_res[31:2]};
+            6'd4:    next_res_consume = {4'd0,  v_res[31:4]};
+            6'd5:    next_res_consume = {5'd0,  v_res[31:5]};
+            6'd8:    next_res_consume = {8'd0,  v_res[31:8]};
+            6'd16:   next_res_consume = {16'd0, v_res[31:16]};
+            6'd32:   next_res_consume = 32'd0;
+            default: next_res_consume = 32'd0;
         endcase
     end
 
+    // Interleaved stereo: the lower word of the frame is left, the upper is
+    // right. Mono takes the lower word and mirrors it.
     wire signed [15:0] next_pcm_l = v_ctrl[0] ? {v_res[7:0], v_res[15:8]} : {v_res[7:0], 8'd0};
+    wire signed [15:0] next_pcm_r = !v_stereo ? next_pcm_l :
+                                    v_ctrl[0] ? {v_res[23:16], v_res[31:24]} :
+                                                {v_res[15:8], 8'd0};
 
     // Shared Stateless ADPCM Decoder Core
     wire signed [15:0] dec_out_pcm;
@@ -259,6 +278,9 @@ module audio_ext #(
     wire signed [15:0] new_pcm = (do_decode && v_adpcm) ? dec_out_pcm :
                                  (do_decode)            ? next_pcm_l :
                                  cur_pcm;
+    wire signed [15:0] new_pcm_r = (do_decode && v_adpcm) ? dec_out_pcm :
+                                   (do_decode)            ? next_pcm_r :
+                                   cur_pcm_r;
     wire [6:0] new_idx = (do_decode && v_adpcm) ? dec_out_idx :
                          (do_decode)            ? 7'd0 :
                          cur_idx;
@@ -268,24 +290,33 @@ module audio_ext #(
         (v_pref && (tdm_fifo_fill[5] || v_cur_len == 0)) ? v_per :
         v_timer;
 
-    wire [4:0] next_bc = tdm_need_init[cur_voice] ? 5'd0 :
-        do_refill ? {1'b1, v_bc[3:0]} :
-        do_decode ? (v_bc - v_frame_bits[4:0]) :
+    // 6 Bit, damit auch ein 32-Bit-Frame (16-Bit-Stereo, interleaved L/R)
+    // abgezaehlt werden kann: 5 Bit liefen bis 31 und erreichten nie 32.
+    wire [5:0] next_bc = tdm_need_init[cur_voice] ? 6'd0 :
+        do_refill ? (v_bc + 6'd16) :
+        do_decode ? (v_bc - v_frame_bits) :
         v_bc;
 
-    wire [23:0] next_res_val = tdm_need_init[cur_voice] ? 24'd0 :
+    wire [31:0] next_res_val = tdm_need_init[cur_voice] ? 32'd0 :
         do_refill ? next_res_fill :
         do_decode ? next_res_consume :
         v_res;
 
-    wire [22:0] next_pcm_idx_val = tdm_need_init[cur_voice] ?
-        {v_pred0, v_init_idx} :
-        {new_pcm, new_idx};
+    reg [NUM_VOICES-1:0] tdm_loop_restart;
+    // sdpb_pcm_idx haelt jetzt beide Kanaele; der ADPCM-Index ist nach
+    // sdpb_timer_bc umgezogen, wo nach Timer (16) und bc (6) sieben Bit frei sind.
+    wire [31:0] next_pcm_idx_val =
+        (tdm_need_init[cur_voice] && !(tdm_loop_restart[cur_voice] && !v_adpcm))
+            ? (v_adpcm ? {v_pred0, v_pred0} : 32'd0)
+            : {new_pcm_r, new_pcm};
+    wire [6:0] next_idx_val = (tdm_need_init[cur_voice] && !(tdm_loop_restart[cur_voice] && !v_adpcm))
+            ? (v_adpcm ? v_init_idx : 7'd0)
+            : new_idx;
 
     always @(posedge clk) begin
-        sdpb_pcm_idx[cur_voice]  <= {next_pcm_idx_val, 9'd0};
-        sdpb_timer_bc[cur_voice] <= {next_timer, next_bc, 11'd0};
-        sdpb_res[cur_voice]      <= {next_res_val, 8'd0};
+        sdpb_pcm_idx[cur_voice]  <= next_pcm_idx_val;
+        sdpb_timer_bc[cur_voice] <= {next_timer, next_bc, next_idx_val, 3'd0};
+        sdpb_res[cur_voice]      <= next_res_val;
         dout_pcm_idx  <= sdpb_pcm_idx[cur_voice_next];
         dout_timer_bc <= sdpb_timer_bc[cur_voice_next];
         dout_res      <= sdpb_res[cur_voice_next];
@@ -295,9 +326,10 @@ module audio_ext #(
     always @(posedge clk) begin
         if (reset) begin
             tdm_need_init <= {NUM_VOICES{1'b0}};
+            tdm_loop_restart <= 0;
         end else begin
-            if (cmd_we && reg_wdata[0]) tdm_need_init[ch] <= 1'b1;
-            if (loop_reload) tdm_need_init[cur_voice] <= 1'b1;
+            if (cmd_we && reg_wdata[0]) begin tdm_need_init[ch] <= 1'b1;tdm_loop_restart[ch]<=1'b0;end
+            if (loop_reload) begin tdm_need_init[cur_voice] <= 1'b1;tdm_loop_restart[cur_voice]<=1'b1;end
             if (tdm_need_init[cur_voice]) begin
                 tdm_need_init[cur_voice] <= 1'b0;
                 ram_rdptr[cur_voice] <= 6'd0;
@@ -308,26 +340,43 @@ module audio_ext #(
     end
 
     // Channel Chaining & Cascade Logic (Pre/Post-Filter across all 32 channels)
-    reg signed [15:0] prev_pre_sample;
-    reg signed [15:0] prev_post_sample;
+    // Linker und rechter Kanal werden getrennt gefuehrt. Vorher gab es nur ein
+    // Registerpaar, und der rechte Kanal uebernahm den linken Wert der
+    // Vorgaengerin - eine verkettete Stimme war damit mono.
+    //
+    // Ringschluss ist gewollt: cur_voice laeuft 0..31 und springt zurueck,
+    // bei Stimme 0 steht in prev_post_* der Ausgang von Stimme 31. Wer alle
+    // 32 Stimmen verkettet, baut deshalb einen geschlossenen Kreis mit
+    // 32 x 12 dB/Oktave und einer Sampleperiode Verzoegerung je Stufe. Das
+    // ist ein Rueckkopplungsfilter (Kammfilter/Resonator) und kann schwingen;
+    // der Soft-Clipper begrenzt es auf Vollaussteuerung. Fuer eine offene
+    // Kaskade muss Stimme 0 auf v_input_src = 00 stehen.
+    reg signed [15:0] prev_pre_l, prev_pre_r;
+    reg signed [15:0] prev_post_l, prev_post_r;
     reg prev_decode_reg;
 
     always @(posedge clk) begin
         if (reset) begin
-            prev_pre_sample  <= 16'd0;
-            prev_post_sample <= 16'd0;
+            prev_pre_l       <= 16'd0;
+            prev_pre_r       <= 16'd0;
+            prev_post_l      <= 16'd0;
+            prev_post_r      <= 16'd0;
             prev_decode_reg  <= 1'b0;
         end else begin
-            prev_pre_sample  <= in_pcm_src_l;
-            prev_post_sample <= biquad_pcm_l;
+            prev_pre_l       <= in_pcm_src_l;
+            prev_pre_r       <= in_pcm_src_r;
+            prev_post_l      <= biquad_pcm_l;
+            prev_post_r      <= biquad_pcm_r;
             prev_decode_reg  <= (v_input_src != 2'b00) ? prev_decode_reg : do_decode;
         end
     end
 
-    wire signed [15:0] in_pcm_src_l = (v_input_src == 2'b01) ? prev_pre_sample :
-                                      (v_input_src == 2'b10) ? prev_post_sample :
+    wire signed [15:0] in_pcm_src_l = (v_input_src == 2'b01) ? prev_pre_l :
+                                      (v_input_src == 2'b10) ? prev_post_l :
                                       new_pcm;
-    wire signed [15:0] in_pcm_src_r = (v_input_src != 2'b00) ? in_pcm_src_l : new_pcm;
+    wire signed [15:0] in_pcm_src_r = (v_input_src == 2'b01) ? prev_pre_r :
+                                      (v_input_src == 2'b10) ? prev_post_r :
+                                      new_pcm_r;
 
     wire biquad_strobe = (v_input_src != 2'b00) ? prev_decode_reg : do_decode;
 
@@ -342,17 +391,17 @@ module audio_ext #(
     biquad_iir_ringbuffer biquad_inst0 (
         .clk(clk),
         .reset(reset),
-        .reg_cs(biquad_cs && !ch[4]),
+        .reg_cs(biquad_cs),
         .reg_wr(reg_wr),
-        .reg_addr({ch[3:0], off[2:0]}),
+        .reg_addr({ch, off[2:0]}),
         .reg_be(reg_be),
         .reg_wdata(reg_wdata),
         .reg_rdata(biquad0_rdata),
-        .cur_voice(cur_voice[3:0]),
-        .filter_en_l(v_flt_l && !cur_voice[4]),
-        .filter_en_r(v_flt_r && !cur_voice[4]),
-        .is_stereo(v_stereo),
-        .req_strobe(biquad_strobe && !cur_voice[4]),
+        .cur_voice(cur_voice),
+        .filter_en_l(v_flt_l),   // DSP 0 rechnet nur den linken Kanal
+        .filter_en_r(1'b0),
+        .is_stereo(1'b0),
+        .req_strobe(biquad_strobe),
         .in_pcm_l(in_pcm_src_l),
         .in_pcm_r(in_pcm_src_r),
         .out_pcm_l(biquad0_pcm_l),
@@ -362,25 +411,28 @@ module audio_ext #(
     biquad_iir_ringbuffer biquad_inst1 (
         .clk(clk),
         .reset(reset),
-        .reg_cs(biquad_cs && ch[4]),
+        .reg_cs(biquad_cs),
         .reg_wr(reg_wr),
-        .reg_addr({ch[3:0], off[2:0]}),
+        .reg_addr({ch, off[2:0]}),
         .reg_be(reg_be),
         .reg_wdata(reg_wdata),
         .reg_rdata(biquad1_rdata),
-        .cur_voice(cur_voice[3:0]),
-        .filter_en_l(v_flt_l && cur_voice[4]),
-        .filter_en_r(v_flt_r && cur_voice[4]),
-        .is_stereo(v_stereo),
-        .req_strobe(biquad_strobe && cur_voice[4]),
+        .cur_voice(cur_voice),
+        .filter_en_l(1'b0),
+        .filter_en_r(v_flt_r),   // DSP 1 rechnet nur den rechten Kanal
+        .is_stereo(1'b0),
+        .req_strobe(biquad_strobe),
         .in_pcm_l(in_pcm_src_l),
         .in_pcm_r(in_pcm_src_r),
         .out_pcm_l(biquad1_pcm_l),
         .out_pcm_r(biquad1_pcm_r)
     );
 
-    wire signed [15:0] biquad_pcm_l = cur_voice[4] ? biquad1_pcm_l : biquad0_pcm_l;
-    wire signed [15:0] biquad_pcm_r = cur_voice[4] ? biquad1_pcm_r : biquad0_pcm_r;
+    // Aufteilung nach Kanal, nicht nach Stimmenhaelfte: jede Instanz bedient
+    // alle 32 Stimmen, aber nur eine Seite. Damit bleibt eine Kaskade
+    // ch0..ch31 innerhalb einer Instanz und damit in einer Sampleperiode.
+    wire signed [15:0] biquad_pcm_l = biquad0_pcm_l;
+    wire signed [15:0] biquad_pcm_r = biquad1_pcm_r;
     wire [15:0] biquad_rdata = ch[4] ? biquad1_rdata : biquad0_rdata;
 
     // DSP Stereo Mixer with AM / Tremolo & Ringmodulation
@@ -393,32 +445,54 @@ module audio_ext #(
         else prev_carrier_l <= mix_out_l;
     end
 
+    reg signed [15:0] prev_carrier_r;
+    always @(posedge clk) begin
+        if (reset) prev_carrier_r <= 16'd0;
+        else prev_carrier_r <= mix_out_r;
+    end
+
     wire is_mod = (v_mod_mode != 2'b00);
-    wire [7:0] mod_u8 = (prev_carrier_l[15:8] ^ 8'h80);
-    wire signed [8:0] mod_factor = (v_mod_mode == 2'b01) ? $signed({1'b0, mod_u8}) :
-                                   (v_mod_mode == 2'b10) ? $signed(prev_carrier_l[15:7]) :
-                                   $signed({1'b0, v_vol[15:8]});
+    wire [7:0] mod_u8_l = (prev_carrier_l[15:8] ^ 8'h80);
+    wire [7:0] mod_u8_r = (prev_carrier_r[15:8] ^ 8'h80);
+    wire signed [8:0] mod_factor_l = (v_mod_mode == 2'b01) ? $signed({1'b0, mod_u8_l}) :
+                                     (v_mod_mode == 2'b10) ? $signed(prev_carrier_l[15:7]) :
+                                     $signed({1'b0, v_vol[15:8]});
+    wire signed [8:0] mod_factor_r = (v_mod_mode == 2'b01) ? $signed({1'b0, mod_u8_r}) :
+                                     (v_mod_mode == 2'b10) ? $signed(prev_carrier_r[15:7]) :
+                                     $signed({1'b0, v_vol[7:0]});
 
     wire [7:0] raw_vol_l = v_mute_mix ? 8'd0 : v_vol[15:8];
     wire [7:0] raw_vol_r = v_mute_mix ? 8'd0 : v_vol[7:0];
-    wire signed [8:0] vol_factor_l = is_mod ? mod_factor : $signed({1'b0, raw_vol_l});
-    wire signed [8:0] vol_factor_r = is_mod ? mod_factor : $signed({1'b0, raw_vol_r});
+    // Stille entsteht ausschliesslich hier, nicht im Dekodierpfad: letztes
+    // PCM, ADPCM-Praediktor und Index bleiben unberuehrt. Traegt eine Stimme
+    // nichts bei, wird ihr Lautstaerkefaktor null - auch im Modulationsmodus,
+    // wo die Lautstaerke sonst durch den Modulationsfaktor ersetzt wird.
+    wire v_starved = v_act && !v_pref && !(|tdm_fifo_fill)
+                     && (v_bc < v_frame_bits) && (v_cur_len != 0);
+    wire v_silent  = !v_act || v_starved;
+    wire signed [8:0] vol_factor_l = v_silent ? 9'sd0 : (is_mod ? mod_factor_l : $signed({1'b0, raw_vol_l}));
+    wire signed [8:0] vol_factor_r = v_silent ? 9'sd0 : (is_mod ? mod_factor_r : $signed({1'b0, raw_vol_r}));
 
-    wire signed [24:0] mul_l = mix_out_l * vol_factor_l;
-    wire signed [24:0] mul_r = mix_out_r * vol_factor_r;
+    wire signed [24:0] mul_l = (|vol_factor_l) ? (mix_out_l * vol_factor_l) : 25'sd0;
+    wire signed [24:0] mul_r = (|vol_factor_r) ? (mix_out_r * vol_factor_r) : 25'sd0;
 
     // 21-Bit Master Accumulator for 32 Voices (5 bits headroom)
     reg signed [20:0] acc_l, acc_r;
 
     always @(posedge clk) begin
-        if (cur_voice == 0) begin
-            acc_l <= mul_l[23:8];
-            acc_r <= mul_r[23:8];
-            sample_l <= (!acc_l[20] && |acc_l[19:15]) ? 16'sh7FFF : (acc_l[20] && !(&acc_l[19:15])) ? 16'sh8000 : acc_l[15:0];
-            sample_r <= (!acc_r[20] && |acc_r[19:15]) ? 16'sh7FFF : (acc_r[20] && !(&acc_r[19:15])) ? 16'sh8000 : acc_r[15:0];
+        if (reset) begin
+            acc_l    <= 21'sd0;
+            acc_r    <= 21'sd0;
+            sample_l <= 21'sd0;
+            sample_r <= 21'sd0;
+        end else if (cur_voice == 0) begin
+            sample_l <= acc_l; // Latch stable 21-bit sum of all 32 voices
+            sample_r <= acc_r;
+            acc_l    <= $signed(mul_l[23:8]);
+            acc_r    <= $signed(mul_r[23:8]);
         end else begin
-            acc_l <= acc_l + mul_l[23:8];
-            acc_r <= acc_r + mul_r[23:8];
+            acc_l    <= acc_l + $signed(mul_l[23:8]);
+            acc_r    <= acc_r + $signed(mul_r[23:8]);
         end
     end
 
@@ -459,7 +533,7 @@ module audio_ext #(
     wire [15:0] next_del_val = cur_del_val - 1'b1;
 
     // Single write port to del_cnt (CPU write or TDM countdown decrement)
-    wire cpu_del_we   = write_once && (off == 4'd14) && !is_ch31;
+    wire cpu_del_we   = write_once && (off == 4'd14);
     wire wr_del_we    = cpu_del_we || del_active;
     wire [4:0] wr_del_addr  = cpu_del_we ? ch : cur_voice;
     wire [15:0] wr_del_data = cpu_del_we ? reg_wdata : next_del_val;
@@ -469,18 +543,29 @@ module audio_ext #(
     end
 
     // Synchronous write to DMA RAMs
+    integer rst_v;
     always @(posedge clk) begin
         if (reset) begin
             dma_need_init <= {NUM_VOICES{1'b0}};
+            for (rst_v = 0; rst_v < NUM_VOICES; rst_v = rst_v + 1) ram_wrptr[rst_v] <= 6'd0;
         end else begin
             if (cmd_we && reg_wdata[0] && !has_delay[ch]) dma_need_init[ch] <= 1'b1;
             if ((del_active && del_hits_one) || loop_reload) dma_need_init[cur_voice] <= 1'b1;
+            // Frueh nachladen: sobald der DMA alle Bytes geholt hat, beginnt er
+            // die Schleife neu zu fuellen, waehrend der FIFO noch Daten haelt.
+            // Vorher wurde erst bei leerem FIFO nachgeladen, was eine variable
+            // Haltephase mit dem letzten Sample erzeugte (Knacken am Loop).
+            if (v_act && !v_pref && (v_cur_len == 0) && !v_ctrl[1])
+                dma_need_init[cur_voice] <= 1'b1;
 
             if (dma_need_init[dma_voice]) begin
                 dma_need_init[dma_voice] <= 1'b0;
                 ram_ptr[dma_voice] <= {cfg_ptr_hi[dma_voice], cfg_ptr_lo[dma_voice][15:1]};
                 ram_len[dma_voice] <= {cfg_len_hi[dma_voice], cfg_len_lo[dma_voice]};
-                ram_wrptr[dma_voice] <= 6'd0;
+                // Zeiger nur zuruecksetzen, wenn dieser FIFO wirklich leer ist.
+                // Sonst wuerde das Nachladen die noch ungehoerten Woerter
+                // ueberschreiben statt sie anzuschliessen.
+                if (dma_fifo_fill == 6'd0 || voice_state[dma_voice] == 2'b10) ram_wrptr[dma_voice] <= 6'd0;
             end else if (dma_push) begin
                 ram_ptr[dma_voice] <= next_dma_ptr;
                 ram_len[dma_voice] <= next_dma_len;
@@ -507,7 +592,7 @@ module audio_ext #(
             end
 
             // CPU writes to delay register (single-driven write port)
-            if (write_once && (off == 4'd14) && !is_ch31) begin
+            if (write_once && (off == 4'd14)) begin
                 has_delay[ch] <= (reg_wdata != 16'd0);
             end
 
@@ -518,23 +603,34 @@ module audio_ext #(
                 end else if (reg_wdata[0]) begin
                     voice_state[ch] <= has_delay[ch] ? 2'b01 : 2'b10; // START -> DELAYING or PREFILL
                 end
-            end else if (write_once && is_ch31) begin
-                if (off == 4'd14) voice_pending[31:16] <= voice_pending[31:16] & ~reg_wdata; // W1C HI
-                if (off == 4'd15) voice_pending[15:0]  <= voice_pending[15:0]  & ~reg_wdata; // W1C LO
+            end
+
+            // Global Interrupt Request Clear (W1C at $DFF808 / $DFF80A)
+            if (irq_write_once) begin
+                if (irq_addr == 2'd2) voice_pending[31:16] <= voice_pending[31:16] & ~reg_wdata; // W1C HI
+                if (irq_addr == 2'd3) voice_pending[15:0]  <= voice_pending[15:0]  & ~reg_wdata; // W1C LO
             end
         end
     end
 
-    // Flat CPU Register Read Mux (32-Voice Option A: Global INTENA/INTREQ at Channel 31)
+    // Flat CPU Register Read Mux (Option A: Global INTENA/INTREQ at $DFF804..$DFF80A)
     always @* begin
-        case (off)
-            4'd12:   reg_rdata = is_ch31 ? voice_irq_en[31:16] : 16'd0;
-            4'd13:   reg_rdata = is_ch31 ? voice_irq_en[15:0]  : {13'd0, (voice_state[ch] == 2'b01), (voice_state[ch] == 2'b10), voice_state[ch][1]};
-            4'd14:   reg_rdata = is_ch31 ? voice_pending[31:16]: {15'd0, (voice_state[ch] == 2'b01)};
-            4'd15:   reg_rdata = is_ch31 ? voice_pending[15:0] : {15'd0, (voice_state[ch] == 2'b01)};
-            4'd8, 4'd9, 4'd10, 4'd11: reg_rdata = biquad_rdata;
-            default: reg_rdata = 16'd0;
-        endcase
+        if (irq_active) begin
+            case (irq_addr)
+                2'd0: reg_rdata = voice_irq_en[31:16];
+                2'd1: reg_rdata = voice_irq_en[15:0];
+                2'd2: reg_rdata = voice_pending[31:16];
+                2'd3: reg_rdata = voice_pending[15:0];
+            endcase
+        end else begin
+            case (off)
+                4'd8, 4'd9, 4'd10, 4'd11, 4'd12: reg_rdata = biquad_rdata;
+                4'd13: reg_rdata = {13'd0, (voice_state[ch] == 2'b01), (voice_state[ch] == 2'b10), voice_state[ch][1]};
+                4'd14: reg_rdata = {15'd0, (voice_state[ch] == 2'b01)};
+                4'd15: reg_rdata = {15'd0, (voice_state[ch] == 2'b01)};
+                default: reg_rdata = 16'd0;
+            endcase
+        end
     end
 
     assign irq = |(voice_pending & voice_irq_en);

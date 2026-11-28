@@ -1,0 +1,96 @@
+==============================================================================
+MiSTer FPGA / Minimig-AGA: 3-Stufen-Diagnosepaket fuer Core b3f17590
+==============================================================================
+Datum: 05.11.2026
+Ziel:  Saubere Trennung von Filterpfad, Capture-Auswertung und hoerbarer Ausgabe
+Core:  Minimig_b3f17590.rbf (bleibt unveraendert im MiSTer geladen!)
+       SHA-256: b3f175900a69ea2aa7fc11a19363ffa2733489830df5f074fc3f1a7adf802d27
+==============================================================================
+
+Hallo Toby und Tobys KI,
+
+vielen Dank fuer den praezisen Testbericht und den Screenshot!
+Dass der Interrupt-Sturm bei $DFF802 vollstaendig behoben ist, das Programm
+sauber bis zum Shell-Prompt 1 > durchlaeuft und die Capture-Hardware Block A
+erfolgreich fuellt, ist ein riesiger Meilenstein.
+
+Um die Ursache fuer "kein Ton" und "1024 von 1024 Samples ueber 70%" exakt zu
+isolieren, haben wir wie gewuenscht 3 gezielte Pruefschritte als eigenstaendige
+Programme bereitgestellt. Alle 3 Programme laufen direkt unter Kickstart 1.3
+und schreiben ausfuehrliche Diagnose in die AmigaDOS-Konsole:
+
+WICHTIGE NEUERUNG ZUR LAUTSTAERKE ($FFFF statt $8080):
+Im Register AUDxVOL steuert das High-Byte den linken und das Low-Byte den rechten
+Kanal ($8080 = Center mit 50% Pegel / -6 dB). Alle neuen Testprogramme setzen
+die Lautstaerke nun auf $FFFF (100% Vollaussteuerung links und rechts), wodurch
+das Signal doppelt so laut (+6 dB) ausgegeben wird.
+
+
+------------------------------------------------------------------------------
+SCHRITT 1: Hoerbare Ausgabe isolieren (Programm: "ton_test")
+------------------------------------------------------------------------------
+Datei:       ton_test (10.372 Bytes)
+SHA-256:     8a8141c5579bc5b6205858ed960362d54a91105b1aa4ded10ad0cd92f4324ed4
+
+Ablauf:
+- Startet ausschliesslich Stimme 0 mit 100% Lautstaerke ($FFFF) auf 200 Hz.
+- OHNE Filter, OHNE Kaskade, OHNE Hardware-Capture.
+- Laesst den Ton fuer 5 Sekunden laut ueber Boxen/HDMI toenen und stoppt dann.
+
+Prueffrage an Toby:
+- Hoerst du waehrend der 5 Sekunden einen kraeftigen 200-Hz-Ton?
+  -> Wenn JA: Chip-RAM Audio-DMA, Mischer und DAC/HDMI funktionieren perfekt!
+  -> Wenn NEIN: Problem liegt in der Mischer-Anbindung oder Lautstaerkeregelung.
+
+
+------------------------------------------------------------------------------
+SCHRITT 2: 1-Stufen-Filter & Capture isolieren (Programm: "filter1_test")
+------------------------------------------------------------------------------
+Datei:       filter1_test (11.100 Bytes)
+SHA-256:     793f65136493617ea267bc80158a35114e70058b1ac79736cc97ac31533b9dca
+
+Ablauf:
+- Stimme 0 mit aktivem 300-Hz-Biquad-Tiefpass und 100% Lautstaerke ($FFFF).
+- Keine Kaskade auf weitere Stimmen.
+- Zeichnet 1024 Samples in Block A ($DF8000) auf.
+- Gibt Spitzenwert, Min/Max und die ERSTEN 8 ROH-SAMPLES im Klartext aus!
+- Prueft, ob es ein Wechselsignal (AC) oder Gleichspannung (DC) ist.
+- Toent nach der Analyse noch 3 Sekunden weiter.
+
+Erwartung:
+- Spitzenwert ca. 8.000..8.700.
+- Rohdaten zeigen alternierende positive und negative Werte (z.B. +8000, -8000).
+- Sanfterer/gedaempfterer Ton als bei ton_test.
+
+
+------------------------------------------------------------------------------
+SCHRITT 3: 32-Stufen-Kaskade mit Rohdaten-Dump (Programm: "rechteck")
+------------------------------------------------------------------------------
+Datei:       rechteck (11.552 Bytes)
+SHA-256:     cac8762151bd8645cc473250b05834842c53ede73fb48b51503dc7e561f419a8
+
+Ablauf:
+- Vollstaendige Kaskade ueber alle 32 Stimmen mit 100% Lautstaerke auf Stimme 31.
+- Zeichnet Block A auf und gibt Min/Max sowie die ersten 8 Roh-Samples aus.
+- Meldet DC-Fehler, falls Min == Max (Gleichspannungs-Blockade).
+- Fals AC vorliegt: Prueft auf Sinusform (<75% ueber Schwelle).
+
+Auswertung:
+- Durch die Rohdaten-Ausgabe sehen wir sofort, welches Zahlenmuster im Puffer
+  anliegt (z.B. ob ein DC-Offset vorliegt oder ob das Signal schwingt).
+
+
+==============================================================================
+TESTDURCHFUEHRUNG:
+==============================================================================
+1. Bitte die 3 ausfuehrbaren Dateien (ton_test, filter1_test, rechteck) auf die
+   Amiga-ADF bzw. Workbench kopieren.
+2. In der AmigaDOS Shell nacheinander ausfuehren:
+     1> ton_test
+     1> filter1_test
+     1> rechteck
+3. Bitte die Konsolenausgabe (oder Foto/Screenshot) und die Hoerbeobachtung
+   (Ton gehoert: Ja/Nein) mitteilen.
+
+Vielen Dank!
+==============================================================================

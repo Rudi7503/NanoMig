@@ -8,7 +8,8 @@
 */
 
 module sysctrl #(
-  parameter AGA = 0
+  parameter AGA = 0,
+  parameter [27:0] RESET_TIMEOUT = 28'd84_000_000
 ) (
   input		    clk,
   input		    reset,
@@ -92,7 +93,7 @@ assign int_out_n = (int_in != 8'h00 || sys_int)?1'b0:1'b1;
 reg main_reset = 1'b1;
 assign system_reset = main_reset;
 
-reg [26:0] main_reset_timeout; // 84,000,000 cycles fits in 27 bits
+reg [27:0] main_reset_timeout; // 28-bit supports ~3s timeout up to 85+ MHz
 
 // include the menu rom derived from amiga.xml
 reg [11:0] menu_rom_addr;
@@ -114,6 +115,8 @@ reg [7:0] port_index;
 always @(posedge clk)
      menu_rom_data <= amiga_xml[menu_rom_addr];
 
+reg main_reset_timeout_nz = 1'b1;
+
 // process mouse events
 always @(posedge clk) begin
    if(reset) begin
@@ -123,7 +126,8 @@ always @(posedge clk) begin
 
       // stay in reset for about 3 seconds or until MCU releases reset
       main_reset <= 1'b1;
-      main_reset_timeout <= 27'd84_000_000;
+      main_reset_timeout <= RESET_TIMEOUT;
+      main_reset_timeout_nz <= 1'b1;
 
       buttons_irq_enable <= 1'b1;  // allow buttons irq
       int_ack <= 8'h00;
@@ -141,23 +145,23 @@ always @(posedge clk) begin
       // OSD value defaults. These should be sane defaults, but the MCU
       // will very likely override these early
       system_floppy_drives <= 2'd0;
-      system_floppy_turbo <= 1'b1;
+      system_floppy_turbo <= AGA ? 1'b1 : 1'b0;
       system_floppy_wrprot <= 1'b1;
-      system_cpu <= 2'b11;
-      system_chipset <= AGA ? 3'd6 : 3'd2;
-      system_video_mode <= 1'b0;
+      system_cpu <= AGA ? 2'b11 : 2'b00; // 68020 for AGA, 68000 for OCS
+      system_chipset <= AGA ? 3'd6 : 3'd0; // AGA (3'd6) or OCS-A500 (3'd0)
+      system_video_mode <= 1'b1; // 1 = NTSC 60Hz (PC-Monitor kompatibel)
       system_video_screen <= 2'd0;
       system_video_filter <= 2'd0;
       system_video_scanlines <= 2'd0;
-      system_chipmem <= AGA ? 2'd2 : 2'd0;
-      system_slowmem <= 2'd1;
-      system_fastmem <= 2'd0;
-      system_turbo <= 3'b011;
-      system_ide_enable <= 1'b0;
+      system_chipmem <= AGA ? 2'd3 : 2'd0; // 2MB Chip-RAM for AGA, 512k for OCS
+      system_slowmem <= AGA ? 2'd0 : 2'd1; // No slowmem for AGA, 512k for OCS
+      system_fastmem <= AGA ? 2'd3 : 2'd2; // 8 MB Fast-RAM for AGA (ENABLE_RAM32), 4 MB for OCS
+      system_turbo <= AGA ? 3'b111 : 3'b000; // Diagnostic test: enable turbodata=1 for AGA ROM checksum via PORT_2
+      system_ide_enable <= AGA ? 1'b1 : 1'b0; // IDE enabled for AGA
       system_joy_swap <= 1'b1;
       system_volume <= 3'b010;
 	  system_stereo_mix <= 1'b1;
-      system_kickstart <= 2'b01;
+      system_kickstart <= AGA ? 2'b01 : 2'b00; // 3.1 for AGA, 1.3 for OCS
 	  system_drive_sounds <= 1'b0;
    end
    else
@@ -167,10 +171,11 @@ always @(posedge clk) begin
       buttonsD2 <= buttonsD;
 
       // release main reset after timeout
-      if(main_reset_timeout) begin
-	 main_reset_timeout <= main_reset_timeout - 27'd1;
+      if(main_reset_timeout_nz) begin
+	 main_reset_timeout <= main_reset_timeout - 28'd1;
+	 main_reset_timeout_nz <= (main_reset_timeout > 28'd1);
 
-	 if(main_reset_timeout == 27'd1) begin
+	 if(main_reset_timeout == 28'd1) begin
 	    main_reset <= 1'b0;
 
 	    // BRG LED yellow if no MCU has responded
@@ -251,7 +256,7 @@ always @(posedge clk) begin
                    if(id == "R") begin
 		      main_reset <= data_in[0];
 		      // cancel out-timeout if MCU is active
-		      main_reset_timeout <= 27'd0;
+		      main_reset_timeout <= 28'd0;
 		   end
 
 		   // Value "D": 1(0) to 4(3) floppy drives
@@ -261,9 +266,10 @@ always @(posedge clk) begin
 		   // Value "P": write enabled(0) or write protected(1) floppy
 		   if(id == "P") system_floppy_wrprot <= data_in[0];
 		   // Value "C": chipset OCS-A500(0), OCS-A1000(1), ECS(2) or AGA(3)
-		   if(id == "C") system_chipset <= (AGA && data_in[1:0] == 2'd3) ? 3'd6 : {1'b0, data_in[1:0]};
+		   // Locked for AGA builds so amiga.xml / saved .ini defaults cannot downgrade AGA/68020/TurboData
+		   if(id == "C" && !AGA) system_chipset <= {1'b0, data_in[1:0]};
 		   // Value "T": CPU 68000(0), 68010(1) or 68020(2)
-		   if(id == "T") system_cpu <= data_in[1:0] == 2'b10 ? 2'b11 : data_in[1:0];
+		   if(id == "T" && !AGA) system_cpu <= data_in[1:0] == 2'b10 ? 2'b11 : data_in[1:0];
 		   // Value "F": video filter none(0), h(1), v(2) or h+v(3)
 		   if(id == "F") system_video_filter <= data_in[1:0];
 		   // Value "V": PAL(0) or NTSC(1) video
@@ -272,16 +278,16 @@ always @(posedge clk) begin
 		   if(id == "W") system_video_screen <= data_in[1:0];
 		   // Value "L": Scanlines off(0) or on(1)
 		   if(id == "L") system_video_scanlines <= data_in[1:0];
-		   // Value "Y": Chipmem 512k(0), 1M(1), 1.5M(2) or 2M(2)
-		   if(id == "Y") system_chipmem <= data_in[1:0];
+		   // Value "Y": Chipmem 512k(0), 1M(1), 1.5M(2) or 2M(3)
+		   if(id == "Y" && !AGA) system_chipmem <= data_in[1:0];
 		   // Value "X": Slowmem none(0), 512k(1), 1M(2) or 1.5M(3)
-		   if(id == "X") system_slowmem <= data_in[1:0];
+		   if(id == "X" && !AGA) system_slowmem <= data_in[1:0];
 		   // Value "Q": Fastmem none(0), 2M(1), 4M(2) or 8M(3)
-		   if(id == "Q") system_fastmem <= data_in[1:0];
+		   if(id == "Q" && !AGA) system_fastmem <= data_in[1:0];
 		   // Value "Z": Turbo mode none(0), chip(1), turbo(2), both(3)
-		   if(id == "Z") system_turbo[1:0] <= data_in[1:0];
+		   if(id == "Z" && !AGA) system_turbo[1:0] <= data_in[1:0];
 		   // Value "U": Turbo data off(0), on(1)
-		   if(id == "U") system_turbo[2] <= data_in[0];
+		   if(id == "U" && !AGA) system_turbo[2] <= data_in[0];
 		   // Value "I": IDE disabled(0) or enabled(1)
 		   if(id == "I") system_ide_enable <= data_in[0];
 		   // value "J": Swap Joyst off(0) on(1)
@@ -291,7 +297,7 @@ always @(posedge clk) begin
 		   // value "M": Stereo Mix disabled(0) or enabled(1)
 		   if(id == "M") system_stereo_mix <= data_in[0];
            // Value "K": Kickstart 1.3(0), 3.1(1), 3.2(2)
-		   if(id == "K") system_kickstart <= data_in[1:0];
+		   if(id == "K" && !AGA) system_kickstart <= data_in[1:0];
            // Value "E": Drive Sounds disabled(0) or enabled(1)
 		   if(id == "E") system_drive_sounds <= data_in[0];
 		   // value "B": lcd vertical position (used in lcd variant, only)
