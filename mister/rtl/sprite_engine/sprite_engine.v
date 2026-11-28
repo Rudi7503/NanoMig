@@ -291,6 +291,7 @@ module sprite_engine (
     reg [63:0] shreg_data;
     reg [6:0]  shreg_bits;
     reg [5:0]  dec_bw;
+    reg [5:0]  dec_bw_r;
     reg [31:0] dec_raw_code;
     reg        dec_in_valid;
     wire       scale_src_ack;
@@ -350,6 +351,7 @@ module sprite_engine (
             fifo_count   <= 4'd0;
             shreg_data   <= 64'd0;
             shreg_bits   <= 7'd0;
+            dec_bw_r     <= 6'd8;
             dec_raw_code <= 32'd0;
             dec_in_valid <= 1'b0;
         end else if (spr_start_line) begin
@@ -358,6 +360,7 @@ module sprite_engine (
             fifo_count   <= 4'd0;
             shreg_data   <= 64'd0;
             shreg_bits   <= 7'd0;
+            dec_bw_r     <= 6'd8;
             dec_raw_code <= 32'd0;
             dec_in_valid <= 1'b0;
         end else begin
@@ -393,6 +396,7 @@ module sprite_engine (
                         6'd32: dec_raw_code <= shreg_data[63:32];
                         default: dec_raw_code <= {24'd0, shreg_data[63:56]};
                     endcase
+                    dec_bw_r     <= dec_bw;
                     dec_in_valid <= 1'b1;
                     shreg_data   <= shreg_data << dec_bw;
                     shreg_bits   <= shreg_bits - {1'b0, dec_bw};
@@ -422,7 +426,7 @@ module sprite_engine (
         .in_valid   (dec_in_valid),
         .clr_acc    (spr_start_line),
         .fmt        (spr_fmt),
-        .bw         (dec_bw),
+        .bw         (dec_bw_r),
         .raw_code   (dec_raw_code),
         .pal_offset (8'h00),
         .desc_alpha (spr_alpha),

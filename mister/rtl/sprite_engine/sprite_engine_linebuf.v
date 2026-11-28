@@ -114,8 +114,10 @@ module sprite_engine_linebuf (
 
     // Ping-pong bank selection (entirely in clk_render!)
     // 0 = render buf 0, display buf 1; 1 = render buf 1, display buf 0
-    reg buf_sel;
-    assign render_ready = 1'b1;
+    reg        buf_sel;
+    reg        init_clearing;
+    reg [10:0] init_col;
+    assign render_ready = ~init_clearing;
 
     // ----------------------------------------------------------------
     // 8 x 32-Bit Flip-Flop Prefetch FIFO + Port B Clear-on-Read FSM
@@ -171,10 +173,18 @@ module sprite_engine_linebuf (
     always @(posedge clk_render or negedge rst_n) begin
         if (!rst_n) begin
             buf_sel         <= 1'b0;
+            init_clearing   <= 1'b1;
+            init_col        <= 11'd0;
             fifo_wr_ptr_85  <= 3'd0;
             prefetch_col    <= 11'd0;
             pb_phase        <= 1'b0;
             prefetch_active <= 1'b0;
+        end else if (init_clearing) begin
+            if (init_col == 11'd2047) begin
+                init_clearing <= 1'b0;
+            end else begin
+                init_col <= init_col + 11'd1;
+            end
         end else if (swap_edge_85) begin
             buf_sel         <= ~buf_sel;
             fifo_wr_ptr_85  <= 3'd0;
@@ -205,7 +215,8 @@ module sprite_engine_linebuf (
     wire        ram0_render_we   = (buf_sel == 1'b0) && wr_en;
     wire [10:0] ram0_render_addr = wr_en ? wr_x : rd_render_x;
     wire [31:0] ram0_render_d    = {wr_prio, wr_rgb};
-    wire        ram0_vid_we      = (buf_sel == 1'b1) && pb_clear_we;
+    wire        ram0_vid_we      = init_clearing || ((buf_sel == 1'b1) && pb_clear_we);
+    wire [10:0] pb_addr          = init_clearing ? init_col : prefetch_col;
 
     sprite_linebuf_dpram #(
         .DATA_WIDTH(32),
@@ -219,7 +230,7 @@ module sprite_engine_linebuf (
 
         .clk_b (clk_render),
         .we_b  (ram0_vid_we),
-        .addr_b(prefetch_col),
+        .addr_b(pb_addr),
         .data_b(32'h00000000),
         .q_b   (ram0_vid_q)
     );
@@ -230,7 +241,7 @@ module sprite_engine_linebuf (
     wire        ram1_render_we   = (buf_sel == 1'b1) && wr_en;
     wire [10:0] ram1_render_addr = wr_en ? wr_x : rd_render_x;
     wire [31:0] ram1_render_d    = {wr_prio, wr_rgb};
-    wire        ram1_vid_we      = (buf_sel == 1'b0) && pb_clear_we;
+    wire        ram1_vid_we      = init_clearing || ((buf_sel == 1'b0) && pb_clear_we);
 
     sprite_linebuf_dpram #(
         .DATA_WIDTH(32),
@@ -244,7 +255,7 @@ module sprite_engine_linebuf (
 
         .clk_b (clk_render),
         .we_b  (ram1_vid_we),
-        .addr_b(prefetch_col),
+        .addr_b(pb_addr),
         .data_b(32'h00000000),
         .q_b   (ram1_vid_q)
     );
