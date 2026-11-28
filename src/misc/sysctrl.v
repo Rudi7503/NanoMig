@@ -115,6 +115,8 @@ reg [7:0] port_index;
 always @(posedge clk)
      menu_rom_data <= amiga_xml[menu_rom_addr];
 
+reg main_reset_timeout_nz = 1'b1;
+
 // process mouse events
 always @(posedge clk) begin
    if(reset) begin
@@ -125,6 +127,7 @@ always @(posedge clk) begin
       // stay in reset for about 3 seconds or until MCU releases reset
       main_reset <= 1'b1;
       main_reset_timeout <= RESET_TIMEOUT;
+      main_reset_timeout_nz <= 1'b1;
 
       buttons_irq_enable <= 1'b1;  // allow buttons irq
       int_ack <= 8'h00;
@@ -168,8 +171,9 @@ always @(posedge clk) begin
       buttonsD2 <= buttonsD;
 
       // release main reset after timeout
-      if(main_reset_timeout) begin
+      if(main_reset_timeout_nz) begin
 	 main_reset_timeout <= main_reset_timeout - 28'd1;
+	 main_reset_timeout_nz <= (main_reset_timeout > 28'd1);
 
 	 if(main_reset_timeout == 28'd1) begin
 	    main_reset <= 1'b0;

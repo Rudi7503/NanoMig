@@ -54,32 +54,41 @@ wire ss_high   = ss_s[1];
 wire sclk_fall = (sclk_s[2:1] == 2'b10);
 
 // bit counter and MOSI shift register in clk_fast domain
-reg [2:0] spi_cnt     = 3'd0;
-reg [6:0] spi_sr_in   = 7'd0;
-reg [7:0] spi_target  = 8'd0;
-reg [7:0] spi_in_data = 8'd0;
-reg [3:0] spi_in_cnt  = 4'd0;
-reg       req_85      = 1'b0;
-reg       req_start   = 1'b0;
+reg [2:0] spi_cnt       = 3'd0;
+reg [6:0] spi_sr_in     = 7'd0;
+reg [7:0] spi_target    = 8'd0;
+reg [7:0] spi_in_data   = 8'd0;
+reg [3:0] spi_in_cnt    = 4'd0;
+reg       spi_cnt_is7   = 1'b0;
+reg       spi_in_nz     = 1'b0;
+reg       spi_target_is0 = 1'b0;
+reg       req_85        = 1'b0;
+reg       req_start     = 1'b0;
 
-wire byte_done = !ss_high && sclk_fall && (spi_cnt == 3'd7);
+wire byte_done = !ss_high && sclk_fall && spi_cnt_is7;
 
 always @(posedge clk_fast) begin
     if (ss_high) begin
-        spi_cnt    <= 3'd0;
-        spi_in_cnt <= 4'd0;
+        spi_cnt        <= 3'd0;
+        spi_in_cnt     <= 4'd0;
+        spi_cnt_is7    <= 1'b0;
+        spi_in_nz      <= 1'b0;
+        spi_target_is0 <= 1'b0;
     end else if (sclk_fall) begin
-        spi_cnt   <= spi_cnt + 3'd1;
-        spi_sr_in <= { spi_sr_in[5:0], din_s[1] };
+        spi_cnt     <= spi_cnt + 3'd1;
+        spi_cnt_is7 <= (spi_cnt == 3'd6);
+        spi_sr_in   <= { spi_sr_in[5:0], din_s[1] };
 
-        if (spi_cnt == 3'd7) begin
-            if (spi_in_cnt == 4'd0) begin
-                spi_target <= { spi_sr_in, din_s[1] };
+        if (spi_cnt_is7) begin
+            if (!spi_in_nz) begin
+                spi_target     <= { spi_sr_in, din_s[1] };
+                spi_target_is0 <= ({ spi_sr_in, din_s[1] } == 8'd0);
             end else begin
                 spi_in_data <= { spi_sr_in, din_s[1] };
                 req_start   <= (spi_in_cnt == 4'd1);
                 req_85      <= ~req_85;
             end
+            spi_in_nz <= 1'b1;
             if (spi_in_cnt != 4'd15)
                 spi_in_cnt <= spi_in_cnt + 4'd1;
         end
@@ -89,7 +98,7 @@ end
 // Zero-extra-latency clk_fast interface (for sysctrl):
 // Fires on the exact clk_fast edge where bit 7 completes, so sysctrl updates mcu_sys_din
 // on the very same edge that spi_cnt wraps 7->0 (saves 2 full clk_fast cycles = 23.4 ns!).
-assign mcu_sys_strobe = byte_done && (spi_in_cnt != 4'd0) && (spi_target == 8'd0);
+assign mcu_sys_strobe = byte_done && spi_in_nz && spi_target_is0;
 assign mcu_start_fast = (spi_in_cnt == 4'd1);
 assign mcu_dout_fast  = { spi_sr_in, din_s[1] };
 
