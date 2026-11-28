@@ -144,15 +144,15 @@ module sprite_engine (
     // Submodule 2: DMA Descriptor Scanner & DDR3 Burst Master
     // ----------------------------------------------------------------
     wire        sprite_active;
-    wire signed [11:0] spr_x;
+    wire signed [15:0] spr_x;
     wire [4:0]  spr_fmt;
     wire [7:0]  spr_prio;
     wire [7:0]  spr_alpha;
     wire [1:0]  spr_blend_mode;
-    wire [7:0]  spr_x_scale;
+    wire [8:0]  spr_x_scale;
     wire        spr_smooth;
     wire        spr_h_flip;
-    wire [10:0] spr_w_px;
+    wire [14:0] spr_w_px;
     wire        spr_start_line;
 
     wire [63:0] stream_word64;
