@@ -683,7 +683,7 @@ assign spr_mem_read         = 1'b0;
 	.line_swap_pulse (sol),
 	.scanline_y      ({1'b0, vpos}),
 	.vid_x           (11'd0),
-	.vid_read_en     (1'b1),
+	.vid_read_en     (~hblank),
 	.clip_xmax       (11'd2047),
 
 	// Denise Native Video Tap
@@ -691,7 +691,7 @@ assign spr_mem_read         = 1'b0;
 	.sprsel_aligned  (denise_sprsel),
 	.pf_front_opaque (denise_pf_front),
 	.pf_any_opaque   (denise_pf_any),
-	.blank_n         (~(~_hsync | vblank)),
+	.blank_n         (~(hblank | vblank)),
 
 	// Avalon-MM DDR3 / SDRAM Memory Master Interface
 	.avm_address     (spr_mem_address),
