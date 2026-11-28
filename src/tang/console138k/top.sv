@@ -1079,8 +1079,20 @@ sdram #(
 
 `ifdef USE_SPR_ARB
 
+(* syn_preserve = 1 *) reg spr_ack_s1 = 1'b0;
+(* syn_preserve = 1 *) reg spr_ack_s2 = 1'b0;
+always @(posedge clk_28m) begin
+	if (!pll_lock) begin
+		spr_ack_s1 <= 1'b0;
+		spr_ack_s2 <= 1'b0;
+	end else begin
+		spr_ack_s1 <= spr_sd_ack;
+		spr_ack_s2 <= spr_ack_s1;
+	end
+end
+
 sprite_mem_adapter spr_adapter (
-	.clk                ( clk_85m ),
+	.clk                ( clk_28m ),
 	.rst_n              ( pll_lock ),
 
 	.avm_address        ( spr_mem_address       ),
@@ -1093,7 +1105,7 @@ sprite_mem_adapter spr_adapter (
 	.sd_cs              ( spr_sd_cs     ),
 	.sd_dout            ( spr_sd_dout   ),
 	.sd_dout48          ( spr_sd_dout48 ),
-	.sd_ack             ( spr_sd_ack    )
+	.sd_ack             ( spr_ack_s2    )
 );
 
 `else
@@ -1137,6 +1149,8 @@ reg        aud_req_s3      = 1'b0;
 reg        aud_pending_85  = 1'b0;
 (* syn_preserve = 1 *) reg fastram_sel_s1 = 1'b0;
 (* syn_preserve = 1 *) reg fastram_sel_s2 = 1'b0;
+(* syn_preserve = 1 *) reg spr_cs_s1      = 1'b0;
+(* syn_preserve = 1 *) reg spr_cs_s2      = 1'b0;
 reg [2:0]  p2_state        = P2_IDLE;
 reg [1:0]  p2_gap_cnt      = 2'd0;
 reg        p2_cs_85        = 1'b0;
@@ -1203,6 +1217,8 @@ always @(posedge clk_85m) begin
         aud_pending_85  <= 1'b0;
         fastram_sel_s1  <= 1'b0;
         fastram_sel_s2  <= 1'b0;
+        spr_cs_s1       <= 1'b0;
+        spr_cs_s2       <= 1'b0;
         p2_state        <= P2_IDLE;
         p2_gap_cnt      <= 2'd0;
         p2_cs_85        <= 1'b0;
@@ -1226,12 +1242,14 @@ always @(posedge clk_85m) begin
         aud_req_s3     <= aud_req_s2;
         fastram_sel_s1 <= fastram_sel;
         fastram_sel_s2 <= fastram_sel_s1;
+        spr_cs_s1      <= spr_sd_cs;
+        spr_cs_s2      <= spr_cs_s1;
         p2_ack_d       <= p2_ack;
 
         if (!fastram_sel_s2)
             cpu_req_done_85 <= 1'b0;
 
-        if (!spr_sd_cs)
+        if (!spr_cs_s2)
             spr_req_done_85 <= 1'b0;
 
         if (aud_req_s2 != aud_req_s3)
@@ -1247,7 +1265,7 @@ always @(posedge clk_85m) begin
                         p2_addr_85 <= fastram_addr;
                         p2_ds_85   <= fastram_be;
                         p2_we_85   <= fastram_wr;
-                    end else if (spr_sd_cs && !spr_req_done_85 && !fastram_sel_s2) begin
+                    end else if (spr_cs_s2 && !spr_req_done_85 && !fastram_sel_s2) begin
                         p2_state   <= P2_SPR;
                         p2_cs_85   <= 1'b1;
                         p2_addr_85 <= spr_sd_addr;
