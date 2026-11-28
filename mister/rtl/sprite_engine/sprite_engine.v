@@ -277,7 +277,7 @@ module sprite_engine (
             sub_px_cnt <= 3'd0;
         end else if (spr_start_line) begin
             sub_px_cnt <= 3'd0;
-        end else if (scale_src_ack) begin
+        end else if ((shreg_bits >= {1'b0, dec_bw}) && scale_src_ack) begin
             case (spr_fmt)
                 5'd9:  sub_px_cnt <= (sub_px_cnt == 3'd3) ? 3'd0 : (sub_px_cnt + 3'd1);
                 5'd11, 5'd18: sub_px_cnt <= (sub_px_cnt == 3'd3) ? 3'd0 : (sub_px_cnt + 3'd1);
@@ -388,6 +388,7 @@ module sprite_engine (
                         6'd6:  dec_raw_code <= {26'd0, shreg_data[63:58]};
                         6'd7:  dec_raw_code <= {25'd0, shreg_data[63:57]};
                         6'd8:  dec_raw_code <= {24'd0, shreg_data[63:56]};
+                        6'd12: dec_raw_code <= {20'd0, shreg_data[63:52]};
                         6'd16: dec_raw_code <= {16'd0, shreg_data[63:48]};
                         6'd32: dec_raw_code <= shreg_data[63:32];
                         default: dec_raw_code <= {24'd0, shreg_data[63:56]};
